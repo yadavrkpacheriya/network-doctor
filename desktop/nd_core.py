@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.7.0"
+VERSION = "3.8.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
