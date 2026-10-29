@@ -23,6 +23,9 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      exists: ${{ steps.ver.outputs.exists }}
     defaults:
       run:
         working-directory: desktop
@@ -89,3 +92,51 @@ jobs:
           files: |
             desktop/dist/NetworkDoctor.exe
             desktop/dist/NetworkDoctor.exe.sha256
+
+  # Mac app (Apple silicon). Built after the Windows release exists, then added to the same release.
+  macos:
+    needs: windows
+    if: needs.windows.outputs.exists == 'false'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Check that the code loads
+        run: python -c "import nd_core, nd_monitor, nd_update, nd_share; print('modules OK', nd_core.IS_MAC)"
+
+      - name: Build Network Doctor.app
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name NetworkDoctor \
+            --osx-bundle-identifier io.github.yadavrkpacheriya.networkdoctor \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share \
+            NetworkDoctor.py
+          APP=dist/NetworkDoctor.app
+          PL=$APP/Contents/Info.plist
+          plutil -replace CFBundleDisplayName -string "Network Doctor" "$PL"
+          plutil -replace CFBundleShortVersionString -string "${{ needs.windows.outputs.version }}" "$PL"
+          plutil -replace NSLocalNetworkUsageDescription -string "Network Doctor scans your office network to find devices, IP conflicts and loops." "$PL"
+          # Info.plist changed, so sign again (ad-hoc signature is required to run on Apple silicon)
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --keepParent "$APP" dist/NetworkDoctor-macOS.zip
+          shasum -a 256 dist/NetworkDoctor-macOS.zip | awk '{print $1"  NetworkDoctor-macOS.zip"}' > dist/NetworkDoctor-macOS.zip.sha256
+          cat dist/NetworkDoctor-macOS.zip.sha256
+
+      - name: Add the Mac app to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ needs.windows.outputs.version }}" \
+            dist/NetworkDoctor-macOS.zip dist/NetworkDoctor-macOS.zip.sha256 \
+            --repo "${{ github.repository }}" --clobber

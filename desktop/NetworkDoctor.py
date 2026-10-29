@@ -48,7 +48,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -134,7 +134,7 @@ class PingWindow(tk.Toplevel):
     def _run(self):
         while self.alive:
             t0 = time.time()
-            cmd = ["ping", "-n", "1", "-w", "1000", self.ip] if core.IS_WIN else ["ping", "-c", "1", "-W", "1", self.ip]
+            cmd = core.ping_cmd(self.ip, 1000)
             out = core.run(cmd, 4)
             m = re.search(r"time[=<]\s*([\d.]+)", out)
             self.q.put(float(m.group(1)) if (m and re.search("ttl", out, re.I)) else None)
@@ -371,7 +371,7 @@ class App(tk.Tk):
                 except Exception:
                     pass
         st = ttk.Style(self)
-        for th in (("vista", "winnative", "clam") if core.IS_WIN else ("clam",)):
+        for th in (("vista", "winnative", "clam") if core.IS_WIN else ("aqua", "clam") if core.IS_MAC else ("clam",)):
             try:
                 st.theme_use(th)
                 break
@@ -441,8 +441,11 @@ class App(tk.Tk):
         ttk.Checkbutton(top, text="Re-scan every 30 min", variable=self.var_auto).pack(side="left", padx=6)
         if core.IS_WIN and not core.is_admin():
             ttk.Button(top, text="Restart as Administrator (full tests)", command=self.elevate).pack(side="right")
-        else:
+        elif core.is_admin():
             ttk.Label(top, text="Administrator: full tests on", foreground="#1f7a3d").pack(side="right")
+        else:
+            ttk.Label(top, text="Standard tests (IP-conflict rounds need administrator)",
+                      foreground="#8a4b00").pack(side="right")
         self.btn_update = ttk.Button(top, text="Update", style="Big.TButton", command=self.update_now)
         self.var_mon = tk.StringVar(value="Live monitor: off")
         ttk.Label(top, textvariable=self.var_mon, foreground="#5b21b6").pack(side="right", padx=12)
@@ -609,12 +612,12 @@ class App(tk.Tk):
                         "is the only place that sees both, so it sends two standard feeds to this PC. Network Doctor "
                         "stays a separate app: it never logs in to the router and changes nothing there.\n")
         t.insert("end", "  - Traffic data (NetFlow, UDP 2055): bandwidth per device, apps / sites, dangerous destinations\n")
-        t.insert("end", "  - Router log (syslog, UDP 514): ether2 up/down, loops, DHCP vs static, IP conflicts\n\n")
+        t.insert("end", f"  - Router log (syslog, UDP {M.SYSLOG_PORT}): ether2 up/down, loops, DHCP vs static, IP conflicts\n\n")
         t.insert("end", f"Use a PC that stays on, with a fixed IP. This PC: {self.lip}\n", "warn")
         t.insert("end", "\nMikroTik commands (WinBox > New Terminal, paste once):\n", "h")
         t.insert("end", M.router_setup_commands(self.lip), "mono")
         t.insert("end", "\nOther brands: enable 'NetFlow v5/v9' or 'IPFIX' export to this PC port 2055, and "
-                        "'remote syslog' to this PC port 514.\n")
+                        f"'remote syslog' to this PC port {M.SYSLOG_PORT}.\n")
         t.insert("end", "\nOptional - packet sniffer (loop echo test, who sends the broadcasts, ARP-spoofing / NetCut "
                         "detection, DHCP requests): install Npcap from https://npcap.com and build the exe with Scapy.\n")
         t.configure(state="disabled")
@@ -1078,6 +1081,8 @@ class App(tk.Tk):
                     self.fill_devices()
             elif what == "share" and core.IS_WIN:
                 subprocess.Popen(["explorer", f"\\\\{ip}"])
+            elif what == "share" and core.IS_MAC:
+                subprocess.Popen(["open", f"smb://{ip}"])
             elif what == "rdp" and core.IS_WIN:
                 subprocess.Popen(["mstsc", f"/v:{ip}"])
             elif what == "wol" and mac:
@@ -1416,10 +1421,15 @@ class App(tk.Tk):
         elif k == "upd_ready":
             self.upd_lbl.set("Verified. Restarting...")
             self.update_idletasks()
-            if msg[1]:
-                U.apply_exe(msg[1])
-            else:
-                U.restart_sources(core.HERE)
+            try:
+                if msg[1]:
+                    U.apply_update(msg[1])
+                else:
+                    U.restart_sources(core.HERE)
+            except Exception as e:
+                self._updating = False
+                messagebox.showerror(APP, f"Update failed: {e}\n\nYou can also download it from:\n{U.RELEASES_PAGE}")
+                return
             self._close()
 
     def _close(self):

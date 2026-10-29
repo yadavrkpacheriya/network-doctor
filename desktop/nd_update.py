@@ -27,6 +27,9 @@ API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py"]
 UA = {"User-Agent": "NetworkDoctor-updater", "Accept": "application/vnd.github+json"}
+IS_MAC = sys.platform == "darwin"
+# the file each kind of computer downloads from a release
+ASSET = "NetworkDoctor-macOS.zip" if IS_MAC else "NetworkDoctor.exe"
 
 
 class UpdateError(Exception):
@@ -59,8 +62,8 @@ def check(current_version, timeout=15):
     if parse_version(tag) <= parse_version(current_version):
         return None
     assets = {a.get("name"): a for a in data.get("assets", [])}
-    exe = assets.get("NetworkDoctor.exe")
-    sha = assets.get("NetworkDoctor.exe.sha256")
+    exe = assets.get(ASSET)
+    sha = assets.get(ASSET + ".sha256")
     return {"version": tag.lstrip("v"), "tag": tag, "notes": (data.get("body") or "").strip(),
             "page": data.get("html_url") or RELEASES_PAGE,
             "exe_url": exe and exe.get("browser_download_url"), "exe_size": exe and exe.get("size"),
@@ -74,15 +77,19 @@ def _get(url, timeout=60):
 def download_exe(info, progress=lambda done, total: None):
     """Downloads and verifies the new exe. Returns the path of the verified file."""
     if not info.get("exe_url") or not info.get("sha_url"):
-        raise UpdateError("This release has no NetworkDoctor.exe yet (it may still be building - try in a few minutes).")
+        raise UpdateError(f"This release has no {ASSET} yet (it may still be building - try in a few minutes).")
     try:
         expected = _get(info["sha_url"], 30).read().decode("ascii", "replace").strip().split()[0].lower()
     except Exception as e:
         raise UpdateError(f"Could not download the checksum ({e}).")
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise UpdateError("The published checksum is not valid - update cancelled for safety.")
-    folder = os.path.dirname(sys.executable) if is_frozen() else tempfile.gettempdir()
-    dest = os.path.join(folder, "NetworkDoctor.new.exe")
+    if IS_MAC:
+        folder = tempfile.gettempdir()
+        dest = os.path.join(folder, "NetworkDoctor-update.zip")
+    else:
+        folder = os.path.dirname(sys.executable) if is_frozen() else tempfile.gettempdir()
+        dest = os.path.join(folder, "NetworkDoctor.new.exe")
     h = hashlib.sha256()
     total = info.get("exe_size") or 0
     done = 0
@@ -106,6 +113,61 @@ def download_exe(info, progress=lambda done, total: None):
         _rm(dest)
         raise UpdateError("Downloaded file does not match the published checksum - update cancelled for safety.")
     return dest
+
+
+def mac_bundle():
+    """/Applications/Network Doctor.app when running from a built Mac app, else None."""
+    p = os.path.abspath(sys.executable)
+    for _ in range(4):
+        p = os.path.dirname(p)
+        if p.endswith(".app"):
+            return p
+    return None
+
+
+def apply_mac(zip_path):
+    """Unpacks the verified zip and starts a helper that swaps the .app after this process exits."""
+    import zipfile
+    bundle = mac_bundle()
+    if not bundle:
+        raise UpdateError("Could not find the Network Doctor app bundle to replace.")
+    work = tempfile.mkdtemp(prefix="nd_update_")
+    # ditto keeps the app's permissions and code-signature layout; zipfile is the fallback
+    try:
+        unpacked = subprocess.call(["ditto", "-x", "-k", zip_path, work]) == 0
+    except OSError:
+        unpacked = False
+    if not unpacked:
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(work)
+        for root, _, files in os.walk(work):  # zipfile loses the 'executable' bit
+            if os.sep + "MacOS" in root:
+                for f in files:
+                    os.chmod(os.path.join(root, f), 0o755)
+    apps = [os.path.join(work, x) for x in os.listdir(work) if x.endswith(".app")]
+    if not apps:
+        raise UpdateError("The downloaded update does not contain the app.")
+    new_app = apps[0]
+    script = os.path.join(work, "swap.sh")
+    with open(script, "w") as f:
+        f.write(f"""#!/bin/sh
+while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done
+rm -rf "{bundle}.old"
+mv "{bundle}" "{bundle}.old" && mv "{new_app}" "{bundle}" && rm -rf "{bundle}.old"
+[ -d "{bundle}" ] || mv "{bundle}.old" "{bundle}"
+open "{bundle}"
+rm -rf "{work}" "{zip_path}"
+""")
+    os.chmod(script, 0o755)
+    subprocess.Popen(["/bin/sh", script], start_new_session=True, close_fds=True)
+
+
+def apply_update(path):
+    """Platform-independent: replace the running app with the verified download. Caller must exit."""
+    if IS_MAC:
+        apply_mac(path)
+    else:
+        apply_exe(path)
 
 
 def apply_exe(new_path):

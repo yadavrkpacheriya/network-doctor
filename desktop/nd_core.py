@@ -44,16 +44,22 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 APP = "Network Doctor"
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
     HERE = os.path.dirname(sys.executable)
 else:
     HERE = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(os.environ.get("APPDATA", HERE), "NetworkDoctor") if IS_WIN else os.path.join(HERE, "data")
+if IS_WIN:
+    DATA_DIR = os.path.join(os.environ.get("APPDATA", HERE), "NetworkDoctor")
+elif IS_MAC:  # never inside the .app bundle (read-only / moved by macOS)
+    DATA_DIR = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "NetworkDoctor")
+else:
+    DATA_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "NetworkDoctor")
 DB_PATH = os.path.join(DATA_DIR, "devices_db.json")
 OUI_PATH = os.path.join(DATA_DIR, "oui_cache.json")
-REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor Reports") if IS_WIN else os.path.join(HERE, "reports")
+REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor Reports")
 
 
 # ==========================================================================
@@ -74,6 +80,9 @@ def norm_mac(m):
         return ""
     if isinstance(m, (bytes, bytearray)):
         m = bytes(m).hex()
+    parts = re.split(r"[:\-]", str(m).strip())
+    if len(parts) == 6 and all(re.fullmatch(r"[0-9A-Fa-f]{1,2}", x) for x in parts):
+        m = "".join(x.zfill(2) for x in parts)
     h = re.sub(r"[^0-9A-Fa-f]", "", str(m)).upper()
     return ":".join(h[i:i + 2] for i in range(0, 12, 2)) if len(h) == 12 else ""
 
@@ -118,6 +127,10 @@ def detect_network():
                             active, re.M)
         if routes:
             gw, lip, _ = min(routes, key=lambda r: int(r[2]))  # lowest metric = the route Windows really uses
+    elif IS_MAC:
+        m = re.search(r"gateway:\s*(\d+\.\d+\.\d+\.\d+)", run(["route", "-n", "get", "default"], 5))
+        if m:
+            gw = m.group(1)
     else:
         m = re.search(r"default via (\S+)", run(["ip", "route", "show", "default"], 5))
         if m:
@@ -140,6 +153,12 @@ def local_mac(lip):
             if re.search(r"\b" + re.escape(lip) + r"\b", block):
                 m = re.search(r"Physical Address[ .]*:\s*([0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5})\b", block) or \
                     re.search(r"([0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5})(?!-)", block)
+                if m:
+                    return norm_mac(m.group(1))
+    if IS_MAC:
+        for block in re.split(r"\n(?=\S)", run(["ifconfig"], 10)):
+            if re.search(r"inet " + re.escape(lip) + r"\b", block):
+                m = re.search(r"ether\s+([0-9a-fA-F:]{11,17})", block)
                 if m:
                     return norm_mac(m.group(1))
     n = uuid.getnode()
@@ -171,12 +190,22 @@ def win_sendarp(ip):
 def flush_arp_cache():
     if IS_WIN:
         run(["netsh", "interface", "ip", "delete", "arpcache"], 10)
+    elif IS_MAC:
+        run(["arp", "-d", "-a"], 10)
     else:
         run(["ip", "neigh", "flush", "all"], 10)
 
 
+def ping_cmd(ip, wait_ms=1000):
+    if IS_WIN:
+        return ["ping", "-n", "1", "-w", str(wait_ms), ip]
+    if IS_MAC:  # macOS: -W is in milliseconds, -t is the overall timeout in seconds
+        return ["ping", "-c", "1", "-W", str(wait_ms), "-t", "2", ip]
+    return ["ping", "-c", "1", "-W", str(max(1, wait_ms // 1000)), ip]
+
+
 def ping(ip, wait_ms=800):
-    cmd = ["ping", "-n", "1", "-w", str(wait_ms), ip] if IS_WIN else ["ping", "-c", "1", "-W", "1", ip]
+    cmd = ping_cmd(ip, wait_ms)
     m = re.search(r"ttl[=:]\s*(\d+)", run(cmd, 5), re.I)
     return int(m.group(1)) if m else None
 
@@ -368,7 +397,8 @@ def gateway_monitor(gw, count, result):
         if t:
             result.update(min=int(t.group(1)), max=int(t.group(2)), avg=int(t.group(3)))
     else:
-        out = run(["ping", "-c", str(count), "-i", "1", gw], count * 2 + 10)
+        cmd = ["ping", "-c", str(count), "-i", "1"] + (["-W", "1000"] if IS_MAC else []) + [gw]
+        out = run(cmd, count * 2 + 10)
         m = re.search(r"([\d.]+)% packet loss", out)
         t = re.search(r"= ([\d.]+)/([\d.]+)/([\d.]+)", out)
         result["loss"] = float(m.group(1)) if m else None
@@ -773,8 +803,9 @@ def scan(subnet, opts, progress, stop):
                 raw["ping"][ip] = ttl
     chk()
     if not IS_WIN and local:
+        hostset = set(hosts)
         for ip, mac in os_arp_table().items():
-            if ip in raw["ping"]:
+            if ip in hostset and ip != lip:
                 raw["arp"][ip].add(mac)
     alive = sorted(set(raw["arp"]) | set(raw["ping"]), key=ip_key)
 
@@ -790,6 +821,18 @@ def scan(subnet, opts, progress, stop):
                     if mac:
                         raw["arp"][ip].add(mac)
             time.sleep(0.7)
+        tests["conflict_rounds"] = rounds
+    elif not IS_WIN and admin and alive and local:
+        rounds = 3
+        for r in range(rounds):
+            chk()
+            progress(36 + r * 4, f"IP-conflict check, round {r + 1}/{rounds}...")
+            flush_arp_cache()
+            with ThreadPoolExecutor(64) as ex:
+                list(ex.map(lambda ip: ping(ip, 600), alive))
+            for ip, mac in os_arp_table().items():
+                if ip in raw["arp"]:
+                    raw["arp"][ip].add(mac)
         tests["conflict_rounds"] = rounds
     if use_scapy and local:
         progress(48, "Packet-level ARP sweep (all replies)...")

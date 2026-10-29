@@ -4,12 +4,12 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 
 ![Devices](docs/devices.png)
 
-| Platform | Status |
-|---|---|
-| Windows | **Available** - [download the latest NetworkDoctor.exe](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
-| Android | in development |
-| macOS | planned |
-| iPhone / iPad | planned |
+| Platform | Status | Get it |
+|---|---|---|
+| Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
+| macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
+| Android | **Test version** - phone scan + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
+| Microsoft Store | planned | |
 
 ## Install (Windows)
 
@@ -19,7 +19,17 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
    - The app asks for Administrator permission. It needs this for the full IP-conflict and loop tests.
 3. You don't need to install anything else. Python is **not** needed.
 
-**Updates are automatic.** Once a day the app checks this repository for a new release. When one is out, it asks you, downloads it, verifies the SHA-256 checksum, and restarts. You can also use **Setup → Check for updates**.
+## Install (Mac)
+
+1. Download **NetworkDoctor-macOS.zip** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest), unzip it and move **NetworkDoctor** to *Applications*.
+2. The first time, **right-click → Open**. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway** (the app is not yet signed with an Apple Developer certificate).
+3. On the Mac the router log arrives on UDP **5514** (macOS reserves ports below 1024); *Setup → Copy router commands* already uses it.
+
+## Install (Android phone)
+
+Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true) on the phone, download **NetworkDoctor-Android.apk** and allow *Install unknown apps* for the browser when Android asks. The app scans the Wi-Fi network by itself and, once paired, shows everything the office PC finds. Android does not let apps read other devices' MAC addresses, so vendor names and IP-conflict detection come from the PC.
+
+**Updates are automatic** on Windows and Mac. Once a day the app checks this repository for a new release. When one is out, it asks you, downloads it, verifies the SHA-256 checksum, and restarts. You can also use **Setup → Check for updates**.
 
 ## What it does
 
@@ -48,7 +58,7 @@ Each destination is checked against public malware, botnet and attacker block li
 
 On a switched network, a PC can't see other devices' traffic or the router's ports. Two features therefore need the router to **send** standard data to the PC running Network Doctor:
 - **bandwidth per device**, using NetFlow on UDP 2055
-- **port up/down and DHCP events**, using syslog on UDP 514
+- **port up/down and DHCP events**, using syslog on UDP 514 (Windows) or 5514 (Mac)
 
 The app never logs in to the router. The exact MikroTik commands, with your PC's IP already filled in, are in **Setup → Copy router commands**. Any router or managed switch that can export NetFlow, IPFIX or syslog works.
 
@@ -70,7 +80,7 @@ In **Setup → Phone app link**, tick *Allow the Network Doctor phone app to con
 Network Doctor runs entirely on your PC.
 
 **What it keeps:**
-- Device names, labels and history stay in `%APPDATA%\NetworkDoctor`.
+- Device names, labels and history stay in `%APPDATA%\NetworkDoctor` (Windows) or `~/Library/Application Support/NetworkDoctor` (Mac).
 
 **What it sends over the internet:**
 - To GitHub: a request for the latest release.
@@ -85,19 +95,21 @@ Nothing about your own network is uploaded.
 2. Raise `VERSION = "x.y.z"` near the top of `desktop/NetworkDoctor.py`, and update `desktop/RELEASE_NOTES.md`.
 3. Push to `main`. You can also edit the files directly on github.com and commit.
 
-The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and publishes the Release with its checksum. Every installed copy then offers the update within a day.
+The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and the Mac app on a free Mac machine, and publishes both in one Release with checksums. Every installed copy then offers the update within a day.
+
+**Phone app:** change the code in `mobile/`, raise `version:` in `mobile/pubspec.yaml` (and `appVersion` in `mobile/lib/main.dart`), push. The **Mobile - build Android app** workflow checks the code, runs the tests and publishes a new APK. Once the Google Play upload-key secrets are added, it also builds the signed `.aab` for the Play Store.
 
 To build locally instead, run `desktop/Build_NetworkDoctor_EXE.bat` on a Windows PC with Python installed.
 
 ## Repository layout
 
 ```
-desktop/   Windows (later also macOS) app - Python + Tkinter
+desktop/   Windows and macOS app - Python + Tkinter
   NetworkDoctor.py   window
   nd_core.py         scan engine
   nd_monitor.py      live monitor, traffic, threat lists, root cause
   nd_update.py       online updates from GitHub Releases
   nd_share.py        phone app link (LAN only, pairing code)
-mobile/    Android / iPhone app (coming)
+mobile/    Android phone app - Flutter (iPhone possible later from the same code)
 docs/      screenshots
 ```

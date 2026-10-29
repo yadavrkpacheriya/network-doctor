@@ -4,7 +4,7 @@ Network Doctor - live monitor, traffic analysis and root-cause engine.
 
 Data sources (all standard protocols, nothing logs in to anything):
   * Local sampler      : broadcast packets/s on this PC, gateway ping every 2 s
-  * Router log receiver: standard syslog (UDP 514) - port up/down, loop, DHCP, conflicts, login attacks
+  * Router log receiver: standard syslog (UDP 514 on Windows, 5514 on Mac) - port up/down, loop, DHCP, conflicts, login attacks
   * Flow receiver      : NetFlow v5 / v9 / IPFIX (UDP 2055) - per-device bandwidth and destinations
   * Packet sniffer     : (optional, Npcap + Scapy) broadcast top senders, STP changes,
                          DHCP requests, ARP spoofing, periodic loop echo test
@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_core as core
 
 FLOW_PORT = 2055
-SYSLOG_PORT = 514
+SYSLOG_PORT = 514 if core.IS_WIN else 5514  # macOS/Linux do not let normal apps use ports below 1024
 STORM_PPS = 300
 
 
@@ -893,7 +893,7 @@ class Monitor:
             t0 = time.time()
             ms = None
             if self.gw:
-                cmd = ["ping", "-n", "1", "-w", "1000", self.gw] if core.IS_WIN else ["ping", "-c", "1", "-W", "1", self.gw]
+                cmd = core.ping_cmd(self.gw, 1000)
                 out = core.run(cmd, 4)
                 m = re.search(r"time[=<]\s*([\d.]+)", out)
                 if m and re.search(r"ttl", out, re.I):

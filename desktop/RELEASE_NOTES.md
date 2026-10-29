@@ -1,24 +1,20 @@
-## Network Doctor 3.3.0
+## Network Doctor 3.4.0
 
-**New: phone app link.** The coming Network Doctor phone app can show this PC's results:
-- devices
-- problems
-- root cause
-- live monitor
-- top bandwidth users
+**New: Mac version.**
+Download **NetworkDoctor-macOS.zip** below. It is for Macs with Apple silicon (M1 or newer).
 
-To use it:
-1. Turn it on in **Setup → Phone app link**.
-2. Enter the 6-digit pairing code in the phone app.
+1. Unzip it and move **NetworkDoctor** to *Applications*.
+2. The first time, **right-click → Open**.
+3. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway**. This appears because the app is not yet signed with an Apple Developer certificate.
 
-Security:
-- It only works on the office LAN.
-- Each code works once.
-- 5 wrong codes lock pairing for 5 minutes.
-- You can remove paired phones at any time.
+On the Mac:
+- The router log arrives on port **5514**. The *Copy router commands* button already uses it.
+- The IP-conflict rounds need administrator rights.
+- Mac copies update themselves the same way as Windows copies.
 
-The phone app can also start a scan on the PC.
+**Also fixed:**
+- MAC addresses printed without leading zeros (macOS style) are now read correctly.
+- Devices that block ping are found from the ARP table on Mac and Linux.
+- Pings on Mac now use the right timeout, so there are no false "router not answering" alarms.
 
-Also included: online updates from GitHub (3.2.0) and everything from 3.1.
-
-**First start:** if Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app is not code-signed.
+**Windows first start:** if Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app is not code-signed.
