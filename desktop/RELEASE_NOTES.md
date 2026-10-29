@@ -1,3 +1,27 @@
+## Network Doctor 3.7.0
+
+**New: a Tools tab with the everyday network-engineer tools, and alerts when a critical device goes down.**
+
+- **Critical devices (alert if down).** Tick *Watch* for the router, servers, ERP PC, DVR and switches (in **Tag...**, by right-click, or **Watch router + all network equipment**). They are pinged every 30 seconds; if one stops answering for about 1.5 minutes you get a pop-up and sound, it turns red on the map, and the health log records when it went down and came back. If several devices behind the same switch go down together, the alert names that switch. Shows 24-hour uptime per device.
+- **New-device alert.** A pop-up when a MAC address that was never seen before joins the network (for example someone plugging in their own router). You can turn it off in Setup.
+- **Tools tab:**
+  - **Internet speed and quality:** public IP and ISP, ping / jitter / loss to the router and the internet (tells you whether the problem is inside the office or at the ISP), download and upload speed, and latency while the line is busy (bufferbloat). Results go into the health log.
+  - **Port scanner:** open ports with what each service is, server banners, and the risky ones marked (Telnet, SMB, Remote Desktop, WinBox...).
+  - **DNS lookup and DNS server test:** any record type on any server; compares this PC's, the router's and public DNS for speed, failures and DNS hijacking.
+  - **Website / server check:** DNS, connect, TLS and answer times, and when the certificate expires. Useful for the ERP server, router pages, cameras and your websites.
+  - **LAN speed test (PC to PC):** the real speed through the cables and switches between two PCs running Network Doctor. Finds 100 Mbps cables and slow switches.
+  - **Wi-Fi analyzer:** nearby networks, channels, signal and security, and the best free channel.
+  - **This PC's network adapters:** link speed (1 Gbps / 100 Mbps), duplex, packet errors, APIPA (169.254) addresses, cable + Wi-Fi bridging.
+  - **MTU finder** (PPPoE / VPN problems where some websites hang), **subnet calculator**, **Wake-on-LAN** (also for PCs that are off now), **MAC address lookup**.
+  - **Setup check - what is missing:** administrator rights, firewall rule, Npcap, router feeds, threat lists, start with Windows, watched devices, how many devices are tagged, PC fix script coverage. Each item says how to fix it.
+- **PC fix script now also reports cable speed, duplex and errors** of every PC. A PC whose cable runs at 100 Mbps, in half duplex or with errors appears in Problems.
+- **30 more ready commands** in the Commands tab: TCP port test, cable speed, routing table, Wi-Fi drop report, MikroTik cable test, torch, speed limit per device, MSS clamp, DHCP pool use, router services and logins, router backup, and more.
+- **Fixes:**
+  - The scan network now follows this PC's real subnet mask, instead of always using /24.
+  - The automatic scan retries if a scan fails.
+  - The firewall rule now also opens the phone link / PC report / LAN speed-test ports, for the office network only.
+  - Wake-on-LAN is sent through the office network card, to every broadcast address.
+
 ## Network Doctor 3.6.0
 
 **New: network map, tags, IP-MAC binding, a PC fix script and a command library.**

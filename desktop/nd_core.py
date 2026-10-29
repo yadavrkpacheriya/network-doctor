@@ -44,7 +44,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 APP = "Network Doctor"
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -1180,12 +1180,15 @@ def analyse(raw, devices, db):
     unk = [d for d in online if d["category"] == CAT_UNK]
     if unk:
         add("info", f"{len(unk)} device(s) could not be identified", "No name, no known brand, no open services.",
-            "Right-click the device > Set label. The label is remembered by MAC for every future scan.",
+            "Select the device > Tag... The tag is remembered by MAC for every future scan.",
             [label_of(d) for d in unk])
     newd = [d for d in online if d["mac"] and d["mac"] not in db["devices"]] if db["scans"] else []
     if newd:
-        add("info", f"{len(newd)} new device(s) since the last scan", "Never seen before by this app.",
-            "Check that you recognise them.", [label_of(d) for d in newd])
+        add("info", f"{len(newd)} new device(s) since the last scan",
+            "Never seen before by this app. Usually a new phone, laptop or visitor - but an unknown device can also be "
+            "someone plugging a personal router / switch into the office network (loops, rogue DHCP).",
+            "Check that you recognise them and tag the ones you know. Unknown ones: find their port (Commands > "
+            "'Which router port is a device on?') and the switch on the Network map.", [label_of(d) for d in newd])
     order = {"critical": 0, "warning": 1, "info": 2}
     issues.sort(key=lambda i: order[i["sev"]])
     return issues, checks

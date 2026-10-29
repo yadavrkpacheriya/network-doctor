@@ -43,10 +43,12 @@ Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/re
 | **Problems / Health checks** | Results of the scan. |
 | **IP-MAC binding** | Makes the MikroTik commands that reserve each device's IP for its MAC (with optional strict mode and randomized-MAC blocking, and an UNDO set). Also makes the **PC fix script** to run on every PC: random Wi-Fi MAC off, back to automatic IP, router MAC lock, and a report back that tags the PC. |
 | **Commands** | About 40 ready Windows, MikroTik and Mac commands with a short line on what each does, filled in for the chosen device. Copy or run, and add your own. |
+| **Tools** | Critical-device watch (alert when the router, server, ERP PC, DVR or a switch stops answering), internet speed and quality, port scanner, DNS lookup and DNS server test, website / server check, LAN speed test between two PCs, Wi-Fi analyzer, this PC's adapters (cable speed, duplex, errors), MTU finder, subnet calculator, Wake-on-LAN, MAC lookup, and a setup check that lists what is still missing. |
 | **Setup** | One-time router settings, Windows Firewall, threat lists and updates. |
 
 ![Network map](docs/network-map.png)
 ![IP-MAC binding](docs/ip-mac-binding.png)
+![Tools](docs/tools.png)
 ![Live monitor](docs/live-monitor.png)
 ![Root cause](docs/root-cause.png)
 
@@ -92,6 +94,7 @@ Network Doctor runs entirely on your PC.
 
 **What it sends over the internet:**
 - To GitHub: a request for the latest release.
+- To Cloudflare (`speed.cloudflare.com`), only when you run the internet speed test: test data.
 - To public blocklist sites: requests to download the blocklists.
 - To RDAP registries (`rdap.org`): addresses of *internet* servers your devices talk to, to look up which organisation owns them.
 
@@ -120,6 +123,8 @@ desktop/   Windows and macOS app - Python + Tkinter
   nd_share.py        phone app link (LAN only, pairing code) and PC fix-script reports
   nd_tools.py        tags, map, IP-MAC binding, PC fix script, command list
   nd_tabs.py         Network map, IP-MAC binding and Commands tabs
+  nd_net.py          engineer tools: port scan, DNS, speed tests, Wi-Fi, adapters, MTU, subnet, Wake-on-LAN
+  nd_toolstab.py     Tools tab (including the critical-device watch)
 mobile/    Android phone app - Flutter (iPhone possible later from the same code)
 docs/      screenshots
 ```

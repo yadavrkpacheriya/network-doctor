@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Network Doctor 3.2 - standalone network scanner, live monitor and root-cause tool for Windows.
+Network Doctor - standalone network scanner, live monitor and root-cause tool for Windows and Mac.
 
-Files: NetworkDoctor.py (this window), nd_core.py (scan engine), nd_monitor.py (monitor / traffic / RCA).
+Files: NetworkDoctor.py (this window), nd_core.py (scan engine), nd_monitor.py (monitor / traffic / RCA),
+nd_tools.py + nd_tabs.py (tags, map, IP-MAC binding, commands), nd_net.py + nd_toolstab.py (engineer tools).
 Build a single exe with Build_NetworkDoctor_EXE.bat.
 """
 
@@ -22,7 +23,7 @@ import sys
 import threading
 import time
 import webbrowser
-from collections import Counter
+from collections import Counter, deque
 
 import nd_core as core
 import nd_monitor as M
@@ -30,6 +31,8 @@ import nd_update as U
 import nd_share as SH
 import nd_tabs
 import nd_tools as T
+import nd_net as NT
+import nd_toolstab
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -51,7 +54,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -396,7 +399,10 @@ class App(tk.Tk):
         self.raw = None
         self.devices, self.issues, self.checks = [], [], []
         self.gw, self.lip = core.detect_network()
-        self.net = str(ipaddress.ip_network(f"{self.lip}/24", strict=False))
+        try:
+            self.net = NT.scan_network_for(self.lip, NT.local_prefix(self.lip))
+        except Exception:
+            self.net = str(ipaddress.ip_network(f"{self.lip}/24", strict=False))
         self.threat = M.ThreatIntel()
         self.orgs = M.OrgLookup()
         self.mon = None
@@ -406,6 +412,9 @@ class App(tk.Tk):
         self.tabs = {}
         self._nb_count = 0
         self._auto_init()
+        self.watch_state = {}
+        self.watch_wake = threading.Event()
+        self.alive = True
         self._build()
         self.after(100, self._poll)
         self.after(2000, self._tick)
@@ -418,6 +427,7 @@ class App(tk.Tk):
         if self.var_share.get() or self._settings().get("reports_enabled"):
             self.after(1200, self._ensure_share)
         self.after(15000, lambda: self.check_updates(True))
+        threading.Thread(target=self._watch_loop, daemon=True).start()
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
         if "--minimized" in sys.argv:  # started automatically at login
             self.after(600, self.iconify)
@@ -487,8 +497,9 @@ class App(tk.Tk):
         self._tab_checks()
         self._tab_binding()
         self._tab_commands()
+        self._tab_tools()
         self._tab_setup()
-        names = ["devices", "map", "monitor", "rca", "problems", "checks", "binding", "commands", "setup"]
+        names = ["devices", "map", "monitor", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
         self.tabs = dict(zip(names, self.nb.tabs()))
         self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
@@ -540,6 +551,11 @@ class App(tk.Tk):
         self.nb.add(f, text="  Commands  ")
         self.commands = nd_tabs.CommandsTab(self, f)
 
+    def _tab_tools(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Tools  ")
+        self.tools = nd_toolstab.ToolsTab(self, f)
+
     def show_tab(self, name):
         if name in self.tabs:
             self.nb.select(self.tabs[name])
@@ -553,6 +569,8 @@ class App(tk.Tk):
                 self.binding.refresh()
             elif cur == self.tabs.get("commands"):
                 self.commands.refresh()
+            elif cur == self.tabs.get("tools"):
+                self.tools.refresh_watch()
         except Exception:
             pass
 
@@ -684,6 +702,9 @@ class App(tk.Tk):
         self.var_alerts = tk.BooleanVar(value=st.get("alerts", True))
         ttk.Checkbutton(au, text="Pop-up + sound for new problems", variable=self.var_alerts,
                         command=self._save_auto).pack(side="left", padx=12)
+        self.var_alert_new = tk.BooleanVar(value=st.get("alert_new", True))
+        ttk.Checkbutton(au, text="Alert when a new device joins", variable=self.var_alert_new,
+                        command=self._save_auto).pack(side="left", padx=4)
         self.var_autostart = tk.BooleanVar(value=self._autostart_enabled())
         ttk.Checkbutton(au, text="Start with Windows" if core.IS_WIN else "Start at login",
                         variable=self.var_autostart, command=self.toggle_autostart).pack(side="left", padx=4)
@@ -956,6 +977,9 @@ class App(tk.Tk):
                 self.oui = core.load_oui()
             devices = core.build_devices(raw, self.oui, self.db)
             issues, checks = core.analyse(raw, devices, self.db)
+            before = set(self.db.get("devices") or {})
+            raw["meta"]["new_macs"] = [d["mac"] for d in devices if d.get("online") and d.get("mac")
+                                       and d["mac"] not in before] if before else []
             core.update_db(self.db, raw, devices)
             self.q.put(("done", raw, devices, issues, checks))
         except core.Stopped:
@@ -991,11 +1015,14 @@ class App(tk.Tk):
                     self._reset("Scan stopped.")
                 elif k == "error":
                     self._reset("Scan failed.")
+                    self.last_scan_t = time.time()  # the automatic scan tries again after the normal interval
                     self._health_log("Full scan", "warning", "scan failed: " + msg[1].splitlines()[0][:200])
                     if not getattr(self, "_scan_is_auto", False):  # unattended runs never block on a dialog
                         messagebox.showerror(APP, msg[1])
                     if self.pending_scan:
                         self.pending_scan = False
+                elif k == "watch":
+                    self._on_watch(*msg[1:])
                 elif k == "pc_report":
                     self._apply_report(*msg[1:])
                 elif k == "quick_done":
@@ -1023,7 +1050,8 @@ class App(tk.Tk):
         self.last_scan_t = time.time()
         self._feed_monitor()
         T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
-        self.issues = self.issues + T.binding_issues(self.devices, self.db)
+        self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db)
+        self._new_devices(self.raw["meta"].get("new_macs") or [])
         conflict_ips = set()
         for i in self.issues:
             mm = re.match(r"IP conflict on (\S+)", i["title"])
@@ -1168,6 +1196,8 @@ class App(tk.Tk):
         for lab, k in (("Analyse (root cause)", "analyse"), ("Ping (live graph)", "ping"), ("Open in browser", "web"),
                        ("Traceroute", "trace"), (None, None), ("Tag (name, department, where connected)...", "label"),
                        ("Show on network map", "map"), ("Commands for this device", "cmds"),
+                       ("Port scan", "ports"), ("Website / server check", "webcheck"),
+                       ("Watch: alert if it stops answering", "watch"),
                        ("Open shared folders", "share"), ("Remote Desktop", "rdp"), ("Wake on LAN", "wol"),
                        (None, None), ("Copy IP", "cip"), ("Copy MAC", "cmac"), ("Copy all details", "call")):
             if lab is None:
@@ -1227,12 +1257,25 @@ class App(tk.Tk):
             elif what == "rdp" and core.IS_WIN:
                 subprocess.Popen(["mstsc", f"/v:{ip}"])
             elif what == "wol" and mac:
-                pkt = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.sendto(pkt, ("255.255.255.255", 9))
-                s.close()
-                self.var_status.set(f"Wake-on-LAN sent to {mac}")
+                pre = int(self.net.split("/")[1]) if "/" in self.net else 24
+                _, sent = NT.wake_on_lan(mac, self.lip, pre, ip)
+                self.var_status.set(f"Wake-on-LAN sent to {mac} ({len(sent)} packets)")
+            elif what == "ports":
+                self.selected_device = d
+                self.show_tab("tools")
+                self.tools.show("ports")
+                self.tools.var_ptarget.set(ip)
+            elif what == "webcheck":
+                self.show_tab("tools")
+                self.tools.show("web")
+                port = (d.get("http") or {}).get("port") or 80
+                self.tools.var_url.set(("https://" if port in (443, 8443) else "http://") + ip +
+                                       ("" if port in (80, 443) else f":{port}"))
+            elif what == "watch" and mac:
+                T.set_tag(self.db, mac, watch="1")
+                core.save_db(self.db)
+                self.watch_now()
+                self.var_status.set(f"{d['name'] or ip} is now watched (Tools > Critical devices).")
             elif what in ("cip", "cmac", "call"):
                 txt = ip if what == "cip" else mac if what == "cmac" else \
                     f"{d['name']}\t{', '.join(sorted(d['ips'], key=core.ip_key))}\t{mac}\t{d['vendor']}\t{d['category']}"
@@ -1258,9 +1301,15 @@ class App(tk.Tk):
         name = "Network Doctor receivers"
         if name not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"], 10):
             core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in", "action=allow",
-                      "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT}"], 10)
+                      "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT},5678,8788"], 10)
+        tname = "Network Doctor LAN (phone link, PC reports, speed test)"
+        if tname not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={tname}"], 10):
+            core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={tname}", "dir=in", "action=allow",
+                      "protocol=TCP", f"localport=8787,{NT.LAN_PORT}", "remoteip=localsubnet"], 10)
         if not quiet:
-            messagebox.showinfo(APP, f"Windows Firewall now allows UDP {M.FLOW_PORT} and {M.SYSLOG_PORT}.")
+            messagebox.showinfo(APP, f"Windows Firewall now allows the router feeds (UDP {M.FLOW_PORT}, {M.SYSLOG_PORT}) "
+                                     f"and, from the office network only, the phone link / PC reports / LAN speed test "
+                                     f"(TCP 8787, {NT.LAN_PORT}).")
 
     def forget_offline(self):
         off = [d["mac"] for d in self.devices if not d["online"] and d["mac"]]
@@ -1374,6 +1423,7 @@ class App(tk.Tk):
         st["auto_full_min"] = self.var_full_min.get()
         st["auto_quick_min"] = self.var_quick_min.get()
         st["alerts"] = self.var_alerts.get()
+        st["alert_new"] = self.var_alert_new.get()
         self._save_settings()
         self._auto_label()
 
@@ -1480,6 +1530,8 @@ class App(tk.Tk):
         full = source == "Full scan"
         for k in list(self.alerts_active):
             a = self.alerts_active[k]
+            if a.get("source") == "Device watch":
+                continue  # the device watch resolves its own alerts
             covered = full or bool(core.QUICK_TITLES.search(a["title"]))
             if covered and not dhcp_tested and "dhcp" in a["title"].lower():
                 covered = False
@@ -1662,6 +1714,121 @@ class App(tk.Tk):
             return
         self._close()
 
+    # ---------------------------------------------------------------- critical-device watch
+    WATCH_EVERY = 30   # seconds between pings
+    WATCH_FAILS = 3    # missed rounds before "down" (about 1.5 minutes)
+
+    def watch_now(self):
+        self.watch_wake.set()
+
+    def _watch_targets(self):
+        by_mac = {d["mac"]: d for d in list(self.devices) if d.get("mac")}
+        hist = self.db.get("devices") or {}
+        out = {}
+        for mac, t in T.watched(self.db).items():
+            d = by_mac.get(mac) or {}
+            ip = d.get("ip") or (hist.get(mac) or {}).get("ip")
+            if ip:
+                out[mac] = (t.get("name") or d.get("name") or ip, ip, t.get("parent", ""))
+        return out
+
+    @staticmethod
+    def _watch_ping(ip):
+        for _ in range(2):
+            t = NT.ping_times(core.run(core.ping_cmd(ip, 1000), 5))
+            if t:
+                return t[0]
+        return None
+
+    def _watch_loop(self):
+        """Background thread: pings the watched devices and hands the results to the window."""
+        time.sleep(5)
+        while self.alive:
+            try:
+                targets = self._watch_targets()
+                if targets:
+                    items = list(targets.items())
+                    pool = threading.BoundedSemaphore(16)
+                    res = {}
+
+                    def one(mac, ip):
+                        with pool:
+                            res[mac] = self._watch_ping(ip)
+                    ths = [threading.Thread(target=one, args=(m, v[1]), daemon=True) for m, v in items]
+                    for th in ths:
+                        th.start()
+                    for th in ths:
+                        th.join(10)
+                    self.q.put(("watch", targets, dict(res)))
+            except Exception:
+                pass
+            self.watch_wake.wait(self.WATCH_EVERY)
+            self.watch_wake.clear()
+
+    def _on_watch(self, targets, res):
+        now = time.time()
+        for mac in list(self.watch_state):
+            if mac not in targets:
+                self.watch_state.pop(mac, None)
+                self.alerts_active.pop(f"watch:{mac}", None)
+        tags = T.tags_of(self.db)
+        names = {d.get("mac"): d.get("name") or d.get("ip") for d in self.devices if d.get("mac")}
+        for mac, (name, ip, parent) in targets.items():
+            st = self.watch_state.setdefault(mac, {"fails": 0, "down_since": None, "downs": 0, "rtt": None,
+                                                   "hist": deque(maxlen=24 * 3600 // self.WATCH_EVERY)})
+            st["name"], st["ip"] = name, ip
+            rtt = res.get(mac)
+            st["hist"].append((now, rtt is not None))
+            if rtt is not None:
+                st["rtt"] = rtt
+                if st["down_since"]:
+                    mins = (now - st["down_since"]) / 60
+                    self.alerts_active.pop(f"watch:{mac}", None)
+                    self._log_event("info", f"Back up: {name} ({ip}) answers again after {mins:.0f} min", "Device watch")
+                    st["last_down"] = st["down_since"]
+                    st["down_since"] = None
+                st["fails"] = 0
+            else:
+                st["fails"] += 1
+                if st["fails"] >= self.WATCH_FAILS and not st["down_since"]:
+                    st["down_since"] = now - (self.WATCH_FAILS - 1) * self.WATCH_EVERY
+                    st["downs"] += 1
+                    title = f"Critical device not answering: {name} ({ip})"
+                    pname = (tags.get(parent, {}).get("name") or names.get(parent)) if parent else ""
+                    same = [v["name"] for m, v in self.watch_state.items() if m != mac and v.get("down_since")
+                            and parent and (tags.get(m, {}).get("parent") == parent)]
+                    hint = (f"also down behind {pname}: {', '.join(same)} - check {pname} and its uplink" if same else
+                            f"connected to {pname} - check its power, cable and that switch port" if pname else
+                            "check its power and cable; tag where it is connected so the map shows the path")
+                    self.alerts_active[f"watch:{mac}"] = {"title": title, "sev": "critical", "first": now,
+                                                          "last": now, "source": "Device watch"}
+                    self._raise_alert("critical", title, [hint], "Device watch")
+        self._auto_label()
+        try:
+            if self.nb.select() == self.tabs.get("tools"):
+                self.tools.refresh_watch()
+            if self.nb.select() == self.tabs.get("map") and any(v.get("down_since") for v in self.watch_state.values()):
+                self.map.redraw()
+        except Exception:
+            pass
+
+    def _new_devices(self, macs):
+        """New MAC addresses since the earlier scans (listed in Problems by the scan engine): a note and a pop-up."""
+        if not macs:
+            return
+        news = [d for d in self.devices if d.get("mac") in set(macs)]
+        items = [f"{d.get('name') or '-'}  {d.get('ip')}  {d.get('mac')}  {d.get('vendor') or ''}  ({d.get('category')})"
+                 + ("  random MAC" if d.get("random") else "") for d in news]
+        for d in news:
+            d.setdefault("notes", []).append("NEW on the network")
+        txt = "New device(s) on the network: " + "; ".join(i.split("  (")[0] for i in items[:4]) + (
+            f" and {len(items) - 4} more" if len(items) > 4 else "")
+        self._health_log("Full scan", "info", txt)
+        if self.mon:
+            self.mon.event("info", "Auto check", txt, "auto")
+        if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
+            self._popup("warning", txt)
+
     # ---------------------------------------------------------------- phone link
     def toggle_share(self):
         on = self.var_share.get()
@@ -1720,13 +1887,25 @@ class App(tk.Tk):
             t = tags.get(mac, {})
             T.set_tag(self.db, mac, name=None if t.get("name") else host,
                       notes=None if t.get("notes") else f"user {user}" if user else None)
+        links = []
+        for a in data.get("adapters") or []:
+            if isinstance(a, dict) and str(a.get("status", "")).lower() == "up" and not a.get("wifi"):
+                try:
+                    links.append({"name": str(a.get("name") or "")[:40], "speed": str(a.get("speed") or "")[:20],
+                                  "bps": int(a.get("bps") or 0), "duplex": a.get("duplex") if isinstance(
+                                      a.get("duplex"), bool) else None, "errors": int(a.get("errors") or 0)})
+                except (TypeError, ValueError):
+                    pass
         with core.DB_LOCK:
             self.db.setdefault("pc_reports", {})[host or client] = {
                 "time": core.now_s(), "ip": client, "user": user, "os": str(data.get("os") or "")[:60], "macs": macs,
-                "actions": [str(x)[:120] for x in (data.get("actions") or [])][:10]}
+                "links": links[:6], "actions": [str(x)[:120] for x in (data.get("actions") or [])][:10]}
         core.save_db(self.db)
         acts = "; ".join(str(x) for x in (data.get("actions") or [])[:4])
         self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
+        rx = T.REPORT_TITLES
+        self.issues = [i for i in self.issues if not rx.search(i["title"])] + T.report_issues(self.db)
+        self.fill_problems()
         self.after_tags_changed()
 
     def _share_label(self):
@@ -1794,7 +1973,9 @@ class App(tk.Tk):
                 "scan": dict((self.raw or {}).get("meta", {}), tests=None) if self.raw else None,
                 "scanning": bool(getattr(self, "scanning", False)), "monitor": None,
                 "auto": {"summary": self.quick_summary, "last_check": self.last_quick_t or None,
-                         "active_alerts": [dict(v) for v in list(self.alerts_active.values())]}}
+                         "active_alerts": [dict(v) for v in list(self.alerts_active.values())]},
+                "watch": [{"name": v.get("name"), "ip": v.get("ip"), "down": bool(v.get("down_since")),
+                           "rtt": v.get("rtt"), "downs": v.get("downs", 0)} for v in list(self.watch_state.values())]}
         if mon:
             names = {d["ip"]: d.get("name", "") for d in devs}
             talk = sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:15]
@@ -1939,6 +2120,8 @@ class App(tk.Tk):
             self._close()
 
     def _close(self):
+        self.alive = False
+        self.watch_wake.set()
         try:
             if self.mon:
                 self.mon.stop()

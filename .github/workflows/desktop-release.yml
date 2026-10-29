@@ -60,7 +60,7 @@ jobs:
 
       - name: Check that the code loads
         if: steps.ver.outputs.exists == 'false'
-        run: python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
+        run: python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, nd_net, nd_toolstab, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
 
       - name: Build NetworkDoctor.exe
         if: steps.ver.outputs.exists == 'false'
@@ -69,7 +69,7 @@ jobs:
           $extra = @()
           if (Test-Path nd_share.py) { $extra += @("--hidden-import", "nd_share") }
           python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor `
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs @extra `
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab @extra `
             --collect-all scapy NetworkDoctor.py
           if (-not (Test-Path dist\NetworkDoctor.exe)) { Write-Error "exe was not produced"; exit 1 }
 
@@ -114,13 +114,13 @@ jobs:
           pip install pyinstaller
 
       - name: Check that the code loads
-        run: python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs; print('modules OK', nd_core.IS_MAC)"
+        run: python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab; print('modules OK', nd_core.IS_MAC)"
 
       - name: Build Network Doctor.app
         run: |
           python -m PyInstaller --noconfirm --windowed --name NetworkDoctor \
             --osx-bundle-identifier io.github.yadavrkpacheriya.networkdoctor \
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab \
             NetworkDoctor.py
           APP=dist/NetworkDoctor.app
           PL=$APP/Contents/Info.plist

@@ -23,9 +23,21 @@ KIND_CAT = {"Router": core.CAT_NET, "Switch": core.CAT_NET, "Access point": core
             "DVR / NVR": core.CAT_CAM, "Phone": core.CAT_PHONE, "Biometric": core.CAT_BIO, "IoT / TV": core.CAT_IOT,
             "Other": core.CAT_UNK}
 GEAR_KINDS = {"Router", "Switch", "Access point"}
-TAG_FIELDS = ["name", "dept", "location", "kind", "parent", "router_port", "switch_port", "notes"]
+TAG_FIELDS = ["name", "dept", "location", "kind", "parent", "router_port", "switch_port", "notes", "watch"]
 CSV_HEAD = ["MAC", "Name", "Department", "Location", "Type", "Connected to (MAC)", "Router port", "Switch port",
-            "Notes", "Current IP", "Vendor"]
+            "Notes", "Watch (alert if down)", "Current IP", "Vendor"]
+
+
+def watch_value(v):
+    """'yes' / '1' / 'true' -> '1' (watched), anything else -> '' (not watched). None stays None (unchanged)."""
+    if v is None:
+        return None
+    return "1" if str(v).strip().lower() in ("1", "yes", "y", "true", "x", "watch", "critical") else ""
+
+
+def watched(db):
+    """{mac: tag} of the devices that must alert when they stop answering."""
+    return {m: t for m, t in tags_of(db).items() if t.get("watch") == "1"}
 
 
 def tags_of(db):
@@ -104,7 +116,7 @@ def tags_to_csv(devices, db):
         t, d = tags.get(mac, {}), by_mac.get(mac, {})
         w.writerow([mac, t.get("name", ""), t.get("dept", ""), t.get("location", ""), t.get("kind", ""),
                     t.get("parent", ""), t.get("router_port", ""), t.get("switch_port", ""), t.get("notes", ""),
-                    d.get("ip", ""), d.get("vendor", "")])
+                    "yes" if t.get("watch") == "1" else "", d.get("ip", ""), d.get("vendor", "")])
     return out.getvalue()
 
 
@@ -122,7 +134,7 @@ def tags_from_csv(text, db):
         return None
     idx = {"mac": col("mac"), "name": col("name"), "dept": col("department"), "location": col("location"),
            "kind": col("type"), "parent": col("connected"), "router_port": col("router port"),
-           "switch_port": col("switch port"), "notes": col("notes")}
+           "switch_port": col("switch port"), "notes": col("notes"), "watch": col("watch")}
     if idx["mac"] is None:
         raise ValueError("the sheet needs a MAC column")
     done = skipped = 0
@@ -138,6 +150,8 @@ def tags_from_csv(text, db):
             f["kind"] = next((k for k in KINDS if k and k.lower() == f["kind"].strip().lower()), "Other")
         if f.get("parent"):
             f["parent"] = core.norm_mac(f["parent"]) or ""
+        if "watch" in f:
+            f["watch"] = watch_value(f["watch"])
         set_tag(db, mac, **f)
         done += 1
     return done, skipped
@@ -353,6 +367,41 @@ def binding_commands(rows, tags, strict_arp=False, block_random=False, bridge="b
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
+REPORT_TITLES = re.compile(r"^(Half-duplex cable link|PC cable runs at 100 Mbps|Cable errors on) ")
+
+
+def report_issues(db):
+    """Problems the PC fix script found on office PCs: cables at 100 Mbps, half duplex, cable errors."""
+    slow, half, errs = [], [], []
+    for host, r in sorted((db.get("pc_reports") or {}).items()):
+        for a in r.get("links") or []:
+            nm = f"{host} ({r.get('ip', '')}) {a.get('name', '')}"
+            if a.get("duplex") is False:
+                half.append(f"{nm}: half duplex at {a.get('speed', '?')}")
+            elif 0 < int(a.get("bps") or 0) <= 100_000_000:
+                slow.append(f"{nm}: {a.get('speed', '?')}")
+            if int(a.get("errors") or 0) > 50:
+                errs.append(f"{nm}: {int(a['errors']):,} receive errors")
+    out = []
+    if half:
+        out.append({"sev": "critical", "title": f"Half-duplex cable link on {len(half)} PC(s)", "items": half,
+                    "detail": "The PC and the switch port disagree on speed / duplex. That gives collisions, slow file "
+                              "copies and dropped ERP sessions.",
+                    "fix": "Set the PC adapter and the switch port both to Auto-negotiation; replace the patch cable."})
+    if slow:
+        out.append({"sev": "warning", "title": f"PC cable runs at 100 Mbps instead of 1 Gbps on {len(slow)} PC(s)",
+                    "items": slow,
+                    "detail": "Gigabit needs all 8 wires. 100 Mbps usually means a damaged / badly crimped cable, a "
+                              "dirty port or an old 100 Mbps switch on the way.",
+                    "fix": "Replace the patch cable, try another switch port, or replace the old switch."})
+    if errs:
+        out.append({"sev": "warning", "title": f"Cable errors on {len(errs)} PC(s)", "items": errs,
+                    "detail": "The network card receives damaged packets: a bad cable, connector or switch port, or "
+                              "electrical noise from motors / VFD panels near the cable.",
+                    "fix": "Replace the cable / connector, keep data cables away from power cables."})
+    return out
+
+
 def binding_issues(devices, db):
     """Problems with devices that were bound: on another IP, or their reserved IP used by somebody else."""
     with core.DB_LOCK:
@@ -488,6 +537,8 @@ if ($opt.LockGw -and $GW -and $GWMAC) {{
 $ads = foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {{
     [pscustomobject]@{{ name = $a.Name; desc = $a.InterfaceDescription; mac = $a.MacAddress; permanent = $a.PermanentAddress;
         status = [string]$a.Status; wifi = [bool]($a.MediaType -match '802\\.11');
+        speed = [string]$a.LinkSpeed; bps = [int64]$a.ReceiveLinkSpeed; duplex = $a.FullDuplex;
+        errors = [int64]((Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue).ReceivedPacketErrors);
         ip = ((Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ',');
         dhcp = [string](Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp }}
 }}
@@ -566,6 +617,32 @@ COMMANDS = [
     ("Windows", "This PC", "Open Wi-Fi settings (random addresses)", "start ms-settings:network-wifi",
      "Turn 'Random hardware addresses' off by hand."),
     # ---- MikroTik router
+    ("Windows", "This PC", "Is a service reachable? (test a TCP port)",
+     'powershell -NoProfile -Command "Test-NetConnection {ip} -Port {tcpport} | Format-List"',
+     "TcpTestSucceeded True = the port is open from this PC (e.g. 80 web, 445 file sharing, 3389 Remote Desktop, "
+     "1433 SQL / ERP database)."),
+    ("Windows", "This PC", "Cable speed and duplex of this PC",
+     'powershell -NoProfile -Command "Get-NetAdapter | Format-Table Name,Status,LinkSpeed,FullDuplex,MacAddress -Auto"',
+     "100 Mbps on a cable = damaged cable / old switch; FullDuplex False = speed set by hand somewhere."),
+    ("Windows", "This PC", "Network card error counters",
+     'powershell -NoProfile -Command "Get-NetAdapterStatistics | Format-Table Name,ReceivedPacketErrors,'
+     'OutboundPacketErrors,ReceivedDiscardedPackets -Auto"', "Errors that keep growing = bad cable, connector or port."),
+    ("Windows", "This PC", "Routing table", "route print -4",
+     "Two 0.0.0.0 routes (cable + Wi-Fi, or a VPN) = traffic may go out the wrong way."),
+    ("Windows", "This PC", "MTU of each adapter", "netsh interface ipv4 show subinterfaces",
+     "Normal 1500. Use Tools > MTU finder to test the whole path."),
+    ("Windows", "This PC", "Look up a name (DNS)", "nslookup {host}",
+     "Which DNS server answers and which IP it gives. 'Non-existent domain' / timeout = DNS problem."),
+    ("Windows", "This PC", "Shared folders of a PC / NAS", "net view \\\\{ip}", "Lists what a PC or NAS shares."),
+    ("Windows", "This PC", "Firewall on or off (all profiles)", "netsh advfirewall show allprofiles state",
+     "If the PC is on 'Public' profile in the office, sharing and remote tools are blocked."),
+    ("Windows", "This PC", "Network category (Private / Public)",
+     'powershell -NoProfile -Command "Get-NetConnectionProfile | Format-Table Name,InterfaceAlias,NetworkCategory -Auto"',
+     "Office network should be Private. Change: Set-NetConnectionProfile -InterfaceAlias Ethernet -NetworkCategory Private"),
+    ("Windows", "This PC", "Sync the clock with the internet", "w32tm /resync /force",
+     "Wrong PC time breaks HTTPS sites, domain logins and ERP licences. Needs administrator."),
+    ("Windows", "This PC", "Wi-Fi drop report (last 3 days)", "netsh wlan show wlanreport",
+     "Makes an HTML report of every Wi-Fi disconnect and why (opens from C:\\ProgramData\\Microsoft\\Windows\\WlanReport)."),
     ("MikroTik router", "Router", "Which router port is a device on?", "/interface bridge host print where mac-address={mac}",
      "'on-interface' shows the port (e.g. ether2) - tag the device / switch with it for the map."),
     ("MikroTik router", "Router", "DHCP lease of a device", "/ip dhcp-server lease print detail where mac-address={mac}",
@@ -596,11 +673,47 @@ COMMANDS = [
     ("MikroTik router", "Router", "Neighbours (switches / APs the router sees)", "/ip neighbor print detail",
      "Identity, model and port of MikroTik / CDP / LLDP devices - use to tag switches."),
     # ---- Mac
+    ("MikroTik router", "Router", "Router CPU, memory, uptime", "/system resource print",
+     "CPU near 100% = the router is the bottleneck (or a flood / attack). Low uptime = it rebooted (power?)."),
+    ("MikroTik router", "Router", "Router errors in the log", '/log print where topics~"error|critical|warning"',
+     "Recent problems the router itself noticed."),
+    ("MikroTik router", "Router", "Cable test of a port (find the break)", "/interface ethernet cable-test {port}",
+     "Shows each wire pair and roughly how many metres away a cable is broken (on models that support it)."),
+    ("MikroTik router", "Router", "Live traffic of one device", "/tool torch interface=bridge src-address={ip}/32",
+     "What this device is talking to right now and how fast. Ctrl+C to stop."),
+    ("MikroTik router", "Router", "Ping from the router", "/ping {ip} count=20",
+     "If the router can ping it but a PC can't, the problem is between that PC and the switch."),
+    ("MikroTik router", "Router", "Limit the speed of one device", '/queue simple add name="ND limit {name}" target={ip}/32 '
+     'max-limit={limit}/{limit} comment="ND"', "E.g. limit 5M. Stops one PC / camera eating the whole internet line."),
+    ("MikroTik router", "Router", "Remove a speed limit", '/queue simple remove [find name="ND limit {name}"]', ""),
+    ("MikroTik router", "Router", "Fix websites that hang (MSS clamp)",
+     '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn action=change-mss new-mss=clamp-to-pmtu '
+     'passthrough=yes comment="ND: MSS clamp"', "For PPPoE / VPN lines with MTU below 1500 (Tools > MTU finder)."),
+    ("MikroTik router", "Router", "Use fast public DNS on the router",
+     "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes",
+     "After Tools > DNS server test. Make sure the firewall drops DNS (port 53) coming from the internet side."),
+    ("MikroTik router", "Router", "DHCP leases (all devices)", "/ip dhcp-server lease print",
+     "Every address the router gave out; 'D' = dynamic, no D = reserved (bound)."),
+    ("MikroTik router", "Router", "Is the DHCP pool full?", "/ip pool used print count-only",
+     "Compare with the pool size (/ip pool print). A full pool = new devices get no IP (169.254.x.x)."),
+    ("MikroTik router", "Router", "Services open on the router (security)", "/ip service print",
+     "Turn off what you don't use: /ip service disable telnet,ftp,api,api-ssl. Never leave WinBox open to the internet."),
+    ("MikroTik router", "Router", "Who logged in to the router", "/log print where topics~\"account\"",
+     "Logins and failed logins - unknown IPs = someone is guessing the password."),
+    ("MikroTik router", "Router", "Back up the router settings",
+     "/export file=nd-backup; /system backup save name=nd-backup dont-encrypt=no",
+     "Then download nd-backup.rsc / .backup from WinBox > Files. Do it before big changes."),
     ("Mac", "This PC", "My IP and MAC", "ifconfig en0", ""),
     ("Mac", "This PC", "ARP table", "arp -an", ""),
     ("Mac", "This PC", "Ping a device", "ping {ip}", "Ctrl+C to stop."),
     ("Mac", "This PC", "Trace route", "traceroute -n {ip}", ""),
     ("Mac", "This PC", "Renew DHCP lease", "sudo ipconfig set en0 DHCP", ""),
+    ("Mac", "This PC", "Cable speed of the Mac", "ifconfig en0 | grep media",
+     "1000baseT = gigabit. 100baseTX on a cable = damaged cable / old switch."),
+    ("Mac", "This PC", "Wi-Fi details", "system_profiler SPAirPortDataType", "Signal, channel, speed of the Wi-Fi."),
+    ("Mac", "This PC", "Look up a name (DNS)", "nslookup {host}", ""),
+    ("Mac", "This PC", "Clear DNS cache", "sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder", ""),
+    ("Mac", "This PC", "Routing table", "netstat -rn -f inet", ""),
 ]
 
 

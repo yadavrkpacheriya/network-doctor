@@ -63,10 +63,13 @@ class TagDialog(tk.Toplevel):
                 ("location", "Location / room", "entry", None), ("kind", "Type", "combo_ro", T.KINDS),
                 ("parent", "Connected to (switch / AP)", "combo_ro", list(self.parent_opts)),
                 ("router_port", "Router port (for switches / APs / direct cables)", "combo", sorted(ports, key=T._natural)),
-                ("switch_port", "Switch port number", "entry", None), ("notes", "Notes", "entry", None)]
+                ("switch_port", "Switch port number", "entry", None), ("notes", "Notes", "entry", None),
+                ("watch", "Critical - alert if it stops answering", "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"])]
         for r, (key, label, typ, values) in enumerate(rows, start=1):
             ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=3, padx=(0, 10))
             cur = first.get(key, "")
+            if key == "watch":
+                cur = "" if many else ("Yes" if cur == "1" else "No")
             if key == "parent" and cur:
                 cur = next((k for k, v in self.parent_opts.items() if v == cur), "")
             v = tk.StringVar(value=cur)
@@ -98,10 +101,14 @@ class TagDialog(tk.Toplevel):
                     if val == "__router__":
                         val = router["mac"] if router else ""
                 f[k] = (val or None) if many else val
+                if k == "watch":
+                    f[k] = "1" if val == "Yes" else "" if val == "No" else None
             T.set_tag(self.app.db, d["mac"], **f)
         core.save_db(self.app.db)
         self.destroy()
         self.app.after_tags_changed()
+        if hasattr(self.app, "watch_now"):
+            self.app.watch_now()
 
     def clear(self):
         T.set_tag(self.app.db, self.devs[0]["mac"], **{k: "" for k in T.TAG_FIELDS})
@@ -683,8 +690,10 @@ class CommandsTab:
     def _final(self):
         text = self.var_cmd.get().strip()
         for k in sorted(set(re.findall(r"\{(\w+)\}", text))):
-            v = simpledialog.askstring(APP, f"Value for {{{k}}}" + (" (adapter name from 'ipconfig', e.g. Ethernet or Wi-Fi)"
-                                                                     if k == "adapter" else ""), parent=self.app)
+            hint = {"adapter": " (adapter name from 'ipconfig', e.g. Ethernet or Wi-Fi)",
+                    "tcpport": " (TCP port, e.g. 80, 443, 445, 3389, 1433)", "host": " (a name, e.g. google.com)",
+                    "limit": " (speed, e.g. 5M or 512k)", "port": " (router port, e.g. ether2)"}.get(k, "")
+            v = simpledialog.askstring(APP, f"Value for {{{k}}}" + hint, parent=self.app)
             if not v:
                 return None
             text = text.replace("{" + k + "}", v)
