@@ -12,7 +12,10 @@ import webbrowser
 from tkinter import ttk, messagebox
 
 import nd_core as core
+import nd_monitor as M
 import nd_net as NT
+import nd_plugins
+import nd_snmp
 import nd_tabs
 import nd_tools as T
 
@@ -25,6 +28,9 @@ TOOLS = [
     ("speed", "Internet speed and quality",
      "Public IP and ISP, ping / jitter / loss to the router and the internet, download and upload speed, and latency "
      "while the line is busy (bufferbloat). Uses the Cloudflare speed-test servers."),
+    ("switch", "Switch / router details (SNMP, any brand)",
+     "Reads a managed switch or router of any brand over SNMP (read-only): model, uptime, every port with its "
+     "speed, traffic and errors, LLDP neighbours, and which device is plugged into which port."),
     ("ports", "Port scanner",
      "Which services a device offers (open TCP ports), with what each one is and the risky ones marked."),
     ("dns", "DNS lookup / DNS server test",
@@ -396,6 +402,79 @@ class ToolsTab:
                 out(f"         ! {r['risk']}", "warn")
         if stop.is_set():
             out("\n(stopped)", "mute")
+
+    # ------------------------------------------------------------------ switch / router (SNMP)
+    def _build_switch(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        self.var_sw, _ = self._combo(row, "Switch / router:", [], 30)
+        ttk.Label(row, text="Community:").pack(side="left")
+        self.var_sw_comm = tk.StringVar(value="public")
+        ttk.Entry(row, textvariable=self.var_sw_comm, width=14).pack(side="left", padx=4)
+        ttk.Label(row, text="Version:").pack(side="left")
+        self.var_sw_ver = tk.StringVar(value="2c")
+        ttk.Combobox(row, textvariable=self.var_sw_ver, values=["2c", "1"], width=4,
+                     state="readonly").pack(side="left", padx=4)
+        self._run_btn(row, "switch", "Read", self._switch)
+        ttk.Label(f, text="Turn on SNMP (v2c, read-only) on the switch first, with a community name. Network Doctor "
+                          "never changes anything on it.", foreground="#667085").pack(anchor="w")
+        if self.app.selected_device:
+            self.var_sw.set(self.app.selected_device.get("ip", ""))
+        self._out_box(f, "switch")
+
+    def _switch(self, out, stop):
+        host = self._ip_of(self.var_sw.get())
+        if not host:
+            out("Choose a switch or router, or type its IP.", "warn")
+            return
+        creds = {"community": self.var_sw_comm.get().strip() or "public", "version": self.var_sw_ver.get()}
+        out(f"Reading {host} over SNMP v{creds['version']} ...", "h")
+        plugin = nd_plugins.find(host, creds)
+        if not plugin:
+            out("No SNMP answer. Check that SNMP is on, the community name is right, and this PC's IP is "
+                "allowed to read it.", "crit")
+            return
+        d = plugin.read(host, creds)
+        si = d["system"]
+        out(f"\n{si['name'] or host}" + (f"  -  {si['vendor']}" if si["vendor"] else ""), "h")
+        if si["descr"]:
+            out("  " + si["descr"][:160])
+        out(f"  Up for {nd_snmp.uptime_text(si['uptime'])}" + (f"   Location: {si['location']}" if si["location"] else "")
+            + (f"   Contact: {si['contact']}" if si["contact"] else ""))
+
+        ports = [i for i in d["interfaces"] if i["type"] != 24]  # 24 = loopback
+        up = [i for i in ports if i["status"] == "up"]
+        out(f"\nPorts ({len(ports)}, {len(up)} up)", "h")
+        for i in ports:
+            if i["status"] != "up":
+                out(f"  {i['name'][:24]:<24} {i['status']}" + (f"   {i['alias']}" if i["alias"] else ""), "mute")
+                continue
+            out(f"  {i['name'][:24]:<24} up     {nd_snmp.speed_text(i['speed_mbps']):<9} in {M.fmt_bytes(i['in_octets']):>9}"
+                f"  out {M.fmt_bytes(i['out_octets']):>9}" + (f"   {i['alias']}" if i["alias"] else ""))
+            if i["speed_mbps"] in (10, 100) and i["type"] == 6:
+                out(f"      ! runs at {i['speed_mbps']} Mbps - check the cable or the device's network card", "warn")
+            if i["in_errors"] or i["out_errors"]:
+                out(f"      ! errors in/out {i['in_errors']:,} / {i['out_errors']:,} - bad cable, connector or duplex "
+                    "mismatch", "warn")
+
+        if d["neighbors"]:
+            out("\nNeighbours (LLDP)", "h")
+            for n in d["neighbors"]:
+                out(f"  {n['local_port'][:24]:<24} {n['name'] or n['chassis']}" + (f"  port {n['port']}" if n["port"] else ""))
+
+        by_port = nd_snmp.ports_with_devices(d["macs"])
+        out(f"\nDevices per port ({len(d['macs'])} MAC addresses)", "h")
+        if not by_port:
+            out("  The switch did not share its MAC address table.", "mute")
+        known = {x.get("mac"): x for x in self.app.devices if x.get("mac")}
+        for port, macs in by_port.items():
+            if len(macs) > 4:
+                out(f"  {port[:24]:<24} {len(macs)} devices - probably a link to another switch, AP or the router")
+                continue
+            for k, mac in enumerate(macs):
+                x = known.get(mac)
+                who = f"{x.get('name') or ''}  {x.get('ip', '')}".strip() if x else ""
+                out(f"  {(port if k == 0 else '')[:24]:<24} {mac}  {who}")
 
     # ------------------------------------------------------------------ DNS
     def _build_dns(self, f):
