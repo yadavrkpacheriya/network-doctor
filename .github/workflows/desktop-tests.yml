@@ -36,7 +36,39 @@ jobs:
           python-version: "3.12"
 
       - name: Check that the engine modules load
-        run: python -c "import nd_core, nd_net, nd_snmp, nd_plugins; print('engine modules OK')"
+        run: python -c "import nd_core, nd_net, nd_snmp, nd_plugins, nd_linux; print('engine modules OK')"
 
       - name: Run the tests
         run: python -m unittest discover -s tests -v
+
+  # Proves the Linux app still builds and starts, before anything is released.
+  linux-build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux \
+            NetworkDoctor.py
+          ls -lh dist/NetworkDoctor
+
+      - name: Start the app for 15 seconds on a virtual screen
+        run: |
+          sudo apt-get install -y xvfb >/dev/null
+          set +e
+          timeout 15 xvfb-run -a ./dist/NetworkDoctor > run.log 2>&1
+          code=$?
+          cat run.log
+          # 124 = still running when the timeout stopped it, which is what a healthy window does
+          if [ $code -ne 124 ]; then echo "The app exited early with code $code"; exit 1; fi

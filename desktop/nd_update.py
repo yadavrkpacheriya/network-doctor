@@ -25,11 +25,12 @@ import urllib.request
 REPO = "yadavrkpacheriya/network-doctor"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
-SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py"]
+SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py"]
 UA = {"User-Agent": "NetworkDoctor-updater", "Accept": "application/vnd.github+json"}
 IS_MAC = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
 # the file each kind of computer downloads from a release
-ASSET = "NetworkDoctor-macOS.zip" if IS_MAC else "NetworkDoctor.exe"
+ASSET = "NetworkDoctor-macOS.zip" if IS_MAC else ("NetworkDoctor-Linux" if IS_LINUX else "NetworkDoctor.exe")
 
 
 class UpdateError(Exception):
@@ -89,7 +90,7 @@ def download_exe(info, progress=lambda done, total: None):
         dest = os.path.join(folder, "NetworkDoctor-update.zip")
     else:
         folder = os.path.dirname(sys.executable) if is_frozen() else tempfile.gettempdir()
-        dest = os.path.join(folder, "NetworkDoctor.new.exe")
+        dest = os.path.join(folder, "NetworkDoctor.new" if IS_LINUX else "NetworkDoctor.new.exe")
     h = hashlib.sha256()
     total = info.get("exe_size") or 0
     done = 0
@@ -166,8 +167,22 @@ def apply_update(path):
     """Platform-independent: replace the running app with the verified download. Caller must exit."""
     if IS_MAC:
         apply_mac(path)
+    elif IS_LINUX:
+        apply_linux(path)
     else:
         apply_exe(path)
+
+
+def apply_linux(new_path):
+    """Linux lets a running program's file be replaced: swap it in, then start the new one. Caller must exit."""
+    exe = sys.executable
+    try:
+        os.chmod(new_path, 0o755)
+        os.replace(new_path, exe)
+    except OSError as e:
+        _rm(new_path)
+        raise UpdateError(f"Could not replace {exe} ({e}). Move Network Doctor to a folder you can write to.")
+    subprocess.Popen([exe], start_new_session=True, close_fds=True)
 
 
 def apply_exe(new_path):
@@ -229,7 +244,7 @@ def restart_sources(folder):
 def cleanup_leftovers():
     """Removes a half-downloaded update file left from an earlier attempt."""
     if is_frozen():
-        _rm(os.path.join(os.path.dirname(sys.executable), "NetworkDoctor.new.exe"))
+        _rm(os.path.join(os.path.dirname(sys.executable), "NetworkDoctor.new" if IS_LINUX else "NetworkDoctor.new.exe"))
 
 
 def _rm(p):
