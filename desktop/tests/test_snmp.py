@@ -203,5 +203,55 @@ class AgentTests(unittest.TestCase):
             S.Snmp.__init__ = orig
 
 
+class LiveTraffic(unittest.TestCase):
+    """counters() -> rates() -> port_warnings() / mac_moves(): the live traffic and loop check."""
+
+    def test_counters_and_rates(self):
+        mib = dict(MIB)
+        mib["1.3.6.1.2.1.31.1.1.1.9.1"] = (S.COUNTER64, 1000)          # broadcasts in
+        mib["1.3.6.1.2.1.31.1.1.1.7.1"] = (S.COUNTER64, 5000)          # unicast in
+        mib["1.3.6.1.2.1.31.1.1.1.10.1"] = (S.COUNTER64, 0)            # out octets
+        agent = FakeAgent(mib)
+        try:
+            c = S.Snmp("127.0.0.1", port=agent.port, timeout=1, retries=0)
+            a = S.counters(c, clock=lambda: 100.0)
+            self.assertEqual(a["bits"]["in"], 64)
+            self.assertEqual(a["ports"][1]["in"], 2 ** 40)
+            self.assertEqual(a["ports"][1]["in_err"], 7)
+            mib["1.3.6.1.2.1.31.1.1.1.6.1"] = (S.COUNTER64, 2 ** 40 + 12_500_000)  # 100 Mbit in 10 s
+            mib["1.3.6.1.2.1.31.1.1.1.9.1"] = (S.COUNTER64, 1000 + 30_000)        # 3000 broadcasts / s
+            b = S.counters(c, clock=lambda: 110.0)
+        finally:
+            agent.close()
+        r = S.rates(a, b)[1]
+        self.assertAlmostEqual(r["in"], 1_250_000)  # bytes / s = 10 Mbit/s
+        self.assertAlmostEqual(r["bcast"], 3000)
+        self.assertAlmostEqual(S.utilisation(r, 1000), 1.0)
+        w = S.port_warnings(r, 1000)
+        self.assertEqual(w[0][0], "crit")
+        self.assertIn("storm", w[0][1])
+
+    def test_wrap_and_reset(self):
+        a = {"time": 0, "ports": {1: {"in": 2 ** 32 - 100, "out": 500}}, "bits": {"in": 32, "out": 64}}
+        b = {"time": 2, "ports": {1: {"in": 100, "out": 10}}, "bits": {"in": 32, "out": 64}}
+        r = S.rates(a, b)[1]
+        self.assertEqual(r["in"], 100)       # 32-bit counter wrapped: 200 bytes in 2 s
+        self.assertNotIn("out", r)           # 64-bit counter went back: device reset, no rate
+
+    def test_warnings(self):
+        self.assertEqual(S.port_warnings({"in": 1000, "bcast": 20, "ucast": 500}, 1000), [])
+        loop = S.port_warnings({"bcast": 400, "ucast": 100}, 1000)
+        self.assertEqual(loop[0][0], "crit")
+        self.assertEqual(S.port_warnings({"bcast": 400, "ucast": 5000}, 1000), [])  # busy server, not a loop
+        busy = S.port_warnings({"in": 11_000_000}, 100)  # 88 Mbit/s on a 100 Mbit port
+        self.assertEqual([lv for lv, _ in busy], ["warn"])
+        self.assertIsNone(S.utilisation({"in": 5}, 0))
+
+    def test_mac_moves(self):
+        before = {"A": "Gi1/0/2", "B": "Gi1/0/2", "C": "Gi1/0/10", "D": "Gi1/0/5"}
+        after = {"A": "Gi1/0/10", "B": "Gi1/0/10", "C": "Gi1/0/2", "D": "Gi1/0/5", "E": "Gi1/0/7"}
+        self.assertEqual(S.mac_moves(before, after), {("Gi1/0/2", "Gi1/0/10"): ["A", "B", "C"]})
+
+
 if __name__ == "__main__":
     unittest.main()

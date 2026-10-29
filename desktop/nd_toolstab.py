@@ -171,6 +171,11 @@ class ToolsTab:
                         self.status[key].set("finished " + time.strftime("%H:%M:%S"))
                 elif tag == "status":
                     self.status[key].set(text)
+                elif tag == "clear":
+                    t = self.texts[key]
+                    t.configure(state="normal")
+                    t.delete("1.0", "end")
+                    t.configure(state="disabled")
                 elif tag == "log":
                     self.app._health_log(*text)
                 else:
@@ -416,8 +421,13 @@ class ToolsTab:
         ttk.Combobox(row, textvariable=self.var_sw_ver, values=["2c", "1"], width=4,
                      state="readonly").pack(side="left", padx=4)
         self._run_btn(row, "switch", "Read", self._switch)
+        row2 = ttk.Frame(f)
+        row2.pack(fill="x", pady=(4, 0))
+        self._run_btn(row2, "switch", "Live traffic + loop check", self._switch_live)
+        self._stop_btn(row2, "switch")
         ttk.Label(f, text="Turn on SNMP (v2c, read-only) on the switch first, with a community name. Network Doctor "
-                          "never changes anything on it.", foreground="#667085").pack(anchor="w")
+                          "never changes anything on it. Live traffic refreshes every 5 seconds until you press Stop.",
+                  foreground="#667085").pack(anchor="w")
         if self.app.selected_device:
             self.var_sw.set(self.app.selected_device.get("ip", ""))
         self._out_box(f, "switch")
@@ -475,6 +485,87 @@ class ToolsTab:
                 x = known.get(mac)
                 who = f"{x.get('name') or ''}  {x.get('ip', '')}".strip() if x else ""
                 out(f"  {(port if k == 0 else '')[:24]:<24} {mac}  {who}")
+
+    def _switch_live(self, out, stop):
+        """Traffic per port every 5 s, plus loop signs: broadcast storms and MACs bouncing between ports."""
+        host = self._ip_of(self.var_sw.get())
+        if not host:
+            out("Choose a switch or router, or type its IP.", "warn")
+            return
+        c = nd_snmp.Snmp(host, self.var_sw_comm.get().strip() or "public", self.var_sw_ver.get())
+        out(f"Reading {host} ...", "h")
+        try:
+            si = nd_snmp.system_info(c)
+            ifs = {i["index"]: i for i in nd_snmp.interfaces(c) if i["type"] != 24}
+        except nd_snmp.SnmpError as e:
+            out(f"No SNMP answer ({e}). Check that SNMP is on, the community name is right, and this PC's IP is "
+                "allowed to read it.", "crit")
+            return
+        name = si["name"] or host
+        known = {x.get("mac"): x for x in self.app.devices if x.get("mac")}
+        prev, macs, rounds, logged = nd_snmp.counters(c), None, 0, set()
+        moves_seen = {}  # (port_a, port_b) -> set of MACs that bounced between them this session
+        while not stop.wait(5):
+            try:
+                cur = nd_snmp.counters(c)
+                if rounds % 6 == 0:  # MAC table every 30 s: it is big on large switches
+                    m = nd_snmp.mac_table(c, list(ifs.values()))
+                    if macs is not None:
+                        for pair, ms in nd_snmp.mac_moves(macs, m).items():
+                            moves_seen.setdefault(pair, set()).update(ms)
+                    macs = m
+            except nd_snmp.SnmpError as e:
+                out(f"{name} stopped answering ({e}) - retrying", "status")
+                continue
+            rates, prev, rounds = nd_snmp.rates(prev, cur), cur, rounds + 1
+            rows = []
+            for idx, r in rates.items():
+                i = ifs.get(idx)
+                if i:
+                    rows.append((r.get("in", 0) + r.get("out", 0), i, r))
+            rows.sort(key=lambda x: -x[0])
+            alerts = [(i, lv, t) for _, i, r in rows for lv, t in nd_snmp.port_warnings(r, i["speed_mbps"])]
+            loops = {p: ms for p, ms in moves_seen.items() if len(ms) >= 3}
+
+            out("", "clear")
+            out(f"{name}  -  live traffic   {time.strftime('%H:%M:%S')}   (every 5 s, press Stop to end)", "h")
+            if loops or any(lv == "crit" for _, lv, _ in alerts):
+                out("\nLOOP WARNING", "crit")
+                for (a, b), ms in loops.items():
+                    out(f"  {len(ms)} devices keep jumping between {a} and {b}: these two ports are connected to each "
+                        "other through a loop. Unplug the cable on one of them.", "crit")
+                for i, lv, t in alerts:
+                    if lv == "crit":
+                        out(f"  {i['name']}: {t}", "crit")
+                for key in [f"{a}|{b}" for a, b in loops] + [i["name"] for i, lv, _ in alerts if lv == "crit"]:
+                    if key not in logged:
+                        logged.add(key)
+                        out(("Loop check", "crit", f"{name}: possible loop at {key.replace('|', ' <-> ')}"), "log")
+            out(f"\n  {'Port':<22} {'Speed':<9} {'In':>11} {'Out':>11} {'Busy':>5} {'Bcast/s':>8}  Device")
+            for total, i, r in rows[:40]:
+                u = nd_snmp.utilisation(r, i["speed_mbps"])
+                who = ""
+                if macs:
+                    on = [mac for mac, port in macs.items() if port == i["name"]]
+                    if len(on) == 1 and on[0] in known:
+                        who = known[on[0]].get("name") or known[on[0]].get("ip", "")
+                    elif len(on) > 4:
+                        who = f"{len(on)} devices (switch / AP)"
+                    elif on:
+                        who = on[0] if len(on) == 1 else f"{len(on)} devices"
+                lvs = [lv for lv, _ in nd_snmp.port_warnings(r, i["speed_mbps"])]
+                mark = "!!" if "crit" in lvs else ("! " if lvs else "  ")
+                out(f"{mark}{i['name'][:22]:<22} {nd_snmp.speed_text(i['speed_mbps']):<9} {M.fmt_rate(r.get('in', 0)):>11} "
+                    f"{M.fmt_rate(r.get('out', 0)):>11} {'' if u is None else f'{u:.0f}%':>5} "
+                    f"{r.get('bcast', 0):>8,.0f}  {who[:30]}", "mute" if total < 1000 and not lvs else "")
+            warns = [(i, t) for i, lv, t in alerts if lv == "warn"]
+            if warns:
+                out("\nOther problems", "h")
+                for i, t in warns:
+                    out(f"  {i['name']}: {t}", "warn")
+            if not loops and not alerts:
+                out("\nNo loop signs and no busy or faulty ports right now.", "ok")
+            out(f"{name}: {len(rows)} ports, updated {time.strftime('%H:%M:%S')}", "status")
 
     # ------------------------------------------------------------------ DNS
     def _build_dns(self, f):
