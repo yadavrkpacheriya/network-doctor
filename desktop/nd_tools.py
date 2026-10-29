@@ -72,6 +72,70 @@ def set_tag(db, mac, **fields):
             tags_of(db).pop(mac, None)
 
 
+# search words like "dept:accounts" look only in that field
+FILTER_FIELDS = {"name": "name", "dept": "dept", "department": "dept", "loc": "location", "location": "location",
+                 "type": "kind", "kind": "kind", "port": "port", "switch": "parent", "vendor": "vendor",
+                 "ip": "ip", "mac": "mac", "notes": "notes"}
+SHOW = ["All devices", "Online only", "Not tagged yet", "Watched (alert if down)"]
+
+
+def _field_text(d, field):
+    t = d.get("tag") or {}
+    if field == "port":
+        return f"{t.get('router_port', '')} {t.get('switch_port', '')}"
+    if field == "ip":
+        return " ".join(d.get("ips") or [d.get("ip", "")])
+    if field in ("location", "parent", "notes"):
+        return t.get(field, "") + (" " + " ".join(d.get("notes") or []) if field == "notes" else "")
+    if field == "kind":
+        return d.get("kind") or t.get("kind", "")
+    return str(d.get(field) or "")
+
+
+def tag_values(devices, field):
+    """Sorted distinct values of one tag field (for the filter lists)."""
+    vals = {(d.get("tag") or {}).get(field, "").strip() for d in devices}
+    return sorted((v for v in vals if v), key=str.lower)
+
+
+def filter_devices(devices, query="", dept="", location="", show=SHOW[0]):
+    """Devices that match every search word (or field:value word), the department, location and show choice."""
+    words = re.findall(r'(\w+):"([^"]*)"|(\w+):(\S+)|"([^"]*)"|(\S+)', (query or "").lower())
+    out = []
+    for d in devices:
+        t = d.get("tag") or {}
+        if dept and t.get("dept", "") != dept:
+            continue
+        if location and t.get("location", "") != location:
+            continue
+        if show == SHOW[1] and not d.get("online"):
+            continue
+        if show == SHOW[2] and any(t.get(k) for k in ("name", "dept", "location", "kind")):
+            continue
+        if show == SHOW[3] and not watch_value(t.get("watch")):
+            continue
+        everything = None
+        ok = True
+        for f1, v1, f2, v2, quoted, plain in words:
+            field, value = (f1, v1) if f1 else (f2, v2) if f2 else ("", quoted or plain)
+            if field and field in FILTER_FIELDS:
+                hay = _field_text(d, FILTER_FIELDS[field]).lower()
+            else:
+                if field:  # an unknown "x:y" is searched as plain text
+                    value = f"{field}:{value}"
+                if everything is None:
+                    everything = " ".join([d.get("name") or "", " ".join(d.get("ips") or []), d.get("mac") or "",
+                                           d.get("vendor") or "", d.get("reason") or "", " ".join(d.get("notes") or []),
+                                           d.get("dept") or "", " ".join(str(v) for v in t.values())]).lower()
+                hay = everything
+            if value not in hay:
+                ok = False
+                break
+        if ok:
+            out.append(d)
+    return out
+
+
 def is_gear(d, tags):
     t = tags.get(d.get("mac") or "", {})
     if t.get("kind"):
