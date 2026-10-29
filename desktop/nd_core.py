@@ -44,7 +44,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 APP = "Network Doctor"
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -1320,3 +1320,114 @@ def local_lease_seconds(lip):
                 except ValueError:
                     continue
     return None
+
+
+# ==========================================================================
+# quick health check (runs every few minutes between full scans)
+# ==========================================================================
+QUICK_TITLES = re.compile(r"conflict|rogue dhcp|dhcp is given|broadcast|loop|unstable|duplicate replies|extra router",
+                          re.I)
+
+
+def quick_check(subnet, known_ips, opts, stop=None):
+    """Fast loop / conflict / rogue-DHCP / stability check on the devices found by the last full scan.
+    Returns a raw dict in the same shape as scan(), so analyse() can judge it."""
+    def chk():
+        if stop is not None and stop.is_set():
+            raise Stopped()
+
+    gw, lip = detect_network()
+    net = ipaddress.ip_network(subnet, strict=False)
+    admin = is_admin()
+    try:
+        local = ipaddress.IPv4Address(lip) in net
+    except Exception:
+        local = True
+    raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": str(net), "admin": admin,
+                    "scapy": False, "tests": {}, "local_subnet": local, "quick": True},
+           "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},
+           "self_mac": local_mac(lip)}
+    tests = raw["meta"]["tests"]
+    t_start = time.time()
+    mon = {}
+    mon_t = None
+    if gw:
+        mon_t = threading.Thread(target=gateway_monitor, args=(gw, 12, mon), daemon=True)
+        mon_t.start()
+    # broadcast level over 6 s (loop / storm)
+    b0, t0 = nonunicast_rx(), time.time()
+    for _ in range(12):
+        chk()
+        time.sleep(0.5)
+    b1 = nonunicast_rx()
+    if b0 is not None and b1 is not None and b1 >= b0:
+        tests["bcast_pps"] = round((b1 - b0) / max(time.time() - t0, 1), 1)
+    # IP conflicts on the known devices
+    ips = [ip for ip in known_ips if ip and ip != lip]
+    try:
+        ips = [ip for ip in ips if ipaddress.IPv4Address(ip) in net][:1024]
+    except Exception:
+        pass
+    if local and ips:
+        rounds = 2 if admin else 1
+        for _ in range(rounds):
+            chk()
+            if admin:
+                flush_arp_cache()
+            if IS_WIN:
+                with ThreadPoolExecutor(96) as ex:
+                    for ip, mac in zip(ips, ex.map(win_sendarp, ips)):
+                        if mac:
+                            raw["arp"][ip].add(mac)
+            else:
+                with ThreadPoolExecutor(64) as ex:
+                    list(ex.map(lambda ip: ping(ip, 600), ips))
+                for ip, mac in os_arp_table().items():
+                    if ip in ips:
+                        raw["arp"][ip].add(mac)
+        if admin:
+            tests["conflict_rounds"] = rounds
+    use_scapy = opts.get("deep") and scapy_ok()
+    raw["meta"]["scapy"] = bool(use_scapy)
+    if use_scapy and local:
+        try:
+            for ip, macs in scapy_arp_all_replies(net, gw, rounds=1).items():
+                raw["arp"][ip] |= macs
+            tests["scapy_arp"] = True
+        except Exception as e:
+            tests["scapy_arp_err"] = str(e)[:150]
+    chk()
+    # rogue DHCP (not every time: each probe appears as a line in the router's DHCP log)
+    if opts.get("dhcp", True):
+        try:
+            tests["dhcp"] = scapy_dhcp_probe(gw, wait=4) if use_scapy else dhcp_probe_udp(raw["self_mac"], wait=4)
+        except Exception as e:
+            tests["dhcp_err"] = (str(e) or type(e).__name__)[:150]
+    chk()
+    # duplicate replies (loop / router IP clash) and echo test
+    if gw and admin:
+        try:
+            tests["icmp_dup"] = icmp_duplicate_test(gw, lip, count=10)
+        except Exception as e:
+            tests["icmp_dup_err"] = str(e)[:150]
+    if use_scapy and gw:
+        try:
+            tests["echo"] = scapy_loop_echo(gw, listen=3)
+        except Exception as e:
+            tests["echo_err"] = str(e)[:150]
+    if mon_t:
+        mon_t.join(timeout=30)
+        tests["gw_ping"] = mon
+    raw["meta"]["finished"] = now_s()
+    raw["meta"]["duration"] = int(time.time() - t_start)
+    raw["arp"] = {k: sorted(v) for k, v in raw["arp"].items()}
+    return raw
+
+
+def analyse_quick(raw, devices, db):
+    """Judges a quick check with the normal rules, keeping only loop / conflict / DHCP / stability results."""
+    issues, checks = analyse(raw, [d for d in devices if d.get("online")], db)
+    keep = [i for i in issues if QUICK_TITLES.search(i["title"])]
+    checks = [c for c in checks if QUICK_TITLES.search(c[0]) or c[0] in ("IP conflicts", "Gateway stability",
+                                                                          "Loop overall", "Loop echo test")]
+    return keep, checks

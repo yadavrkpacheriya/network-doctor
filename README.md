@@ -36,6 +36,7 @@ Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/re
 | Tab | Shows |
 |---|---|
 | **Devices** | Every device, grouped: router, network equipment, computers, CCTV, printers, biometric, phones, smart TV / IoT, unknown, and devices not online now. For each one it shows the IP type (DHCP / static / fixed, with the evidence), live bandwidth, and why it got its category. Buttons: Analyse, Ping (live graph), Open in browser, Traceroute, Set label. |
+| **Automatic checks (24/7)** | A loop / IP-conflict / rogue-DHCP / stability check every 5 minutes and a full scan every 30 minutes (both adjustable). A pop-up and sound when a new problem appears, a "Resolved" note when it goes away, and a monthly health log in Excel format. It can start with Windows (or at Mac login), minimised. |
 | **Live monitor** | Runs continuously. A 10-minute graph of broadcasts per second and router ping, with markers when a port goes down. Also the top bandwidth users and a timeline of events. |
 | **Root cause** | Ranked causes, each with confidence, evidence and what to do. For example: *loop behind ether2*, *ether2 flapping with no loop → cable or switch power*, *device X uses 70% of the internet*, *device talking to a botnet server*, *DVR reachable from the internet*, *IP conflict*, *rogue DHCP*, *password guessing on the router*. |
 | **Problems / Health checks** | Results of the scan. |

@@ -811,6 +811,7 @@ class Monitor:
         self._state = {"storm": False, "gw_down": False}
         self.echo_tokens = {}
         self.lease_time = None
+        self.self_mac = None  # this PC: its own DHCP test requests are not reported as problems
 
     # ---- events
     def event(self, sev, source, text, kind=None, data=None):
@@ -863,6 +864,8 @@ class Monitor:
         self.log_sources.add(addr)
         kind, sev, d = parse_router_line(text)
         now = time.time()
+        if kind == "dhcp_fail" and self.self_mac and d.get("mac") == self.self_mac:
+            sev = "debug"  # Network Doctor's own rogue-DHCP test, not a real problem
         with self.lock:
             if kind in ("dhcp_assign", "dhcp_renew"):
                 how = "router log (lease renewal)" if kind == "dhcp_renew" else "router log (lease given)"

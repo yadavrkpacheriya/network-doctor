@@ -7,6 +7,7 @@ Files: NetworkDoctor.py (this window), nd_core.py (scan engine), nd_monitor.py (
 Build a single exe with Build_NetworkDoctor_EXE.bat.
 """
 
+import csv
 import ctypes
 import datetime as dt
 import html
@@ -48,7 +49,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -396,6 +397,7 @@ class App(tk.Tk):
         self.mon = None
         self.ev_seen = 0
         self.rca_cache = None
+        self._auto_init()
         self._build()
         self.after(100, self._poll)
         self.after(2000, self._tick)
@@ -408,7 +410,9 @@ class App(tk.Tk):
         if self.var_share.get():
             self.after(1200, self.toggle_share)
         self.after(15000, lambda: self.check_updates(True))
-        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.protocol("WM_DELETE_WINDOW", self._on_close_button)
+        if "--minimized" in sys.argv:  # started automatically at login
+            self.after(600, self.iconify)
 
     def _bg_load(self):
         self.q.put(("scapy", core.scapy_ok()))
@@ -437,8 +441,8 @@ class App(tk.Tk):
         ttk.Checkbutton(top, text="Deep packet tests", variable=self.var_deep).pack(side="left", padx=6)
         self.var_fast = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Fast", variable=self.var_fast).pack(side="left")
-        self.var_auto = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top, text="Re-scan every 30 min", variable=self.var_auto).pack(side="left", padx=6)
+        self.var_autoinfo = tk.StringVar(value="Auto checks: starting...")
+        ttk.Label(top, textvariable=self.var_autoinfo, foreground="#1f7a3d").pack(side="left", padx=8)
         if core.IS_WIN and not core.is_admin():
             ttk.Button(top, text="Restart as Administrator (full tests)", command=self.elevate).pack(side="right")
         elif core.is_admin():
@@ -588,6 +592,30 @@ class App(tk.Tk):
         self.var_upd = tk.StringVar(value=f"Version {VERSION}")
         ttk.Label(up, textvariable=self.var_upd).pack(side="left", padx=10)
         ttk.Button(up, text="Release page", command=lambda: webbrowser.open(U.RELEASES_PAGE)).pack(side="right")
+        au = ttk.LabelFrame(f, text="Automatic checks (24/7)", padding=(8, 4))
+        au.pack(fill="x", pady=(0, 6))
+        st = self._settings()
+        ttk.Label(au, text="Full scan every").pack(side="left")
+        self.var_full_min = tk.StringVar(value=str(st.get("auto_full_min", 30)))
+        cb1 = ttk.Combobox(au, textvariable=self.var_full_min, values=["off", "15", "30", "60", "120"], width=5,
+                           state="readonly")
+        cb1.pack(side="left", padx=(4, 2))
+        ttk.Label(au, text="min      Loop / conflict check every").pack(side="left")
+        self.var_quick_min = tk.StringVar(value=str(st.get("auto_quick_min", 5)))
+        cb2 = ttk.Combobox(au, textvariable=self.var_quick_min, values=["off", "2", "5", "10", "15"], width=5,
+                           state="readonly")
+        cb2.pack(side="left", padx=(4, 2))
+        ttk.Label(au, text="min").pack(side="left")
+        for cb in (cb1, cb2):
+            cb.bind("<<ComboboxSelected>>", lambda e: self._save_auto())
+        self.var_alerts = tk.BooleanVar(value=st.get("alerts", True))
+        ttk.Checkbutton(au, text="Pop-up + sound for new problems", variable=self.var_alerts,
+                        command=self._save_auto).pack(side="left", padx=12)
+        self.var_autostart = tk.BooleanVar(value=self._autostart_enabled())
+        ttk.Checkbutton(au, text="Start with Windows" if core.IS_WIN else "Start at login",
+                        variable=self.var_autostart, command=self.toggle_autostart).pack(side="left", padx=4)
+        ttk.Button(au, text="Health log", command=self.open_health_log).pack(side="right")
+        ttk.Button(au, text="Run check now", command=lambda: self.start_quick(manual=True)).pack(side="right", padx=6)
         ph = ttk.LabelFrame(f, text="Phone app link (office LAN only)", padding=(8, 4))
         ph.pack(fill="x", pady=(0, 6))
         self.var_share = tk.BooleanVar(value=self._settings().get("share_enabled", False))
@@ -666,9 +694,10 @@ class App(tk.Tk):
             self._share_label()
         except Exception:
             pass
-        if self.var_auto.get() and self.last_scan_t and time.time() - self.last_scan_t > 1800 \
-                and str(self.btn_scan["state"]) == "normal":
-            self.start_scan()
+        try:
+            self._auto_tick()
+        except Exception:
+            pass
         self.after(2000, self._tick)
 
     def _tick_once(self):
@@ -693,6 +722,7 @@ class App(tk.Tk):
                 continue
             self.te.insert("", 0, text=M.tstr(e["t"]), values=(e["sev"].upper(), e["src"], e["text"]),
                            tags=(e["sev"],))
+            self._event_alert(e)
         kids = self.te.get_children()
         if len(kids) > 1500:
             self.te.delete(*kids[1500:])
@@ -810,8 +840,12 @@ class App(tk.Tk):
                 self.tv.set(iid, "bw", f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}")
 
     # ---------------------------------------------------------------- scan
-    def start_scan(self):
+    def start_scan(self, auto=False):
         if getattr(self, "scanning", False):
+            return
+        if self.quick_running:  # the loop / conflict check finishes first (a few seconds)
+            self.pending_scan = True
+            self.var_status.set("Scan will start when the running check finishes...")
             return
         try:
             net = ipaddress.ip_network(self.var_net.get().strip(), strict=False)
@@ -823,6 +857,7 @@ class App(tk.Tk):
             return
         self.stop_ev.clear()
         self.scanning = True
+        self._scan_is_auto = auto
         self.btn_scan.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get()}
@@ -876,7 +911,18 @@ class App(tk.Tk):
                     self._reset("Scan stopped.")
                 elif k == "error":
                     self._reset("Scan failed.")
-                    messagebox.showerror(APP, msg[1])
+                    self._health_log("Full scan", "warning", "scan failed: " + msg[1].splitlines()[0][:200])
+                    if not getattr(self, "_scan_is_auto", False):  # unattended runs never block on a dialog
+                        messagebox.showerror(APP, msg[1])
+                    if self.pending_scan:
+                        self.pending_scan = False
+                elif k == "quick_done":
+                    self._on_quick(*msg[1:])
+                elif k == "quick_err":
+                    self.quick_running = False
+                    self.quick_summary = "check failed"
+                    self._health_log("Loop / conflict check", "warning", "check failed: " + msg[1][:200])
+                    self._auto_label()
         except queue.Empty:
             pass
         self.after(100, self._poll)
@@ -910,6 +956,10 @@ class App(tk.Tk):
         self.fill_devices()
         self.fill_problems()
         self.fill_checks()
+        if self.mon:
+            self.mon.self_mac = self.raw.get("self_mac")
+        self._evaluate("Full scan", self.issues, dhcp_tested=True)
+        self._auto_label()
 
     # ---------------------------------------------------------------- tables
     def fill_devices(self):
@@ -1204,6 +1254,322 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror(APP, str(e))
 
+    # ---------------------------------------------------------------- automatic checks (24/7) and alerts
+    # monitor events that deserve a pop-up (critical / warning only); stp_tc is only logged
+    ALERT_KINDS = {"storm", "loop", "loop_echo", "mac_flap", "gw_down", "arp_spoof", "threat", "conflict",
+                   "rogue_dhcp", "router_power", "link_down", "exposed", "login_fail"}
+    TASK_NAME = "Network Doctor"
+    PLIST_ID = "io.github.yadavrkpacheriya.networkdoctor"
+
+    def _auto_init(self):
+        self.quick_running = False
+        self.pending_scan = False
+        self.last_quick_t = 0
+        self.last_dhcp_probe = 0
+        self.alerts_active = {}   # problem key -> {"title","sev","first","last","source"}
+        self.alert_cool = {}      # monitor-event key -> time of last pop-up
+        self.alert_mute_until = 0
+        self.alert_win = None
+        self.alert_lines = []
+        self.quick_summary = "not run yet"
+
+    @staticmethod
+    def _interval(var):
+        v = var.get().strip()
+        return None if v == "off" or not v.isdigit() else int(v) * 60
+
+    def _save_auto(self):
+        st = self._settings()
+        st["auto_full_min"] = self.var_full_min.get()
+        st["auto_quick_min"] = self.var_quick_min.get()
+        st["alerts"] = self.var_alerts.get()
+        self._save_settings()
+        self._auto_label()
+
+    def _auto_label(self):
+        f, q = self.var_full_min.get(), self.var_quick_min.get()
+        txt = f"Auto: scan {'off' if f == 'off' else f + 'm'} \u00b7 check {'off' if q == 'off' else q + 'm'}"
+        if self.quick_running:
+            txt += " \u00b7 checking..."
+        elif self.last_quick_t:
+            txt += f" \u00b7 {time.strftime('%H:%M', time.localtime(self.last_quick_t))} {self.quick_summary}"
+        n = len(self.alerts_active)
+        self.var_autoinfo.set(txt + (f" \u00b7 {n} open" if n else ""))
+
+    def _auto_tick(self):
+        now = time.time()
+        full, quick = self._interval(self.var_full_min), self._interval(self.var_quick_min)
+        busy = getattr(self, "scanning", False) or self.quick_running
+        if busy:
+            return
+        if full and self.last_scan_t and now - self.last_scan_t > full:
+            self.start_scan(auto=True)
+        elif quick and self.devices and now - max(self.last_quick_t, self.last_scan_t) > quick:
+            self.start_quick()
+
+    def start_quick(self, manual=False):
+        if self.quick_running or getattr(self, "scanning", False):
+            if manual:
+                messagebox.showinfo(APP, "A scan or check is already running.")
+            return
+        if not self.devices:
+            if manual:
+                messagebox.showinfo(APP, "Run a full scan first - the check tests the devices it found.")
+            return
+        self.quick_running = True
+        known = sorted({ip for d in self.devices if d.get("online") for ip in d.get("ips", [])}, key=core.ip_key)
+        do_dhcp = manual or time.time() - self.last_dhcp_probe > 1800
+        if do_dhcp:
+            self.last_dhcp_probe = time.time()
+        opts = {"deep": self.var_deep.get(), "dhcp": do_dhcp}
+        net = self.var_net.get().strip() or self.net
+        self._auto_label()
+        threading.Thread(target=self._quick_worker, args=(net, known, opts), daemon=True).start()
+
+    def _quick_worker(self, net, known, opts):
+        try:
+            raw = core.quick_check(net, known, opts)
+            issues, checks = core.analyse_quick(raw, list(self.devices), self.db)
+            self.q.put(("quick_done", raw, issues, checks, opts))
+        except Exception as e:
+            self.q.put(("quick_err", f"{type(e).__name__}: {e}"))
+
+    def _on_quick(self, raw, issues, checks, opts):
+        self.quick_running = False
+        self.last_quick_t = time.time()
+        # DHCP only counts as tested when replies could actually be received (Windows often blocks the listener)
+        dhcp = bool(opts.get("dhcp")) and raw["meta"]["tests"].get("dhcp") is not None
+        # the Problems and Health checks tabs always show the latest result of these checks
+        keep = [i for i in self.issues if not core.QUICK_TITLES.search(i["title"])
+                or (not dhcp and "dhcp" in i["title"].lower())]
+        order = {"critical": 0, "warning": 1, "info": 2}
+        self.issues = sorted(keep + issues, key=lambda i: order.get(i["sev"], 3))
+        if not dhcp:
+            checks = [c for c in checks if "DHCP" not in c[0]]
+        names = {c[0] for c in checks}
+        self.checks = [c for c in self.checks if c[0] not in names] + checks
+        conflict_ips = {m.group(1) for i in self.issues for m in [re.match(r"IP conflict on (\S+)", i["title"])] if m}
+        changed = False
+        for d in self.devices:
+            c = d["ip"] in conflict_ips
+            changed = changed or (bool(d.get("conflict")) != c)
+            d["conflict"] = c
+        self.fill_problems()
+        self.fill_checks()
+        if changed:
+            self.fill_devices()
+        bad = [i for i in issues if i["sev"] in ("critical", "warning")]
+        self.quick_summary = "OK" if not bad else f"{len(bad)} problem(s)"
+        self._health_log("Loop / conflict check", "ok" if not bad else max((i["sev"] for i in bad), key=lambda s: order[s] * -1),
+                         "OK - no loop, conflict or instability found" if not bad else
+                         "; ".join(i["title"] for i in bad))
+        self._evaluate("Loop / conflict check", issues, dhcp_tested=dhcp)
+        self._auto_label()
+        if self.pending_scan:
+            self.pending_scan = False
+            self.start_scan()
+
+    @staticmethod
+    def _akey(title):
+        # numbers that change from check to check (e.g. "2500/second") must not make a "new" problem; IPs stay
+        return re.sub(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])", "#", title)
+
+    def _evaluate(self, source, issues, dhcp_tested=True):
+        """Pop-up for problems that are new, a 'resolved' note for problems that went away."""
+        now = time.time()
+        found = {}
+        for i in issues:
+            if i["sev"] == "critical" or (i["sev"] == "warning" and core.QUICK_TITLES.search(i["title"])):
+                found[self._akey(i["title"])] = i
+        for k, i in found.items():
+            if k not in self.alerts_active:
+                self.alerts_active[k] = {"title": i["title"], "sev": i["sev"], "first": now, "source": source}
+                self._raise_alert(i["sev"], i["title"], i["items"][:3], source)
+            self.alerts_active[k]["last"] = now
+        full = source == "Full scan"
+        for k in list(self.alerts_active):
+            a = self.alerts_active[k]
+            covered = full or bool(core.QUICK_TITLES.search(a["title"]))
+            if covered and not dhcp_tested and "dhcp" in a["title"].lower():
+                covered = False
+            if covered and k not in found:
+                del self.alerts_active[k]
+                self._log_event("info", f"Resolved: {a['title']}", source)
+
+    def _event_alert(self, e):
+        if e["src"] == "Auto check" or e["sev"] not in ("critical", "warning") or e["kind"] not in self.ALERT_KINDS:
+            return
+        d = e.get("data") or {}
+        key = (e["kind"], d.get("iface") or d.get("ip") or d.get("mac") or "")
+        now = time.time()
+        if now - self.alert_cool.get(key, 0) < 900:  # same kind of event on the same port/device: once per 15 min
+            return
+        self.alert_cool[key] = now
+        self._health_log("Live monitor", e["sev"], f"{e['src']}: {e['text']}")
+        if self.var_alerts.get() and now >= self.alert_mute_until:
+            self._popup(e["sev"], e["text"])
+
+    def _raise_alert(self, sev, title, items, source):
+        text = title + (" - " + "; ".join(items) if items else "")
+        self._log_event(sev, text, source)
+        if self.var_alerts.get() and time.time() >= self.alert_mute_until:
+            self._popup(sev, text)
+
+    def _log_event(self, sev, text, source):
+        if self.mon:
+            self.mon.event(sev, "Auto check", text, "auto")
+        self._health_log(source, sev, text)
+
+    def _health_log(self, source, level, text):
+        """One line per check / problem in Documents/NetworkDoctor Reports/health-log-YYYY-MM.csv (opens in Excel)."""
+        try:
+            os.makedirs(core.REPORT_DIR, exist_ok=True)
+            p = os.path.join(core.REPORT_DIR, time.strftime("health-log-%Y-%m.csv"))
+            new = not os.path.exists(p)
+            with open(p, "a", newline="", encoding="utf-8-sig" if new else "utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["Time", "Check", "Level", "Result"])
+                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), source, level, text])
+        except Exception:
+            pass
+
+    def open_health_log(self):
+        p = os.path.join(core.REPORT_DIR, time.strftime("health-log-%Y-%m.csv"))
+        if not os.path.exists(p):
+            messagebox.showinfo(APP, "No health log yet - it starts with the first automatic check.")
+            return
+        try:
+            if core.IS_WIN:
+                os.startfile(p)
+            else:
+                subprocess.Popen(["open" if core.IS_MAC else "xdg-open", p])
+        except Exception as e:
+            messagebox.showerror(APP, str(e))
+
+    def _popup(self, sev, text):
+        self.alert_lines.append((time.strftime("%H:%M:%S"), sev, text))
+        self.alert_lines = self.alert_lines[-40:]
+        w = self.alert_win
+        if w is None or not w.winfo_exists():
+            w = self.alert_win = tk.Toplevel(self)
+            w.title("Network Doctor - alert")
+            w.geometry("680x320")
+            try:
+                w.attributes("-topmost", True)
+            except Exception:
+                pass
+            bar = ttk.Frame(w, padding=6)
+            bar.pack(fill="x", side="bottom")
+
+            def show(tab):
+                self.deiconify()
+                self.lift()
+                self.nb.select(tab)
+                if tab == 2:
+                    self.run_rca()
+                w.destroy()
+
+            def mute():
+                self.alert_mute_until = time.time() + 3600
+                self.var_status.set("Alerts muted for 1 hour (they are still written to the health log).")
+                w.destroy()
+            ttk.Button(bar, text="Show root cause", command=lambda: show(2)).pack(side="left")
+            ttk.Button(bar, text="Live monitor", command=lambda: show(1)).pack(side="left", padx=6)
+            ttk.Button(bar, text="Mute 1 hour", command=mute).pack(side="right")
+            ttk.Button(bar, text="Close", command=w.destroy).pack(side="right", padx=6)
+            self.alert_txt = text_box(w)
+        t = self.alert_txt
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        t.insert("end", "New network problems\n", "h1")
+        for ts, sv, tx in reversed(self.alert_lines):
+            t.insert("end", f"{ts}  ", "mute")
+            t.insert("end", ("PROBLEM  " if sv == "critical" else "WARNING  "), "crit" if sv == "critical" else "warn")
+            t.insert("end", tx + "\n")
+        t.configure(state="disabled")
+        try:
+            w.deiconify()
+            w.lift()
+            if core.IS_WIN:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+            else:
+                self.bell()
+        except Exception:
+            pass
+
+    # ---- start with Windows / at Mac login (keeps the 24/7 checks running after a restart)
+    def _launch_cmd(self):
+        if getattr(sys, "frozen", False):
+            return [sys.executable, "--minimized"]
+        exe = sys.executable
+        if core.IS_WIN and exe.lower().endswith("python.exe"):
+            exe = exe[:-10] + "pythonw.exe"
+        return [exe, os.path.abspath(__file__), "--minimized"]
+
+    def _plist_path(self):
+        return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents", self.PLIST_ID + ".plist")
+
+    def _autostart_enabled(self):
+        try:
+            if core.IS_WIN:
+                r = subprocess.run(["schtasks", "/Query", "/TN", self.TASK_NAME], capture_output=True,
+                                   stdin=subprocess.DEVNULL, creationflags=0x08000000)
+                return r.returncode == 0
+            if core.IS_MAC:
+                return os.path.exists(self._plist_path())
+        except Exception:
+            pass
+        return False
+
+    def toggle_autostart(self):
+        on = self.var_autostart.get()
+        ok, err = True, ""
+        try:
+            if core.IS_WIN:
+                if on:  # Task Scheduler, highest privileges: starts at login without a UAC prompt
+                    tr = subprocess.list2cmdline(self._launch_cmd())
+                    cmd = ["schtasks", "/Create", "/TN", self.TASK_NAME, "/SC", "ONLOGON", "/RL", "HIGHEST",
+                           "/DELAY", "0000:30", "/TR", tr, "/F"]
+                else:
+                    cmd = ["schtasks", "/Delete", "/TN", self.TASK_NAME, "/F"]
+                r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                   creationflags=0x08000000, errors="replace")
+                ok, err = r.returncode == 0, (r.stderr or r.stdout).strip()
+            elif core.IS_MAC:
+                p = self._plist_path()
+                if on:
+                    os.makedirs(os.path.dirname(p), exist_ok=True)
+                    args = "".join(f"<string>{html.escape(a)}</string>" for a in self._launch_cmd())
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                                '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>'
+                                f"<key>Label</key><string>{self.PLIST_ID}</string>"
+                                f"<key>ProgramArguments</key><array>{args}</array>"
+                                "<key>RunAtLoad</key><true/></dict></plist>\n")
+                elif os.path.exists(p):
+                    os.remove(p)
+            else:
+                ok, err = False, "only available on Windows and Mac"
+        except Exception as e:
+            ok, err = False, str(e)
+        if not ok:
+            self.var_autostart.set(not on)
+            hint = "\n\nRestart Network Doctor as Administrator and try again." if core.IS_WIN and not core.is_admin() else ""
+            messagebox.showerror(APP, f"Could not change the start-up setting: {err}{hint}")
+        elif on:
+            self.var_status.set("Network Doctor will start automatically (minimised) when you log in.")
+
+    def _on_close_button(self):
+        if (self._interval(self.var_quick_min) or self._interval(self.var_full_min)) and not messagebox.askyesno(
+                APP, "Closing Network Doctor stops the automatic loop / conflict checks and the live monitor.\n\n"
+                     "Close anyway?\n\n(No = keep it running minimised)"):
+            self.iconify()
+            return
+        self._close()
+
     # ---------------------------------------------------------------- phone link
     def toggle_share(self):
         on = self.var_share.get()
@@ -1288,7 +1654,9 @@ class App(tk.Tk):
                 "checks": [{"name": n, "result": r, "detail": x} for n, r, x in self.checks],
                 "rca": {"findings": finds, "missing": missing},
                 "scan": dict((self.raw or {}).get("meta", {}), tests=None) if self.raw else None,
-                "scanning": bool(getattr(self, "scanning", False)), "monitor": None}
+                "scanning": bool(getattr(self, "scanning", False)), "monitor": None,
+                "auto": {"summary": self.quick_summary, "last_check": self.last_quick_t or None,
+                         "active_alerts": [dict(v) for v in list(self.alerts_active.values())]}}
         if mon:
             names = {d["ip"]: d.get("name", "") for d in devs}
             talk = sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:15]

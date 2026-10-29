@@ -1,20 +1,27 @@
-## Network Doctor 3.4.0
+## Network Doctor 3.5.0
 
-**New: Mac version.**
-Download **NetworkDoctor-macOS.zip** below. It is for Macs with Apple silicon (M1 or newer).
+**New: automatic loop and network-problem checks, 24/7.**
 
-1. Unzip it and move **NetworkDoctor** to *Applications*.
-2. The first time, **right-click → Open**.
-3. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway**. This appears because the app is not yet signed with an Apple Developer certificate.
+- **Loop / conflict check every 5 minutes** (choose 2–15 minutes, or off). It is fast, takes about 20 seconds, and does not interrupt the network. It checks:
+  - broadcast storms (loops)
+  - duplicate replies from the router
+  - IP conflicts on all known devices
+  - router stability
+  - rogue DHCP servers (every 30 minutes)
+- **Full scan every 30 minutes** (choose 15–120 minutes, or off).
+- **Alerts:** a pop-up with a sound appears when a **new** problem is found, or when the live monitor sees one:
+  - a port going down (for example ether2)
+  - a storm or loop
+  - the router not answering
+  - an IP conflict
+  - ARP spoofing
+  - a malware connection
 
-On the Mac:
-- The router log arrives on port **5514**. The *Copy router commands* button already uses it.
-- The IP-conflict rounds need administrator rights.
-- Mac copies update themselves the same way as Windows copies.
+  You get one alert per problem, not one every 5 minutes. When the problem goes away, a "Resolved" note is logged. Use **Mute 1 hour** if you are working on it.
+- **Health log:** every check and every problem is written to `Documents\NetworkDoctor Reports\health-log-YYYY-MM.csv`, which opens in Excel. It is a record of when the network had trouble.
+- **Start with Windows:** tick it in **Setup → Automatic checks**. The app then starts minimised at login with full administrator tests and no prompt, so the checks keep running after a restart.
+- The phone app sees the open problems and the latest check result.
 
-**Also fixed:**
-- MAC addresses printed without leading zeros (macOS style) are now read correctly.
-- Devices that block ping are found from the ARP table on Mac and Linux.
-- Pings on Mac now use the right timeout, so there are no false "router not answering" alarms.
+All settings are in **Setup → Automatic checks (24/7)**. The status line at the top shows the last check, for example *09:05 OK*.
 
 **Windows first start:** if Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app is not code-signed.
