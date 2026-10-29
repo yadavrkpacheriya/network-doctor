@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import 'screens/about_screen.dart';
 import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
+import 'screens/tools_screen.dart';
 
-const appVersion = '1.1.0';
+const appVersion = '1.2.0';
 
 void main() => runApp(const NetworkDoctorApp());
 
@@ -37,12 +38,13 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _tab, children: const [ScanScreen(), PcScreen(), AboutScreen()]),
+      body: IndexedStack(index: _tab, children: const [ScanScreen(), ToolsScreen(), PcScreen(), AboutScreen()]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.wifi_find_outlined), selectedIcon: Icon(Icons.wifi_find), label: 'This network'),
+          NavigationDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: 'Tools'),
           NavigationDestination(icon: Icon(Icons.computer_outlined), selectedIcon: Icon(Icons.computer), label: 'Office PC'),
           NavigationDestination(icon: Icon(Icons.info_outline), selectedIcon: Icon(Icons.info), label: 'About'),
         ],

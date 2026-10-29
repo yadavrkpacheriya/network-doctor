@@ -9,7 +9,7 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 | Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Linux (x86-64) | **From the next release** - full features (run with `sudo` for the IP-conflict rounds) | `NetworkDoctor-Linux` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
-| Android | **Test version** - phone scan + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
+| Android | **Test version** - phone scan, Tools (ping, switch details over SNMP, speed test, port scan, DNS, Wake-on-LAN, subnet calculator) + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
 | Google Play, Microsoft Store, signed Mac | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
 
 ## Install (Windows)
