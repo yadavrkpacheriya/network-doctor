@@ -29,6 +29,7 @@ from collections import Counter, defaultdict, deque, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import nd_core as core
+import nd_tools as tools
 
 FLOW_PORT = 2055
 SYSLOG_PORT = 514 if core.IS_WIN else 5514  # macOS/Linux do not let normal apps use ports below 1024
@@ -509,7 +510,7 @@ class FlowParser:
 
 
 class UdpReceiver(threading.Thread):
-    def __init__(self, port, handler, name):
+    def __init__(self, port, handler, name, reuse=False):
         super().__init__(daemon=True, name=name)
         self.port, self.handler = port, handler
         self.error = None
@@ -517,6 +518,8 @@ class UdpReceiver(threading.Thread):
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            if reuse:  # share the port with WinBox, which also listens for neighbour announcements
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind(("0.0.0.0", port))
             self.sock.settimeout(1)
         except Exception as e:
@@ -812,6 +815,7 @@ class Monitor:
         self.echo_tokens = {}
         self.lease_time = None
         self.self_mac = None  # this PC: its own DHCP test requests are not reported as problems
+        self.neighbors = {}   # MikroTik switches / APs / routers announcing themselves (MNDP): mac -> info
 
     # ---- events
     def event(self, sev, source, text, kind=None, data=None):
@@ -826,6 +830,9 @@ class Monitor:
         self.started = time.time()
         self.rx_flow = UdpReceiver(self.flow_port, self._on_flow, "flows")
         self.rx_log = UdpReceiver(self.syslog_port, self._on_syslog, "syslog")
+        self.rx_mndp = UdpReceiver(tools.MNDP_PORT, self._on_mndp, "mndp", reuse=True)
+        if not self.rx_mndp.error:
+            self.rx_mndp.start()
         for rx, what in ((self.rx_flow, "Traffic receiver"), (self.rx_log, "Router log receiver")):
             if rx.error:
                 self.event("warning", "Monitor", f"{what}: {rx.error} (is another copy of the app or a syslog "
@@ -842,12 +849,30 @@ class Monitor:
         if not self.running:
             return
         self.running = False
-        for rx in (getattr(self, "rx_flow", None), getattr(self, "rx_log", None)):
+        for rx in (getattr(self, "rx_flow", None), getattr(self, "rx_log", None), getattr(self, "rx_mndp", None)):
             if rx:
                 rx.stop()
         self.event("info", "Monitor", "Live monitor stopped")
 
     # ---- receivers
+    def _on_mndp(self, data, addr):
+        nb = tools.parse_mndp(data)
+        if not nb:
+            return
+        nb.setdefault("ip", addr)
+        nb["t"] = time.time()
+        with self.lock:
+            new = nb["mac"] not in self.neighbors
+            self.neighbors[nb["mac"]] = nb
+        if new:
+            kind = tools.guess_kind(nb) or "device"
+            self.event("info", "Discovery", f"Found MikroTik {kind.lower()} '{nb.get('identity', '?')}' "
+                                            f"({nb.get('board', '')}) at {nb['ip']}", "neighbor", {"mac": nb["mac"]})
+
+    def neighbors_copy(self):
+        with self.lock:
+            return {k: dict(v) for k, v in self.neighbors.items()}
+
     def _on_flow(self, data, addr):
         recs = self.parser.parse(data, addr)
         self.flow_rx += 1

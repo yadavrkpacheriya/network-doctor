@@ -44,7 +44,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 APP = "Network Doctor"
-VERSION = "3.5.0"
+VERSION = "3.6.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):

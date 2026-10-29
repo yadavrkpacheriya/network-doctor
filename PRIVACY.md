@@ -30,6 +30,10 @@ You can pair the Android app with the Network Doctor PC app. The phone then read
 - Requests from the internet are refused.
 - No cloud service is involved.
 
+## PC fix script reports
+
+If you use the optional PC fix script on office PCs, each PC sends its computer name, signed-in user name and network adapter MAC addresses to the Network Doctor PC app over your local network (TCP 8787). This needs a secret key built into the script; anything else is refused. The details are stored only on the Network Doctor PC, to name the devices.
+
 ## Internet connections the apps make
 
 | Connection | Purpose | What is sent |

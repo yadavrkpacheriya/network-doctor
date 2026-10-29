@@ -16,6 +16,7 @@ Endpoints (port 8787):
   POST /api/pair   {"code","phone"}-> {"token"}
   GET  /api/state                  -> full snapshot           (header X-ND-Token)
   POST /api/scan                   -> starts a scan on the PC (header X-ND-Token)
+  POST /api/report                 -> a PC fix script reports its name / MACs (header X-ND-Report)
 """
 
 import hmac
@@ -44,11 +45,15 @@ def _lan_only(ip):
 class ShareServer:
     """snapshot_fn() -> dict (built on demand); command_fn(name) -> str; store = dict persisted by save_fn()."""
 
-    def __init__(self, app_name, version, snapshot_fn, command_fn, store, save_fn):
+    def __init__(self, app_name, version, snapshot_fn, command_fn, store, save_fn, report_fn=None):
         self.app_name, self.version = app_name, version
         self.snapshot_fn, self.command_fn = snapshot_fn, command_fn
         self.store, self.save_fn = store, save_fn
         self.store.setdefault("phones", {})  # token -> {"name":..., "paired":...}
+        if not self.store.get("report_key"):  # only lets the PC fix script report; it can read nothing
+            self.store["report_key"] = secrets.token_urlsafe(18)
+        self.report_fn = report_fn
+        self.pairing_enabled = True  # False when only PC reports are accepted (phone link switched off)
         self.code = self.new_code()
         self.fails = 0
         self.locked_until = 0
@@ -162,7 +167,11 @@ class ShareServer:
                 return self._send(h, 200, {"app": "network-doctor", "name": socket.gethostname(),
                                            "version": self.version, "api": API_VERSION})
             if path == "/api/pair" and method == "POST":
+                if not self.pairing_enabled:
+                    return self._send(h, 403, {"error": "the phone link is switched off on the PC"})
                 return self._pair(h, client)
+            if path == "/api/report" and method == "POST":
+                return self._report(h, client)
             if not self._authorised(h):
                 return self._send(h, 401, {"error": "not paired"})
             self.last_client = (client, time.time())
@@ -205,6 +214,23 @@ class ShareServer:
             self.code = self.new_code()  # a code works once
         self.save_fn()
         return self._send(h, 200, {"token": token, "name": socket.gethostname(), "version": self.version})
+
+    def _report(self, h, client):
+        key = h.headers.get("X-ND-Report", "")
+        if not self.report_fn or not key or not hmac.compare_digest(key, self.store.get("report_key", "")):
+            return self._send(h, 403, {"error": "not accepted"})
+        try:
+            n = int(h.headers.get("Content-Length", "0"))
+            if n > 65536:
+                return self._send(h, 413, {"error": "too large"})
+            body = h.rfile.read(n).decode("utf-8-sig", "replace")
+            data = json.loads(body or "{}")
+            if not isinstance(data, dict):
+                raise ValueError
+        except Exception:
+            return self._send(h, 400, {"error": "bad request"})
+        self.report_fn(client, data)
+        return self._send(h, 200, {"result": "thanks"})
 
     # ---- management from the PC window
     def phones(self):

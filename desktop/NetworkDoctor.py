@@ -28,10 +28,12 @@ import nd_core as core
 import nd_monitor as M
 import nd_update as U
 import nd_share as SH
+import nd_tabs
+import nd_tools as T
 
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import ttk, messagebox, simpledialog, filedialog
+from tkinter import ttk, messagebox, filedialog
 
 # a windowed exe has no console: give libraries somewhere harmless to print
 if sys.stdout is None:
@@ -49,7 +51,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.5.0"
+VERSION = "3.6.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -66,11 +68,11 @@ def setup_tags(tv):
     tv.tag_configure("hot", foreground="#5b21b6", background="#f3ecff")
 
 
-def make_tree(parent, cols, heads, widths, first, height=None):
+def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse"):
     fr = ttk.Frame(parent)
     fr.pack(fill="both", expand=True)
     kw = {"height": height} if height else {}
-    tv = ttk.Treeview(fr, columns=cols, show="tree headings" if first else "headings", selectmode="browse", **kw)
+    tv = ttk.Treeview(fr, columns=cols, show="tree headings" if first else "headings", selectmode=selectmode, **kw)
     if first:
         tv.heading("#0", text=first[0])
         tv.column("#0", width=first[1], stretch=False)
@@ -107,6 +109,9 @@ def text_box(parent, **kw):
     t.tag_configure("mute", foreground="#667085")
     t.tag_configure("mono", font=("Consolas", 10))
     return t
+
+
+nd_tabs.UI.update(make_tree=make_tree, text_box=text_box)
 
 
 # ==========================================================================
@@ -397,6 +402,9 @@ class App(tk.Tk):
         self.mon = None
         self.ev_seen = 0
         self.rca_cache = None
+        self.selected_device = None
+        self.tabs = {}
+        self._nb_count = 0
         self._auto_init()
         self._build()
         self.after(100, self._poll)
@@ -407,8 +415,8 @@ class App(tk.Tk):
         self.after(2500, self.start_scan)
         U.cleanup_leftovers()
         self.share = None
-        if self.var_share.get():
-            self.after(1200, self.toggle_share)
+        if self.var_share.get() or self._settings().get("reports_enabled"):
+            self.after(1200, self._ensure_share)
         self.after(15000, lambda: self.check_updates(True))
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
         if "--minimized" in sys.argv:  # started automatically at login
@@ -472,11 +480,17 @@ class App(tk.Tk):
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         self._tab_devices()
+        self._tab_map()
         self._tab_monitor()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
+        self._tab_binding()
+        self._tab_commands()
         self._tab_setup()
+        names = ["devices", "map", "monitor", "rca", "problems", "checks", "binding", "commands", "setup"]
+        self.tabs = dict(zip(names, self.nb.tabs()))
+        self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
     def _tab_devices(self):
         f = ttk.Frame(self.nb)
@@ -496,16 +510,75 @@ class App(tk.Tk):
         ttk.Label(act, textvariable=self.var_sel, width=42, font=("Segoe UI", 10, "bold")).pack(side="left")
         for txt, cmd in (("Analyse (root cause)", lambda: self.act("analyse")), ("Ping", lambda: self.act("ping")),
                          ("Open in browser", lambda: self.act("web")), ("Traceroute", lambda: self.act("trace")),
-                         ("Set label", lambda: self.act("label")), ("Copy IP", lambda: self.act("cip"))):
+                         ("Tag...", lambda: self.act("label")), ("Show on map", lambda: self.act("map")),
+                         ("Commands", lambda: self.act("cmds"))):
             ttk.Button(act, text=txt, command=cmd).pack(side="left", padx=3)
-        cols = ("status", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
-        heads = ("Status", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services", "Why this category", "Notes")
-        widths = (100, 115, 105, 140, 170, 150, 200, 240, 220)
-        self.tv = make_tree(f, cols, heads, widths, first=("Name", 210))
+        cols = ("status", "dept", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
+        heads = ("Status", "Department", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services",
+                 "Why this category", "Notes")
+        widths = (100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
+        self.tv = make_tree(f, cols, heads, widths, first=("Name", 210), selectmode="extended")
+        ttk.Label(sf, text="Ctrl / Shift + click to select several devices, then Tag... (department, switch, router port)",
+                  foreground="#667085").pack(side="left", padx=8)
         self.tv.bind("<Button-3>", self._menu)
         self.tv.bind("<Double-1>", lambda e: self.act("analyse"))
         self.tv.bind("<<TreeviewSelect>>", self._sel)
         self.row_dev = {}
+
+    def _tab_map(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Network map  ")
+        self.map = nd_tabs.MapTab(self, f)
+
+    def _tab_binding(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  IP-MAC binding  ")
+        self.binding = nd_tabs.BindingTab(self, f)
+
+    def _tab_commands(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Commands  ")
+        self.commands = nd_tabs.CommandsTab(self, f)
+
+    def show_tab(self, name):
+        if name in self.tabs:
+            self.nb.select(self.tabs[name])
+
+    def _tab_changed(self, _=None):
+        cur = self.nb.select()
+        try:
+            if cur == self.tabs.get("map"):
+                self.map.redraw()
+            elif cur == self.tabs.get("binding"):
+                self.binding.refresh()
+            elif cur == self.tabs.get("commands"):
+                self.commands.refresh()
+        except Exception:
+            pass
+
+    def after_tags_changed(self):
+        T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
+        self.fill_devices()
+        self._tab_changed()
+
+    def open_device(self, d):
+        DeviceWindow(self, d)
+
+    def ping_device(self, d):
+        PingWindow(self, d["ip"], d.get("name"))
+
+    def ip_type_of(self, d):
+        typ, _ = M.ip_type(d, self.mon, self.db, self.raw) if d.get("online") else ("", "")
+        return "Not known yet" if typ == "Unknown" else typ
+
+    def open_folder(self, path):
+        try:
+            if core.IS_WIN:
+                os.startfile(path)
+            else:
+                subprocess.Popen(["open" if core.IS_MAC else "xdg-open", path])
+        except Exception:
+            pass
 
     def _tab_monitor(self):
         f = ttk.Frame(self.nb)
@@ -696,6 +769,13 @@ class App(tk.Tk):
             pass
         try:
             self._auto_tick()
+        except Exception:
+            pass
+        try:
+            nbs = len(self.mon.neighbors) if self.mon else 0
+            if nbs != getattr(self, "_nb_count", 0) and self.devices:
+                self._nb_count = nbs
+                self.after_tags_changed()
         except Exception:
             pass
         self.after(2000, self._tick)
@@ -916,6 +996,8 @@ class App(tk.Tk):
                         messagebox.showerror(APP, msg[1])
                     if self.pending_scan:
                         self.pending_scan = False
+                elif k == "pc_report":
+                    self._apply_report(*msg[1:])
                 elif k == "quick_done":
                     self._on_quick(*msg[1:])
                 elif k == "quick_err":
@@ -940,6 +1022,8 @@ class App(tk.Tk):
         self.pb["value"] = 100
         self.last_scan_t = time.time()
         self._feed_monitor()
+        T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
+        self.issues = self.issues + T.binding_issues(self.devices, self.db)
         conflict_ips = set()
         for i in self.issues:
             mm = re.match(r"IP conflict on (\S+)", i["title"])
@@ -960,6 +1044,7 @@ class App(tk.Tk):
             self.mon.self_mac = self.raw.get("self_mac")
         self._evaluate("Full scan", self.issues, dhcp_tested=True)
         self._auto_label()
+        self._tab_changed()
 
     # ---------------------------------------------------------------- tables
     def fill_devices(self):
@@ -978,7 +1063,8 @@ class App(tk.Tk):
             ds = [d for d in self.devices if d["category"] == c]
             if qy:
                 ds = [d for d in ds if qy in " ".join([d["name"], " ".join(d["ips"]), d["mac"] or "", d["vendor"],
-                                                       d["reason"], " ".join(d["notes"])]).lower()]
+                                                       d["reason"], " ".join(d["notes"]), d.get("dept", ""),
+                                                       " ".join((d.get("tag") or {}).values())]).lower()]
             if self.var_sort_bw.get():
                 ds.sort(key=lambda d: -sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps")))
             if not ds:
@@ -997,7 +1083,8 @@ class App(tk.Tk):
                 bw = f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}" if r else ""
                 tag = "off" if not d["online"] else bad.get(d["ip"], "")
                 iid = tv.insert(parent, "end", text=d["name"] or "-", tags=(tag,) if tag else (),
-                                values=(d["status"], ", ".join(sorted(d["ips"], key=core.ip_key)), typ, d["mac"] or "-",
+                                values=(d["status"], d.get("dept", ""), ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
+                                        d["mac"] or "-",
                                         d["vendor"], bw, svc, d["reason"], "; ".join(d["notes"])))
                 self.row_dev[iid] = d
 
@@ -1064,18 +1151,23 @@ class App(tk.Tk):
 
     # ---------------------------------------------------------------- device actions
     def _sel(self, _=None):
-        sel = self.tv.selection()
-        d = self.row_dev.get(sel[0]) if sel else None
-        self.var_sel.set(f"{d['name'] or '-'}  {d['ip']}" if d else "Select a device:")
+        sel = [self.row_dev[i] for i in self.tv.selection() if i in self.row_dev]
+        d = sel[0] if sel else None
+        if d:
+            self.selected_device = d
+        self.var_sel.set((f"{len(sel)} devices selected" if len(sel) > 1 else f"{d['name'] or '-'}  {d['ip']}")
+                         if d else "Select a device:")
 
     def _menu(self, ev):
         iid = self.tv.identify_row(ev.y)
         if iid not in self.row_dev:
             return
-        self.tv.selection_set(iid)
+        if iid not in self.tv.selection():
+            self.tv.selection_set(iid)
         m = tk.Menu(self, tearoff=0)
         for lab, k in (("Analyse (root cause)", "analyse"), ("Ping (live graph)", "ping"), ("Open in browser", "web"),
-                       ("Traceroute", "trace"), (None, None), ("Set label / name...", "label"),
+                       ("Traceroute", "trace"), (None, None), ("Tag (name, department, where connected)...", "label"),
+                       ("Show on network map", "map"), ("Commands for this device", "cmds"),
                        ("Open shared folders", "share"), ("Remote Desktop", "rdp"), ("Wake on LAN", "wol"),
                        (None, None), ("Copy IP", "cip"), ("Copy MAC", "cmac"), ("Copy all details", "call")):
             if lab is None:
@@ -1116,19 +1208,18 @@ class App(tk.Tk):
             elif what == "trace":
                 self.trace(d)
             elif what == "label":
-                if not mac:
+                many = [self.row_dev[i] for i in self.tv.selection() if i in self.row_dev and self.row_dev[i].get("mac")]
+                if not many:
                     messagebox.showinfo(APP, "This device has no MAC address to remember it by.")
                     return
-                v = simpledialog.askstring(APP, f"Label for {mac} ({ip}):", initialvalue=self.db["labels"].get(mac, d["name"]))
-                if v is not None:
-                    if v.strip():
-                        self.db["labels"][mac] = v.strip()
-                    else:
-                        self.db["labels"].pop(mac, None)
-                    core.save_db(self.db)
-                    d["names"]["label"] = v.strip()
-                    d["name"] = v.strip() or d["names"].get("netbios", "")
-                    self.fill_devices()
+                nd_tabs.TagDialog(self, many)
+            elif what == "map":
+                self.selected_device = d
+                self.map.selected = d.get("mac") or d.get("ip")
+                self.show_tab("map")
+            elif what == "cmds":
+                self.selected_device = d
+                self.show_tab("commands")
             elif what == "share" and core.IS_WIN:
                 subprocess.Popen(["explorer", f"\\\\{ip}"])
             elif what == "share" and core.IS_MAC:
@@ -1465,8 +1556,8 @@ class App(tk.Tk):
             def show(tab):
                 self.deiconify()
                 self.lift()
-                self.nb.select(tab)
-                if tab == 2:
+                self.show_tab(tab)
+                if tab == "rca":
                     self.run_rca()
                 w.destroy()
 
@@ -1474,8 +1565,9 @@ class App(tk.Tk):
                 self.alert_mute_until = time.time() + 3600
                 self.var_status.set("Alerts muted for 1 hour (they are still written to the health log).")
                 w.destroy()
-            ttk.Button(bar, text="Show root cause", command=lambda: show(2)).pack(side="left")
-            ttk.Button(bar, text="Live monitor", command=lambda: show(1)).pack(side="left", padx=6)
+            ttk.Button(bar, text="Show root cause", command=lambda: show("rca")).pack(side="left")
+            ttk.Button(bar, text="Network map", command=lambda: show("map")).pack(side="left", padx=6)
+            ttk.Button(bar, text="Live monitor", command=lambda: show("monitor")).pack(side="left")
             ttk.Button(bar, text="Mute 1 hour", command=mute).pack(side="right")
             ttk.Button(bar, text="Close", command=w.destroy).pack(side="right", padx=6)
             self.alert_txt = text_box(w)
@@ -1575,12 +1667,27 @@ class App(tk.Tk):
         on = self.var_share.get()
         self._settings()["share_enabled"] = on
         self._save_settings()
-        if on and not (self.share and self.share.running):
+        self._ensure_share()
+
+    def enable_reports(self):
+        """Lets PC fix scripts report back (also when the phone link is off). Returns the report key."""
+        self._settings()["reports_enabled"] = True
+        self._save_settings()
+        self._ensure_share()
+        return self._settings().setdefault("share", {}).get("report_key", "")
+
+    def _ensure_share(self):
+        on = self.var_share.get()
+        need = on or self._settings().get("reports_enabled", False)
+        if need and not (self.share and self.share.running):
             store = self._settings().setdefault("share", {})
-            self.share = SH.ShareServer(APP, VERSION, self._snapshot, self._remote_cmd, store, self._save_settings)
+            self.share = SH.ShareServer(APP, VERSION, self._snapshot, self._remote_cmd, store, self._save_settings,
+                                        report_fn=lambda client, data: self.q.put(("pc_report", client, data)))
+            self._save_settings()
             if not self.share.start():
-                self.var_share.set(False)
-                messagebox.showerror(APP, "Phone link could not start: " + (self.share.error or "?"))
+                if on:
+                    self.var_share.set(False)
+                messagebox.showerror(APP, "Phone link / PC reports could not start: " + (self.share.error or "?"))
                 self.share = None
             elif core.IS_WIN and core.is_admin():
                 name = "Network Doctor phone link"
@@ -1589,15 +1696,46 @@ class App(tk.Tk):
                               "action=allow", "protocol=TCP", f"localport={SH.HTTP_PORT}", "remoteip=localsubnet"], 10)
                     core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name} discovery", "dir=in",
                               "action=allow", "protocol=UDP", f"localport={SH.DISCOVERY_PORT}", "remoteip=localsubnet"], 10)
-        elif not on and self.share:
+        elif not need and self.share:
             self.share.stop()
             self.share = None
+        if self.share:
+            self.share.pairing_enabled = on
         self._share_label()
+
+    def _apply_report(self, client, data):
+        """A PC fix script reported: tag every adapter MAC of that PC with its computer name."""
+        host = str(data.get("hostname") or "")[:40]
+        user = str(data.get("user") or "")[:60]
+        tags = T.tags_of(self.db)
+        macs = []
+        for a in data.get("adapters") or []:
+            if not isinstance(a, dict):
+                continue
+            for key in ("mac", "permanent"):
+                mac = core.norm_mac(str(a.get(key) or ""))
+                if mac and not core.is_bad_mac(mac) and mac not in macs:
+                    macs.append(mac)
+        for mac in macs:
+            t = tags.get(mac, {})
+            T.set_tag(self.db, mac, name=None if t.get("name") else host,
+                      notes=None if t.get("notes") else f"user {user}" if user else None)
+        with core.DB_LOCK:
+            self.db.setdefault("pc_reports", {})[host or client] = {
+                "time": core.now_s(), "ip": client, "user": user, "os": str(data.get("os") or "")[:60], "macs": macs,
+                "actions": [str(x)[:120] for x in (data.get("actions") or [])][:10]}
+        core.save_db(self.db)
+        acts = "; ".join(str(x) for x in (data.get("actions") or [])[:4])
+        self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
+        self.after_tags_changed()
 
     def _share_label(self):
         sh = self.share
         if not sh or not sh.running:
             self.var_share_info.set("off")
+            return
+        if not sh.pairing_enabled:
+            self.var_share_info.set(f"phone link off - accepting PC fix script reports on {self.lip}")
             return
         n = len(sh.phones())
         last = ""
@@ -1643,7 +1781,7 @@ class App(tk.Tk):
                          "ips": sorted(d.get("ips", []), key=core.ip_key), "mac": d.get("mac") or "",
                          "vendor": d.get("vendor", ""), "category": d.get("category", ""),
                          "reason": d.get("reason", ""), "status": d.get("status", ""), "online": bool(d.get("online")),
-                         "ip_type": typ, "ip_type_why": why, "ports": d.get("ports", []),
+                         "ip_type": typ, "ip_type_why": why, "ports": d.get("ports", []), "dept": d.get("dept", ""),
                          "services": [core.PORTS.get(x, str(x)) for x in d.get("ports", [])],
                          "web_port": (d.get("http") or {}).get("port"), "notes": d.get("notes", []),
                          "random_mac": bool(d.get("random")), "down_bps": r.get("down_bps"), "up_bps": r.get("up_bps")})

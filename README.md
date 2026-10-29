@@ -35,13 +35,18 @@ Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/re
 
 | Tab | Shows |
 |---|---|
-| **Devices** | Every device, grouped: router, network equipment, computers, CCTV, printers, biometric, phones, smart TV / IoT, unknown, and devices not online now. For each one it shows the IP type (DHCP / static / fixed, with the evidence), live bandwidth, and why it got its category. Buttons: Analyse, Ping (live graph), Open in browser, Traceroute, Set label. |
+| **Devices** | Every device, grouped: router, network equipment, computers, CCTV, printers, biometric, phones, smart TV / IoT, unknown, and devices not online now. For each one it shows the IP type (DHCP / static / fixed, with the evidence), live bandwidth, and why it got its category. Buttons: Analyse, Ping (live graph), Open in browser, Traceroute, Tag (name, department, where connected; several devices at once), Show on map, Commands. |
+| **Network map** | Router → ports → switches / APs → devices, from your tags and from MikroTik switches that announce themselves. Problem devices and their path to the router are shown in red / orange, so you can trace a loop or flood to a port, switch and department. Tags export to / import from Excel. |
 | **Automatic checks (24/7)** | A loop / IP-conflict / rogue-DHCP / stability check every 5 minutes and a full scan every 30 minutes (both adjustable). A pop-up and sound when a new problem appears, a "Resolved" note when it goes away, and a monthly health log in Excel format. It can start with Windows (or at Mac login), minimised. |
 | **Live monitor** | Runs continuously. A 10-minute graph of broadcasts per second and router ping, with markers when a port goes down. Also the top bandwidth users and a timeline of events. |
 | **Root cause** | Ranked causes, each with confidence, evidence and what to do. For example: *loop behind ether2*, *ether2 flapping with no loop → cable or switch power*, *device X uses 70% of the internet*, *device talking to a botnet server*, *DVR reachable from the internet*, *IP conflict*, *rogue DHCP*, *password guessing on the router*. |
 | **Problems / Health checks** | Results of the scan. |
+| **IP-MAC binding** | Makes the MikroTik commands that reserve each device's IP for its MAC (with optional strict mode and randomized-MAC blocking, and an UNDO set). Also makes the **PC fix script** to run on every PC: random Wi-Fi MAC off, back to automatic IP, router MAC lock, and a report back that tags the PC. |
+| **Commands** | About 40 ready Windows, MikroTik and Mac commands with a short line on what each does, filled in for the chosen device. Copy or run, and add your own. |
 | **Setup** | One-time router settings, Windows Firewall, threat lists and updates. |
 
+![Network map](docs/network-map.png)
+![IP-MAC binding](docs/ip-mac-binding.png)
 ![Live monitor](docs/live-monitor.png)
 ![Root cause](docs/root-cause.png)
 
@@ -112,7 +117,9 @@ desktop/   Windows and macOS app - Python + Tkinter
   nd_core.py         scan engine
   nd_monitor.py      live monitor, traffic, threat lists, root cause
   nd_update.py       online updates from GitHub Releases
-  nd_share.py        phone app link (LAN only, pairing code)
+  nd_share.py        phone app link (LAN only, pairing code) and PC fix-script reports
+  nd_tools.py        tags, map, IP-MAC binding, PC fix script, command list
+  nd_tabs.py         Network map, IP-MAC binding and Commands tabs
 mobile/    Android phone app - Flutter (iPhone possible later from the same code)
 docs/      screenshots
 ```
