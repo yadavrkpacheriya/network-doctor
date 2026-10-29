@@ -9,7 +9,8 @@ Reads a managed switch or router of ANY brand through standard SNMP, read-only:
   * the MAC address table: which device is plugged into which port
 
 Plain Python, no extra packages. SNMP v1 and v2c (community string).
-It never sends a SET, so it cannot change anything on the device.
+Reading never changes anything. The only changes it can make (turn a port off / on,
+rename a port) need the device's separate write community, and the app asks first.
 """
 
 import random
@@ -22,9 +23,11 @@ import socket
 INTEGER, OCTET_STRING, NULL, OID, SEQUENCE = 0x02, 0x04, 0x05, 0x06, 0x30
 IPADDRESS, COUNTER32, GAUGE32, TIMETICKS, OPAQUE, COUNTER64 = 0x40, 0x41, 0x42, 0x43, 0x44, 0x46
 NO_SUCH_OBJECT, NO_SUCH_INSTANCE, END_OF_MIB = 0x80, 0x81, 0x82
-GET, GETNEXT, RESPONSE, GETBULK = 0xA0, 0xA1, 0xA2, 0xA5
+GET, GETNEXT, RESPONSE, SET, GETBULK = 0xA0, 0xA1, 0xA2, 0xA3, 0xA5
 
-ERRORS = {1: "tooBig", 2: "noSuchName", 3: "badValue", 4: "readOnly", 5: "genErr", 6: "noAccess"}
+ERRORS = {1: "tooBig", 2: "noSuchName", 3: "badValue", 4: "readOnly", 5: "genErr", 6: "noAccess",
+          7: "wrongType", 10: "wrongValue", 16: "authorizationError", 17: "notWritable"}
+NOT_ALLOWED = ("readOnly", "noAccess", "notWritable", "authorizationError", "noSuchName")
 
 
 class SnmpError(Exception):
@@ -198,9 +201,10 @@ class Snmp:
         self.version = 0 if str(version) in ("1", "v1") else 1
         self.timeout, self.retries = timeout, retries
 
-    def _request(self, pdu_type, oids, a=0, b=0):
+    def _request(self, pdu_type, oids, a=0, b=0, values=None):
         rid = random.randint(1, 0x7FFFFFFF)
-        pkt = build_message(pdu_type, rid, [(o, None) for o in oids], self.community, self.version, a, b)
+        vbs = list(zip(oids, values)) if values else [(o, None) for o in oids]
+        pkt = build_message(pdu_type, rid, vbs, self.community, self.version, a, b)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.settimeout(self.timeout)
@@ -233,6 +237,16 @@ class Snmp:
                 return {}
             raise
         return {o: v for o, v in vbs if not isinstance(v, Missing)}
+
+    def set(self, oid, value):
+        """Writes one value. Raises SnmpError with a plain reason when the device refuses."""
+        try:
+            self._request(SET, [oid], values=[value])
+        except SnmpError as e:
+            if str(e) in NOT_ALLOWED:
+                raise SnmpError("the switch refused the change: use its read-WRITE community, and allow "
+                                "this PC's IP to write") from None
+            raise
 
     def walk(self, root, limit=20000):
         """[(oid, value)] under root, in order."""
@@ -554,3 +568,38 @@ def mac_moves(before, after):
             pair = tuple(sorted((old, port), key=_natural))
             moves.setdefault(pair, []).append(mac)
     return dict(sorted(moves.items(), key=lambda kv: -len(kv[1])))
+
+
+# ==========================================================================
+# changes (write community only): turn a port off / on, rename it
+# ==========================================================================
+ADMIN = IF + "7"      # ifAdminStatus: 1 up, 2 down
+ALIAS = IFX + "18"    # ifAlias: the port's description
+
+
+def port_admin(c, index):
+    v = c.get(f"{ADMIN}.{index}").get(f"{ADMIN}.{index}")
+    return {1: "up", 2: "down", 3: "testing"}.get(v, "?")
+
+
+def set_port(c, index, up):
+    """Turns a port on or off and reads it back. Returns the new state ("up" / "down")."""
+    c.set(f"{ADMIN}.{index}", 1 if up else 2)
+    return port_admin(c, index)
+
+
+def set_alias(c, index, name):
+    """Sets the port's description (ifAlias). Returns the old one, for undo."""
+    old = text(c.get(f"{ALIAS}.{index}").get(f"{ALIAS}.{index}"))
+    c.set(f"{ALIAS}.{index}", name.encode("utf-8")[:64])
+    return old
+
+
+def port_risk(port_name, macs, my_macs=()):
+    """Why turning this port off is dangerous, or "" - checked before the app asks for confirmation."""
+    on = [m for m, p in (macs or {}).items() if p == port_name]
+    if any(m in on for m in my_macs):
+        return "this PC reaches the switch through this port: you would lose the connection to it"
+    if len(on) > 4:
+        return f"{len(on)} devices are behind this port (another switch, an AP or the router): all of them go offline"
+    return ""

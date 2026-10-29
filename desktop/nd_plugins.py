@@ -11,7 +11,7 @@ app never needs to know which brand a switch or router is:
 Standard-protocol plugins come first because one of them covers hundreds of
 models. Vendor plugins (MikroTik API, TP-Link Omada, UniFi, Cisco SSH...) are
 added later for what the standards cannot do. Every plugin is read-only until
-it sets can_change, and changes will always come with a preview and an undo.
+it sets can_change, and changes always come with a confirmation and an undo.
 """
 
 import nd_snmp
@@ -31,6 +31,7 @@ class DevicePlugin:
 
 class SnmpPlugin(DevicePlugin):
     name = "SNMP"
+    can_change = True  # port on / off and rename, with the device's write community only
 
     @staticmethod
     def _args(creds):
