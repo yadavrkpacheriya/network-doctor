@@ -3,6 +3,8 @@
 
 import concurrent.futures as cf
 import ipaddress
+import json
+import os
 import queue
 import statistics
 import threading
@@ -12,6 +14,7 @@ import webbrowser
 from tkinter import ttk, messagebox, simpledialog
 
 import nd_core as core
+import nd_dnsfilter as DF
 import nd_monitor as M
 import nd_net as NT
 import nd_plugins
@@ -29,8 +32,12 @@ TOOLS = [
      "Public IP and ISP, ping / jitter / loss to the router and the internet, download and upload speed, and latency "
      "while the line is busy (bufferbloat). Uses the Cloudflare speed-test servers."),
     ("switch", "Switch / router details (SNMP, any brand)",
-     "Reads a managed switch or router of any brand over SNMP (read-only): model, uptime, every port with its "
-     "speed, traffic and errors, LLDP neighbours, and which device is plugged into which port."),
+     "Reads a managed switch or router of any brand over SNMP: model, uptime, every port with its speed, traffic "
+     "and errors, LLDP neighbours, which device is plugged into which port, live traffic with a loop finder, and "
+     "port off / on / restart / rename."),
+    ("website", "Website firewall (block sites for the whole network)",
+     "Blocks ads, adult sites, gambling, social media, video or games - or your own list - for every phone, PC and TV "
+     "on the network, with nothing to install on them. Shows which device tried to open what."),
     ("ports", "Port scanner",
      "Which services a device offers (open TCP ports), with what each one is and the risky ones marked."),
     ("dns", "DNS lookup / DNS server test",
@@ -65,6 +72,7 @@ class ToolsTab:
         self.q = queue.Queue()
         self.frames, self.texts, self.status, self.stops, self.btns = {}, {}, {}, {}, {}
         self.lan_server = None
+        self.live = set()
         pw = ttk.PanedWindow(parent, orient="horizontal")
         pw.pack(fill="both", expand=True, pady=(6, 0))
         left = ttk.Frame(pw)
@@ -138,6 +146,7 @@ class ToolsTab:
             return  # already running
         stop = threading.Event()
         self.stops[key] = stop
+        self.live.discard(key)
         t = self.texts[key]
         t.configure(state="normal")
         t.delete("1.0", "end")
@@ -173,18 +182,19 @@ class ToolsTab:
                     self.status[key].set(text)
                 elif tag == "call":
                     text()
-                elif tag == "clear":
+                elif tag == "clear":  # live views redraw from the top and stay scrolled there
                     t = self.texts[key]
                     t.configure(state="normal")
                     t.delete("1.0", "end")
                     t.configure(state="disabled")
+                    self.live.add(key)
                 elif tag == "log":
                     self.app._health_log(*text)
                 else:
                     t = self.texts[key]
                     t.configure(state="normal")
                     t.insert("end", text + ("\n" if not text.endswith("\n") else ""), tag or ())
-                    t.see("end")
+                    t.see("1.0" if key in self.live else "end")
                     t.configure(state="disabled")
         except queue.Empty:
             pass
@@ -660,6 +670,107 @@ class ToolsTab:
                 self.sw_undo.append((f"{name}: renamed to '{new}'", index, "alias", old))
             out(("Switch change", "info", f"{host} {name}: {action}" + (f" '{new}'" if action == "rename" else "")), "log")
         self.start("switch", work)
+
+    # ------------------------------------------------------------------ website firewall
+    def _build_website(self, f):
+        cfg = self._fw_load()
+        top = ttk.Frame(f)
+        top.pack(fill="x")
+        left = ttk.LabelFrame(top, text=" Block ", padding=6)
+        left.pack(side="left", fill="y")
+        self.fw_cats = {}
+        for key, (label, _, _) in DF.CATEGORIES.items():
+            v = tk.BooleanVar(value=key in cfg.get("categories", ["ads", "adult", "gambling"]))
+            ttk.Checkbutton(left, text=label, variable=v).pack(anchor="w")
+            self.fw_cats[key] = v
+        self.fw_safe = tk.BooleanVar(value=cfg.get("safe_search", True))
+        ttk.Checkbutton(left, text="Safe search (Google, Bing, YouTube, DuckDuckGo)", variable=self.fw_safe).pack(
+            anchor="w", pady=(6, 0))
+        self.fw_lists = {}
+        for key, label in (("blocked", "Also block (one site per line)"), ("allowed", "Always allow (one per line)")):
+            lf = ttk.LabelFrame(top, text=f" {label} ", padding=4)
+            lf.pack(side="left", fill="both", expand=True, padx=(8, 0))
+            t = tk.Text(lf, height=7, width=28, font=("Consolas", 10))
+            t.pack(fill="both", expand=True)
+            t.insert("1.0", "\n".join(cfg.get(key, [])))
+            self.fw_lists[key] = t
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=6)
+        self._run_btn(row, "website", "Start firewall", self._website)
+        self._stop_btn(row, "website")
+        ip = self.app.lip or "this PC's IP"
+        ttk.Label(f, text=f"To filter the whole network: in the router's DHCP settings set the DNS server to {ip} "
+                          "(and remove the others). To filter one device: set its DNS to that IP. Keep this PC on and "
+                          "Network Doctor running. On Mac / Linux it needs administrator rights (port 53).",
+                  foreground="#667085", wraplength=900, justify="left").pack(anchor="w")
+        self._out_box(f, "website")
+
+    def _fw_load(self):
+        try:
+            with open(DF.SETTINGS, encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
+
+    def _fw_save(self, cfg):
+        try:
+            os.makedirs(core.DATA_DIR, exist_ok=True)
+            with open(DF.SETTINGS, "w", encoding="utf-8") as fh:
+                json.dump(cfg, fh, indent=1)
+        except OSError:
+            pass
+
+    def _website(self, out, stop):
+        cfg = {"categories": [k for k, v in self.fw_cats.items() if v.get()], "safe_search": self.fw_safe.get(),
+               "blocked": sorted(DF.parse_list(self.fw_lists["blocked"].get("1.0", "end"))),
+               "allowed": sorted(DF.parse_list(self.fw_lists["allowed"].get("1.0", "end")))}
+        self._fw_save(cfg)
+        blocked = set(cfg["blocked"])
+        for key in cfg["categories"]:
+            out(f"Loading the {DF.CATEGORIES[key][0].lower()} list ...", "status")
+            names = DF.load_category(key)
+            blocked |= names
+            out(f"  {DF.CATEGORIES[key][0]}: {len(names):,} sites")
+        out(f"  Your own list: {len(cfg['blocked'])} sites, always allowed: {len(cfg['allowed'])}")
+        try:
+            fw = DF.DnsFilter(blocked=blocked, allowed=cfg["allowed"], safe_search=cfg["safe_search"]).start()
+        except OSError as e:
+            out(f"\nCould not start on port 53 ({e}).", "crit")
+            out("Another DNS service runs on this PC (Internet Connection Sharing, a VPN, Docker...), or Network "
+                "Doctor needs administrator rights (Mac / Linux: start it with sudo).", "warn")
+            return
+        names = {d.get("ip"): d.get("name") or d.get("ip") for d in self.app.devices if d.get("ip")}
+        out(("Website firewall", "info", f"started, {len(blocked):,} sites blocked"), "log")
+        try:
+            while not stop.wait(3):
+                snap = fw.snapshot()
+                out("", "clear")
+                out(f"Website firewall ON at {self.app.lip or 'this PC'}   {time.strftime('%H:%M:%S')}", "h")
+                out(f"  {len(blocked):,} sites blocked   |   {snap['queries']:,} look-ups, {snap['blocked']:,} blocked"
+                    + ("   |   safe search on" if cfg["safe_search"] else ""))
+                if not snap["queries"]:
+                    out("\n  No device uses this PC as its DNS server yet - set it in the router (see above).", "warn")
+                if snap["clients"]:
+                    out("\nDevices using the firewall", "h")
+                    for ip, n in sorted(snap["clients"].items(), key=lambda kv: -kv[1])[:15]:
+                        b = snap["blocked_clients"].get(ip, 0)
+                        out(f"  {names.get(ip, ip)[:28]:<28} {ip:<15} {n:>6,} look-ups  {b:>5,} blocked")
+                if snap["top"]:
+                    out("\nMost blocked sites", "h")
+                    for name, n in snap["top"]:
+                        out(f"  {n:>5,}  {name}")
+                recent = [r for r in snap["recent"] if r[3] == "blocked"][-12:]
+                if recent:
+                    out("\nJust blocked", "h")
+                    for t, ip, name, _ in reversed(recent):
+                        out(f"  {time.strftime('%H:%M:%S', time.localtime(t))}  {names.get(ip, ip)[:24]:<24} {name}",
+                            "mute")
+                out(f"ON - {snap['queries']:,} look-ups, {snap['blocked']:,} blocked", "status")
+        finally:
+            fw.stop()
+            out("\nWebsite firewall stopped. Devices fall back to their other DNS server (if the router gives one).",
+                "warn")
+            out(("Website firewall", "info", "stopped"), "log")
 
     # ------------------------------------------------------------------ DNS
     def _build_dns(self, f):
