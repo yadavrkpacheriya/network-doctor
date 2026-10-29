@@ -9,7 +9,7 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 | Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Android | **Test version** - phone scan + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
-| Microsoft Store | planned | |
+| Google Play, Microsoft Store, signed Mac | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
 
 ## Install (Windows)
 
@@ -76,6 +76,8 @@ In **Setup → Phone app link**, tick *Allow the Network Doctor phone app to con
 - Each pairing code works once.
 
 ## Privacy
+
+Full policy: [PRIVACY.md](PRIVACY.md).
 
 Network Doctor runs entirely on your PC.
 
