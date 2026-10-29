@@ -451,3 +451,106 @@ def ports_with_devices(macs):
 
 def _natural(s):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s or "")]
+
+
+# ==========================================================================
+# live traffic and loop signs (two counter readings a few seconds apart)
+# ==========================================================================
+# key: (64-bit ifXTable column, 32-bit ifTable column)
+COUNTERS = {"in": (IFX + "6", IF + "10"), "out": (IFX + "10", IF + "16"), "ucast": (IFX + "7", IF + "11"),
+            "bcast": (IFX + "9", IF + "12"), "mcast": (IFX + "8", None),
+            "in_err": (None, IF + "14"), "out_err": (None, IF + "20"), "in_disc": (None, IF + "13")}
+# Normal office traffic stays far below these; a loop multiplies broadcasts on every port of it.
+STORM_PPS = 1000      # broadcasts / s into one port: storm, almost always a loop
+LOOP_PPS = 300        # broadcasts / s that also outnumber normal (unicast) packets: likely a loop
+BUSY_PCT = 80         # port busier than this: congested
+
+
+def counters(c, clock=None):
+    """One reading of every port's counters: {"time", "ports": {ifIndex: {key: value}}, "bits": {key: 32|64}}.
+    Uses 64-bit counters where the device has them (they do not wrap on fast ports)."""
+    import time
+    ports, bits = {}, {}
+    for key, (hc, low) in COUNTERS.items():
+        col = {}
+        if hc:
+            try:
+                col = c.table(hc)
+            except SnmpError:
+                col = {}
+            bits[key] = 64
+        if not col and low:
+            col = c.table(low)
+            bits[key] = 32  # for "bcast" this is ifInNUcastPkts (broadcast + multicast)
+        for idx, v in col.items():
+            if idx.isdigit() and isinstance(v, int):
+                ports.setdefault(int(idx), {})[key] = v
+    return {"time": (clock or time.time)(), "ports": ports, "bits": bits}
+
+
+def _delta(a, b, bits):
+    if a is None or b is None:
+        return None
+    d = b - a
+    if d < 0:
+        if bits == 32 and a < 2 ** 32:
+            d += 2 ** 32  # the counter wrapped
+        else:
+            return None   # the device restarted or reset its counters
+    return d
+
+
+def rates(prev, cur):
+    """{ifIndex: {key: per second}} between two counters() readings; in / out are bytes per second."""
+    secs = cur["time"] - prev["time"]
+    if secs <= 0:
+        return {}
+    out = {}
+    for idx, now in cur["ports"].items():
+        old = prev["ports"].get(idx, {})
+        r = {}
+        for key, v in now.items():
+            d = _delta(old.get(key), v, cur["bits"].get(key, 32))
+            if d is not None:
+                r[key] = d / secs
+        if r:
+            out[idx] = r
+    return out
+
+
+def utilisation(r, speed_mbps):
+    """Busiest direction as % of the port speed, or None when the speed is unknown."""
+    if not speed_mbps:
+        return None
+    return max(r.get("in", 0), r.get("out", 0)) * 8 / (speed_mbps * 1e6) * 100
+
+
+def port_warnings(r, speed_mbps):
+    """[(level, text)] for one port's rates."""
+    w = []
+    b = r.get("bcast", 0)
+    if b >= STORM_PPS:
+        w.append(("crit", f"broadcast storm: {b:,.0f} broadcasts/s - a network loop is almost certainly behind this port"))
+    elif b >= LOOP_PPS and b > r.get("ucast", 0):
+        w.append(("crit", f"{b:,.0f} broadcasts/s, more than normal traffic - possible loop behind this port"))
+    u = utilisation(r, speed_mbps)
+    if u is not None and u >= BUSY_PCT:
+        w.append(("warn", f"{u:.0f}% busy - this port is a bottleneck"))
+    e = r.get("in_err", 0) + r.get("out_err", 0)
+    if e >= 1:
+        w.append(("warn", f"{e:,.0f} errors/s - bad cable, connector or duplex mismatch"))
+    if r.get("in_disc", 0) >= 10:
+        w.append(("warn", f"{r['in_disc']:,.0f} packets/s dropped - the switch is overloaded on this port"))
+    return w
+
+
+def mac_moves(before, after):
+    """{(port_a, port_b): [mac, ...]} for MACs that moved between two MAC table readings.
+    Several MACs bouncing between the same two ports is the classic sign of a loop through them."""
+    moves = {}
+    for mac, port in after.items():
+        old = before.get(mac)
+        if old and old != port:
+            pair = tuple(sorted((old, port), key=_natural))
+            moves.setdefault(pair, []).append(mac)
+    return dict(sorted(moves.items(), key=lambda kv: -len(kv[1])))
