@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+*.bak
+desktop/NetworkDoctor.exe
+desktop/NetworkDoctor.new.exe
+reports/
+data/

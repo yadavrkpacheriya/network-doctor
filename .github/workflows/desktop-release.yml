@@ -1,0 +1,91 @@
+name: Desktop - build and release
+
+# A new release is made automatically whenever VERSION in desktop/NetworkDoctor.py
+# is changed to a number that has not been released yet. No server is needed:
+# GitHub builds the exe on a free Windows machine and every installed copy of
+# Network Doctor picks the new version up through its built-in updater.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check if it is already released
+        id: ver
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $m = Select-String -Path NetworkDoctor.py -Pattern '^VERSION = "([0-9]+(\.[0-9]+)*)"'
+          if (-not $m) { Write-Error "VERSION line not found in NetworkDoctor.py"; exit 1 }
+          $v = $m.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          gh release view "v$v" --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) { "exists=true" >> $env:GITHUB_OUTPUT; Write-Host "v$v already released - nothing to do" }
+          else { "exists=false" >> $env:GITHUB_OUTPUT; Write-Host "Building new release v$v" }
+          exit 0
+
+      - uses: actions/setup-python@v5
+        if: steps.ver.outputs.exists == 'false'
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        if: steps.ver.outputs.exists == 'false'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller scapy
+
+      - name: Check that the code loads
+        if: steps.ver.outputs.exists == 'false'
+        run: python -c "import nd_core, nd_monitor, nd_update, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
+
+      - name: Build NetworkDoctor.exe
+        if: steps.ver.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          $extra = @()
+          if (Test-Path nd_share.py) { $extra += @("--hidden-import", "nd_share") }
+          python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor `
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update @extra `
+            --collect-all scapy NetworkDoctor.py
+          if (-not (Test-Path dist\NetworkDoctor.exe)) { Write-Error "exe was not produced"; exit 1 }
+
+      - name: Checksum
+        if: steps.ver.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist\NetworkDoctor.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD\dist\NetworkDoctor.exe.sha256", "$h  NetworkDoctor.exe")
+          Write-Host "SHA-256: $h"
+
+      - name: Publish GitHub Release
+        if: steps.ver.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Network Doctor ${{ steps.ver.outputs.version }}
+          body_path: desktop/RELEASE_NOTES.md
+          make_latest: true
+          files: |
+            desktop/dist/NetworkDoctor.exe
+            desktop/dist/NetworkDoctor.exe.sha256
