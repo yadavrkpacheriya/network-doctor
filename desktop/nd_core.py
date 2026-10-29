@@ -43,6 +43,8 @@ import uuid
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
+import nd_linux
+
 APP = "Network Doctor"
 VERSION = "3.7.0"
 IS_WIN = os.name == "nt"
@@ -133,8 +135,7 @@ def detect_network():
             gw = m.group(1)
     else:
         m = re.search(r"default via (\S+)", run(["ip", "route", "show", "default"], 5))
-        if m:
-            gw = m.group(1)
+        gw = m.group(1) if m else nd_linux.default_gateway()[0]
     if not lip:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -161,6 +162,10 @@ def local_mac(lip):
                 m = re.search(r"ether\s+([0-9a-fA-F:]{11,17})", block)
                 if m:
                     return norm_mac(m.group(1))
+    if not IS_WIN and not IS_MAC:
+        name = nd_linux.iface_of(lip)
+        if name and norm_mac(nd_linux.mac_of(name)):
+            return norm_mac(nd_linux.mac_of(name))
     n = uuid.getnode()
     return norm_mac("%012X" % n)
 
@@ -216,6 +221,10 @@ def os_arp_table():
         mac = norm_mac(m.group(2))
         if not is_bad_mac(mac):
             res[m.group(1)] = mac
+    if not IS_WIN and not IS_MAC:  # `arp` is often not installed on Linux; the kernel table always is
+        for ip, mac in nd_linux.arp_table().items():
+            if not is_bad_mac(norm_mac(mac)):
+                res.setdefault(ip, norm_mac(mac))
     return res
 
 

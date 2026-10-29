@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 
 import nd_core as core
+import nd_linux
 
 # ==========================================================================
 # shared helpers
@@ -143,6 +144,8 @@ def local_prefix(lip):
             m = re.search(r"inet " + re.escape(lip) + r"/(\d+)", run(["ip", "-4", "addr"], 5))
             if m:
                 return int(m.group(1))
+            if not core.IS_MAC:
+                return nd_linux.prefix_of(lip)
     if not mask:
         return None
     try:
@@ -1034,6 +1037,8 @@ def adapters():
             a["mac"] = core.norm_mac(a.get("mac") or "")
             res.append(a)
         return res
+    if not core.IS_MAC:
+        return nd_linux.adapters()
     return parse_ifconfig_adapters(run(["ifconfig", "-a"], 10),
                                    run(["netstat", "-i", "-b"] if core.IS_MAC else ["netstat", "-i"], 10),
                                    run(["networksetup", "-listallhardwareports"], 10) if core.IS_MAC else "")

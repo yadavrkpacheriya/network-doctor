@@ -61,7 +61,7 @@ jobs:
       - name: Check that the code loads
         if: steps.ver.outputs.exists == 'false'
         run: |
-          python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
+          python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
           python -m unittest discover -s tests -v
 
       - name: Build NetworkDoctor.exe
@@ -71,7 +71,7 @@ jobs:
           $extra = @()
           if (Test-Path nd_share.py) { $extra += @("--hidden-import", "nd_share") }
           python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor `
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins @extra `
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux @extra `
             --collect-all scapy NetworkDoctor.py
           if (-not (Test-Path dist\NetworkDoctor.exe)) { Write-Error "exe was not produced"; exit 1 }
 
@@ -117,14 +117,14 @@ jobs:
 
       - name: Check that the code loads
         run: |
-          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins; print('modules OK', nd_core.IS_MAC)"
+          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux; print('modules OK', nd_core.IS_MAC)"
           python -m unittest discover -s tests -v
 
       - name: Build Network Doctor.app
         run: |
           python -m PyInstaller --noconfirm --windowed --name NetworkDoctor \
             --osx-bundle-identifier io.github.yadavrkpacheriya.networkdoctor \
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux \
             NetworkDoctor.py
           APP=dist/NetworkDoctor.app
           PL=$APP/Contents/Info.plist
@@ -143,4 +143,46 @@ jobs:
         run: |
           gh release upload "v${{ needs.windows.outputs.version }}" \
             dist/NetworkDoctor-macOS.zip dist/NetworkDoctor-macOS.zip.sha256 \
+            --repo "${{ github.repository }}" --clobber
+
+  # Linux app (x86-64). Built on the oldest supported Ubuntu so it also runs on older distributions.
+  linux:
+    needs: windows
+    if: needs.windows.outputs.exists == 'false'
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Check that the code loads
+        run: |
+          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux; print('modules OK')"
+          python -m unittest discover -s tests -v
+
+      - name: Build NetworkDoctor-Linux
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux \
+            NetworkDoctor.py
+          mv dist/NetworkDoctor dist/NetworkDoctor-Linux
+          chmod +x dist/NetworkDoctor-Linux
+          (cd dist && sha256sum NetworkDoctor-Linux > NetworkDoctor-Linux.sha256 && cat NetworkDoctor-Linux.sha256)
+
+      - name: Add the Linux app to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ needs.windows.outputs.version }}" \
+            dist/NetworkDoctor-Linux dist/NetworkDoctor-Linux.sha256 \
             --repo "${{ github.repository }}" --clobber

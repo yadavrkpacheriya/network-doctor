@@ -8,6 +8,7 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 |---|---|---|
 | Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
+| Linux (x86-64) | **From the next release** - full features (run with `sudo` for the IP-conflict rounds) | `NetworkDoctor-Linux` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Android | **Test version** - phone scan + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
 | Google Play, Microsoft Store, signed Mac | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
 
@@ -24,6 +25,12 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 1. Download **NetworkDoctor-macOS.zip** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest), unzip it and move **NetworkDoctor** to *Applications*.
 2. The first time, **right-click → Open**. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway** (the app is not yet signed with an Apple Developer certificate).
 3. On the Mac the router log arrives on UDP **5514** (macOS reserves ports below 1024); *Setup → Copy router commands* already uses it.
+
+## Install (Linux)
+
+1. Download **NetworkDoctor-Linux** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) into a folder you own, for example `~/NetworkDoctor`.
+2. Make it runnable once: `chmod +x NetworkDoctor-Linux`, then start it: `./NetworkDoctor-Linux`.
+3. Updates are automatic, as on Windows and Mac. Keep the file in a folder you can write to so the updater can replace it.
 
 ## Install (Android phone)
 
@@ -115,7 +122,7 @@ To build locally instead, run `desktop/Build_NetworkDoctor_EXE.bat` on a Windows
 ## Repository layout
 
 ```
-desktop/   Windows and macOS app - Python + Tkinter
+desktop/   Windows, macOS and Linux app - Python + Tkinter
   NetworkDoctor.py   window
   nd_core.py         scan engine
   nd_monitor.py      live monitor, traffic, threat lists, root cause
@@ -126,6 +133,7 @@ desktop/   Windows and macOS app - Python + Tkinter
   nd_net.py          engineer tools: port scan, DNS, speed tests, Wi-Fi, adapters, MTU, subnet, Wake-on-LAN
   nd_toolstab.py     Tools tab (including the critical-device watch)
   nd_plugins.py      device plugins: one per protocol or brand, same shape for all
+  nd_linux.py        Linux network facts from /proc and /sys (no extra tools needed)
   nd_snmp.py         SNMP reader (v1 / v2c, read-only) for switches and routers of any brand
   tests/             tests (python -m unittest discover -s tests, from desktop/)
 mobile/    Android phone app - Flutter (iPhone possible later from the same code)
