@@ -55,6 +55,13 @@ android {
             signingConfig = if (keystorePropertiesFile.exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
+
+    // Compress the native libraries inside the APK: a much smaller download.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {
