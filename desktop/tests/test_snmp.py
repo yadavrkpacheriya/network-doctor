@@ -54,8 +54,9 @@ MIB = {
 
 
 class FakeAgent:
-    def __init__(self, mib, community="public"):
+    def __init__(self, mib, community="public", write_community="private"):
         self.mib = mib
+        self.write_community = write_community
         self.keys = sorted(mib, key=S.oid_key)
         self.community = community
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -79,9 +80,16 @@ class FakeAgent:
                 return
             self.requests += 1
             r = S.parse_message(data)
-            if r["community"] != self.community:
+            if r["community"] not in (self.community, self.write_community):
                 continue  # real agents stay silent on a wrong community
-            out = []
+            out, err = [], 0
+            if r["type"] == S.SET:
+                out = r["varbinds"]
+                if r["community"] != self.write_community:
+                    err = 6  # noAccess: the read-only community cannot write
+                else:
+                    for o, v in out:
+                        self.mib[o] = v
             if r["type"] == S.GET:
                 out = [(o, self.mib.get(o, S.Missing(S.NO_SUCH_OBJECT))) for o, _ in r["varbinds"]]
             elif r["type"] == S.GETNEXT:
@@ -97,7 +105,8 @@ class FakeAgent:
                         break
                     out.append((n, self.mib[n]))
                     o = n
-            self.sock.sendto(S.build_message(S.RESPONSE, r["request_id"], out, r["community"], r["version"]), addr)
+            self.sock.sendto(S.build_message(S.RESPONSE, r["request_id"], out, r["community"], r["version"], err,
+                                             1 if err else 0), addr)
 
     def close(self):
         self.sock.close()
@@ -251,6 +260,41 @@ class LiveTraffic(unittest.TestCase):
         before = {"A": "Gi1/0/2", "B": "Gi1/0/2", "C": "Gi1/0/10", "D": "Gi1/0/5"}
         after = {"A": "Gi1/0/10", "B": "Gi1/0/10", "C": "Gi1/0/2", "D": "Gi1/0/5", "E": "Gi1/0/7"}
         self.assertEqual(S.mac_moves(before, after), {("Gi1/0/2", "Gi1/0/10"): ["A", "B", "C"]})
+
+
+class PortControl(unittest.TestCase):
+    """Turning a port off / on and renaming it, only with the write community."""
+
+    def setUp(self):
+        self.mib = dict(MIB)
+        self.mib["1.3.6.1.2.1.2.2.1.7.2"] = 1
+        self.mib["1.3.6.1.2.1.31.1.1.1.18.2"] = b"old desk"
+        self.agent = FakeAgent(self.mib)
+
+    def tearDown(self):
+        self.agent.close()
+
+    def client(self, community):
+        return S.Snmp("127.0.0.1", community, port=self.agent.port, timeout=1, retries=0)
+
+    def test_read_community_is_refused(self):
+        with self.assertRaises(S.SnmpError) as e:
+            S.set_port(self.client("public"), 2, False)
+        self.assertIn("read-WRITE community", str(e.exception))
+        self.assertEqual(self.mib["1.3.6.1.2.1.2.2.1.7.2"], 1)
+
+    def test_port_off_on_and_rename(self):
+        c = self.client("private")
+        self.assertEqual(S.set_port(c, 2, False), "down")
+        self.assertEqual(S.set_port(c, 2, True), "up")
+        self.assertEqual(S.set_alias(c, 2, "Reception PC"), "old desk")
+        self.assertEqual(S.text(self.mib["1.3.6.1.2.1.31.1.1.1.18.2"]), "Reception PC")
+
+    def test_port_risk(self):
+        macs = {"AA": "Gi1/0/1", "BB": "Gi1/0/2", **{f"C{i}": "Gi1/0/24" for i in range(10)}}
+        self.assertIn("this PC", S.port_risk("Gi1/0/1", macs, ["AA"]))
+        self.assertIn("10 devices", S.port_risk("Gi1/0/24", macs))
+        self.assertEqual(S.port_risk("Gi1/0/2", macs, ["AA"]), "")
 
 
 if __name__ == "__main__":

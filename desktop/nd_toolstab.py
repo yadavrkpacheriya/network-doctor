@@ -9,7 +9,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 import nd_core as core
 import nd_monitor as M
@@ -171,6 +171,8 @@ class ToolsTab:
                         self.status[key].set("finished " + time.strftime("%H:%M:%S"))
                 elif tag == "status":
                     self.status[key].set(text)
+                elif tag == "call":
+                    text()
                 elif tag == "clear":
                     t = self.texts[key]
                     t.configure(state="normal")
@@ -425,9 +427,28 @@ class ToolsTab:
         row2.pack(fill="x", pady=(4, 0))
         self._run_btn(row2, "switch", "Live traffic + loop check", self._switch_live)
         self._stop_btn(row2, "switch")
-        ttk.Label(f, text="Turn on SNMP (v2c, read-only) on the switch first, with a community name. Network Doctor "
-                          "never changes anything on it. Live traffic refreshes every 5 seconds until you press Stop.",
-                  foreground="#667085").pack(anchor="w")
+        row3 = ttk.Frame(f)
+        row3.pack(fill="x", pady=(4, 0))
+        ttk.Label(row3, text="Port:").pack(side="left")
+        self.var_sw_port = tk.StringVar()
+        self.cb_sw_port = ttk.Combobox(row3, textvariable=self.var_sw_port, values=[], width=24, state="readonly")
+        self.cb_sw_port.pack(side="left", padx=4)
+        ttk.Label(row3, text="Write community:").pack(side="left")
+        self.var_sw_wcomm = tk.StringVar()
+        ttk.Entry(row3, textvariable=self.var_sw_wcomm, width=14, show="*").pack(side="left", padx=4)
+        row4 = ttk.Frame(f)
+        row4.pack(fill="x", pady=(4, 0))
+        for label, action in (("Turn off", "off"), ("Turn on", "on"), ("Restart port", "restart"),
+                              ("Rename...", "rename"), ("Undo last change", "undo")):
+            b = ttk.Button(row4, text=label, command=lambda a=action: self._switch_change(a))
+            b.pack(side="left", padx=2)
+            self.btns.setdefault("switch", []).append(b)
+        ttk.Label(f, text="Turn on SNMP (v2c) on the switch first, with a community name. Reading never changes "
+                          "anything. Live traffic refreshes every 5 seconds until you press Stop. To turn ports off / on "
+                          "or rename them, press Read first, then use the switch's read-write community; every change "
+                          "asks first and can be undone.", foreground="#667085", wraplength=900, justify="left").pack(
+            anchor="w")
+        self.sw_ports, self.sw_macs, self.sw_undo, self.sw_host = {}, {}, [], ""
         if self.app.selected_device:
             self.var_sw.set(self.app.selected_device.get("ip", ""))
         self._out_box(f, "switch")
@@ -454,6 +475,12 @@ class ToolsTab:
 
         ports = [i for i in d["interfaces"] if i["type"] != 24]  # 24 = loopback
         up = [i for i in ports if i["status"] == "up"]
+
+        def keep(ports=ports, macs=d["macs"]):
+            self.sw_host, self.sw_macs = host, macs
+            self.sw_ports = {f"{i['name']}" + (f"  ({i['alias']})" if i["alias"] else ""): i for i in ports}
+            self.cb_sw_port.configure(values=list(self.sw_ports))
+        out(keep, "call")
         out(f"\nPorts ({len(ports)}, {len(up)} up)", "h")
         for i in ports:
             if i["status"] != "up":
@@ -566,6 +593,73 @@ class ToolsTab:
             if not loops and not alerts:
                 out("\nNo loop signs and no busy or faulty ports right now.", "ok")
             out(f"{name}: {len(rows)} ports, updated {time.strftime('%H:%M:%S')}", "status")
+
+    def _switch_change(self, action):
+        """Port off / on / restart / rename / undo. Asks first (in the window), then runs in the background."""
+        host = self.sw_host
+        if action == "undo":
+            if not self.sw_undo:
+                messagebox.showinfo("Undo", "No change to undo.", parent=self.app)
+                return
+            desc, index, kind, value = self.sw_undo[-1]
+            if not messagebox.askyesno("Undo", f"Undo: {desc}?", parent=self.app):
+                return
+            self.sw_undo.pop()
+            port = {"index": index, "name": desc.split(":")[0]}
+        else:
+            port = self.sw_ports.get(self.var_sw_port.get())
+            if not host or not port:
+                messagebox.showinfo("Switch", "Press Read first, then choose a port.", parent=self.app)
+                return
+        wcomm = self.var_sw_wcomm.get().strip()
+        if not wcomm:
+            messagebox.showinfo("Switch", "Type the switch's read-WRITE community. Reading uses the normal one; "
+                                          "changes need the write one.", parent=self.app)
+            return
+        name, index = port["name"], port["index"]
+        if action in ("off", "restart"):
+            risk = nd_snmp.port_risk(name, self.sw_macs, [core.local_mac(self.app.lip or "")])
+            what = "Turn off" if action == "off" else "Restart (off for 5 seconds, then on)"
+            msg = f"{what} port {name} on {host}?" + (f"\n\nWARNING: {risk}." if risk else "")
+            if not messagebox.askyesno("Switch port", msg, icon="warning" if risk else "question", parent=self.app):
+                return
+        elif action == "on":
+            if not messagebox.askyesno("Switch port", f"Turn on port {name} on {host}?", parent=self.app):
+                return
+        elif action == "rename":
+            new = simpledialog.askstring("Rename port", f"New description for {name}:", parent=self.app,
+                                         initialvalue=port.get("alias", ""))
+            if new is None:
+                return
+        c = nd_snmp.Snmp(host, wcomm, self.var_sw_ver.get())
+
+        def work(out, stop):
+            if action == "undo":
+                out(f"Undo: {desc} ...", "h")
+                if kind == "admin":
+                    out(f"  port is now {nd_snmp.set_port(c, index, value == 'up')}", "ok")
+                else:
+                    nd_snmp.set_alias(c, index, value)
+                    out(f"  description is back to '{value}'", "ok")
+                return
+            if action in ("off", "on"):
+                before = nd_snmp.port_admin(c, index)
+                now = nd_snmp.set_port(c, index, action == "on")
+                out(f"Port {name} on {host} is now {now}.", "ok" if now == ("up" if action == "on" else "down") else "warn")
+                self.sw_undo.append((f"{name}: turned {'on' if action == 'on' else 'off'}", index, "admin", before))
+            elif action == "restart":
+                out(f"Restarting port {name} on {host} ...", "h")
+                nd_snmp.set_port(c, index, False)
+                out("  off - waiting 5 seconds")
+                time.sleep(5)
+                now = nd_snmp.set_port(c, index, True)
+                out(f"  on again ({now}). The device on it reconnects in a few seconds.", "ok" if now == "up" else "warn")
+            elif action == "rename":
+                old = nd_snmp.set_alias(c, index, new)
+                out(f"Port {name} description: '{old}' -> '{new}'", "ok")
+                self.sw_undo.append((f"{name}: renamed to '{new}'", index, "alias", old))
+            out(("Switch change", "info", f"{host} {name}: {action}" + (f" '{new}'" if action == "rename" else "")), "log")
+        self.start("switch", work)
 
     # ------------------------------------------------------------------ DNS
     def _build_dns(self, f):
