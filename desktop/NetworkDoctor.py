@@ -508,10 +508,26 @@ class App(tk.Tk):
         self.nb.add(f, text="  Devices  ")
         sf = ttk.Frame(f, padding=(0, 6))
         sf.pack(fill="x")
+        sf2 = ttk.Frame(f)
+        sf2.pack(fill="x")
+        ttk.Label(sf2, text='Search tips: several words must all match; dept:accounts  port:ether3  loc:"2nd floor"  '
+                            'vendor:hikvision  type:printer', foreground="#667085").pack(side="left")
         ttk.Label(sf, text="Search:").pack(side="left")
         self.var_q = tk.StringVar()
         self.var_q.trace_add("write", lambda *a: self.fill_devices())
         ttk.Entry(sf, textvariable=self.var_q, width=34).pack(side="left", padx=6)
+        self.var_fdept, self.var_floc, self.var_fshow = tk.StringVar(value="All"), tk.StringVar(value="All"), \
+            tk.StringVar(value=T.SHOW[0])
+        for label, var, field in (("Department:", self.var_fdept, "dept"), ("Location:", self.var_floc, "location")):
+            ttk.Label(sf, text=label).pack(side="left", padx=(6, 0))
+            cb = ttk.Combobox(sf, textvariable=var, width=14, state="readonly", values=["All"])
+            cb.configure(postcommand=lambda cb=cb, field=field: cb.configure(
+                values=["All"] + T.tag_values(self.devices, field)))
+            cb.bind("<<ComboboxSelected>>", lambda e: self.fill_devices())
+            cb.pack(side="left", padx=4)
+        cb = ttk.Combobox(sf, textvariable=self.var_fshow, width=22, state="readonly", values=T.SHOW)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.fill_devices())
+        cb.pack(side="left", padx=4)
         self.var_sort_bw = tk.BooleanVar(value=False)
         ttk.Checkbutton(sf, text="Sort by bandwidth", variable=self.var_sort_bw,
                         command=self.fill_devices).pack(side="left", padx=8)
@@ -529,7 +545,7 @@ class App(tk.Tk):
                  "Why this category", "Notes")
         widths = (100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
         self.tv = make_tree(f, cols, heads, widths, first=("Name", 210), selectmode="extended")
-        ttk.Label(sf, text="Ctrl / Shift + click to select several devices, then Tag... (department, switch, router port)",
+        ttk.Label(sf2, text="   Ctrl / Shift + click several devices, then Tag... to tag them all at once",
                   foreground="#667085").pack(side="left", padx=8)
         self.tv.bind("<Button-3>", self._menu)
         self.tv.bind("<Double-1>", lambda e: self.act("analyse"))
@@ -1088,11 +1104,9 @@ class App(tk.Tk):
         rates = self.mon.traffic.rates(120) if self.mon and self.mon.last_flow else {}
         self.row_dev = {}
         for c in core.CAT_ORDER:
-            ds = [d for d in self.devices if d["category"] == c]
-            if qy:
-                ds = [d for d in ds if qy in " ".join([d["name"], " ".join(d["ips"]), d["mac"] or "", d["vendor"],
-                                                       d["reason"], " ".join(d["notes"]), d.get("dept", ""),
-                                                       " ".join((d.get("tag") or {}).values())]).lower()]
+            ds = T.filter_devices([d for d in self.devices if d["category"] == c], qy,
+                                  "" if self.var_fdept.get() == "All" else self.var_fdept.get(),
+                                  "" if self.var_floc.get() == "All" else self.var_floc.get(), self.var_fshow.get())
             if self.var_sort_bw.get():
                 ds.sort(key=lambda d: -sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps")))
             if not ds:
