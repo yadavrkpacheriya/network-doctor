@@ -44,7 +44,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 APP = "Network Doctor"
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 IS_WIN = os.name == "nt"
 if getattr(sys, "frozen", False):
     HERE = os.path.dirname(sys.executable)

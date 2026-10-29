@@ -1,14 +1,24 @@
-## Network Doctor 3.2.0
+## Network Doctor 3.3.0
 
-**New: online updates.** Network Doctor now checks GitHub once a day. When a new version is out it asks you, downloads it, checks its SHA-256 checksum, and restarts. Nothing to install and no server needed.
+**New: phone app link.** The coming Network Doctor phone app can show this PC's results:
+- devices
+- problems
+- root cause
+- live monitor
+- top bandwidth users
 
-Also in this version:
-- **Check for updates** button and an on/off switch in the Setup tab.
-- Everything from 3.1:
-  - live monitor
-  - root cause analysis
-  - bandwidth per device with an app and safety check
-  - DHCP or static per device
-  - IP-conflict, loop and rogue-DHCP detection
+To use it:
+1. Turn it on in **Setup → Phone app link**.
+2. Enter the 6-digit pairing code in the phone app.
 
-**First start:** Windows may say *"Windows protected your PC"* because the app is not code-signed. Click **More info → Run anyway**. The app asks for Administrator permission so it can run the full conflict and loop tests.
+Security:
+- It only works on the office LAN.
+- Each code works once.
+- 5 wrong codes lock pairing for 5 minutes.
+- You can remove paired phones at any time.
+
+The phone app can also start a scan on the PC.
+
+Also included: online updates from GitHub (3.2.0) and everything from 3.1.
+
+**First start:** if Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app is not code-signed.

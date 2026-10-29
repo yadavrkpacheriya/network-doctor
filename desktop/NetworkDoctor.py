@@ -26,6 +26,7 @@ from collections import Counter
 import nd_core as core
 import nd_monitor as M
 import nd_update as U
+import nd_share as SH
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -47,7 +48,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -403,6 +404,9 @@ class App(tk.Tk):
         self.after(800, self.start_monitor)
         self.after(2500, self.start_scan)
         U.cleanup_leftovers()
+        self.share = None
+        if self.var_share.get():
+            self.after(1200, self.toggle_share)
         self.after(15000, lambda: self.check_updates(True))
         self.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -581,6 +585,15 @@ class App(tk.Tk):
         self.var_upd = tk.StringVar(value=f"Version {VERSION}")
         ttk.Label(up, textvariable=self.var_upd).pack(side="left", padx=10)
         ttk.Button(up, text="Release page", command=lambda: webbrowser.open(U.RELEASES_PAGE)).pack(side="right")
+        ph = ttk.LabelFrame(f, text="Phone app link (office LAN only)", padding=(8, 4))
+        ph.pack(fill="x", pady=(0, 6))
+        self.var_share = tk.BooleanVar(value=self._settings().get("share_enabled", False))
+        ttk.Checkbutton(ph, text="Allow the Network Doctor phone app to connect", variable=self.var_share,
+                        command=self.toggle_share).pack(side="left")
+        self.var_share_info = tk.StringVar(value="off")
+        ttk.Label(ph, textvariable=self.var_share_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
+        ttk.Button(ph, text="Remove paired phones", command=self.forget_phones).pack(side="right")
+        ttk.Button(ph, text="New pairing code", command=self.new_share_code).pack(side="right", padx=6)
         self.tsetup = text_box(f)
         self._fill_setup()
 
@@ -644,6 +657,10 @@ class App(tk.Tk):
     def _tick(self):
         try:
             self._tick_once()
+        except Exception:
+            pass
+        try:
+            self._share_label()
         except Exception:
             pass
         if self.var_auto.get() and self.last_scan_t and time.time() - self.last_scan_t > 1800 \
@@ -847,6 +864,8 @@ class App(tk.Tk):
                     self._on_update_info(*msg[1:])
                 elif k in ("upd_prog", "upd_err", "upd_ready"):
                     self._on_update_msg(msg)
+                elif k == "remote_scan":
+                    self.start_scan()
                 elif k == "done":
                     self.raw, self.devices, self.issues, self.checks = msg[1:]
                     self._finish()
@@ -1180,6 +1199,105 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror(APP, str(e))
 
+    # ---------------------------------------------------------------- phone link
+    def toggle_share(self):
+        on = self.var_share.get()
+        self._settings()["share_enabled"] = on
+        self._save_settings()
+        if on and not (self.share and self.share.running):
+            store = self._settings().setdefault("share", {})
+            self.share = SH.ShareServer(APP, VERSION, self._snapshot, self._remote_cmd, store, self._save_settings)
+            if not self.share.start():
+                self.var_share.set(False)
+                messagebox.showerror(APP, "Phone link could not start: " + (self.share.error or "?"))
+                self.share = None
+            elif core.IS_WIN and core.is_admin():
+                name = "Network Doctor phone link"
+                if name not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"], 10):
+                    core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in",
+                              "action=allow", "protocol=TCP", f"localport={SH.HTTP_PORT}", "remoteip=localsubnet"], 10)
+                    core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name} discovery", "dir=in",
+                              "action=allow", "protocol=UDP", f"localport={SH.DISCOVERY_PORT}", "remoteip=localsubnet"], 10)
+        elif not on and self.share:
+            self.share.stop()
+            self.share = None
+        self._share_label()
+
+    def _share_label(self):
+        sh = self.share
+        if not sh or not sh.running:
+            self.var_share_info.set("off")
+            return
+        n = len(sh.phones())
+        last = ""
+        if sh.last_client and time.time() - sh.last_client[1] < 30:
+            last = f"   |   phone {sh.last_client[0]} connected"
+        warn = f"   ({sh.error})" if sh.error else ""
+        self.var_share_info.set(f"Pairing code: {sh.code}    PC address: {self.lip}    Paired phones: {n}{last}{warn}")
+
+    def new_share_code(self):
+        if self.share:
+            self.share.code = SH.ShareServer.new_code()
+            self._share_label()
+
+    def forget_phones(self):
+        if not self.share:
+            store = self._settings().get("share", {})
+            store["phones"] = {}
+            self._save_settings()
+            return
+        phones = self.share.phones()
+        if phones and messagebox.askyesno(APP, f"Remove {len(phones)} paired phone(s)? They will need a new code."):
+            for tok, _ in phones:
+                self.share.forget(tok)
+        self._share_label()
+
+    def _remote_cmd(self, name):
+        if name == "scan":
+            if getattr(self, "scanning", False):
+                return "a scan is already running"
+            self.q.put(("remote_scan",))
+            return "scan started"
+        return "unknown command"
+
+    def _snapshot(self):
+        """Everything the phone app shows. Runs on the phone-link thread: reads data only, never Tk."""
+        mon = self.mon
+        rates = mon.traffic.rates(120) if mon and mon.last_flow else {}
+        devs = []
+        for d in list(self.devices):
+            typ, why = M.ip_type(d, mon, self.db, self.raw) if d.get("online") else ("", "")
+            r = rates.get(d.get("ip")) or {}
+            devs.append({"name": d.get("name", ""), "ip": d.get("ip", ""),
+                         "ips": sorted(d.get("ips", []), key=core.ip_key), "mac": d.get("mac") or "",
+                         "vendor": d.get("vendor", ""), "category": d.get("category", ""),
+                         "reason": d.get("reason", ""), "status": d.get("status", ""), "online": bool(d.get("online")),
+                         "ip_type": typ, "ip_type_why": why, "ports": d.get("ports", []),
+                         "services": [core.PORTS.get(x, str(x)) for x in d.get("ports", [])],
+                         "web_port": (d.get("http") or {}).get("port"), "notes": d.get("notes", []),
+                         "random_mac": bool(d.get("random")), "down_bps": r.get("down_bps"), "up_bps": r.get("up_bps")})
+        finds, missing = M.rca_network(mon, list(self.devices), list(self.issues), self.db)
+        now = time.time()
+        snap = {"pc": socket.gethostname(), "version": VERSION, "time": now, "network": self.net,
+                "gateway": self.gw, "pc_ip": self.lip, "devices": devs, "issues": list(self.issues),
+                "checks": [{"name": n, "result": r, "detail": x} for n, r, x in self.checks],
+                "rca": {"findings": finds, "missing": missing},
+                "scan": dict((self.raw or {}).get("meta", {}), tests=None) if self.raw else None,
+                "scanning": bool(getattr(self, "scanning", False)), "monitor": None}
+        if mon:
+            names = {d["ip"]: d.get("name", "") for d in devs}
+            talk = sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:15]
+            snap["monitor"] = {
+                "status": mon.feed_status(), "running": mon.running,
+                "samples": [[round(t), b, m] for t, b, m in mon.samples_copy(now - 600)][::2],
+                "events": [{"t": e["t"], "sev": e["sev"], "src": e["src"], "text": e["text"]}
+                           for e in mon.events_copy()[-150:] if e["sev"] != "debug"][::-1],
+                "links_down": {k: [t for t, st in v if st == "down" and t > now - 3600]
+                               for k, v in mon.links_copy().items()},
+                "talkers": [{"ip": ip, "name": names.get(ip, ""), "down_bps": r["down_bps"], "up_bps": r["up_bps"],
+                             "last10": sum(mon.traffic.window_total(ip, 600))} for ip, r in talk]}
+        return snap
+
     # ---------------------------------------------------------------- online updates (GitHub Releases)
     def _settings(self):
         if not hasattr(self, "_set"):
@@ -1309,6 +1427,8 @@ class App(tk.Tk):
             if self.mon:
                 self.mon.stop()
             self.orgs.close()
+            if self.share:
+                self.share.stop()
         except Exception:
             pass
         self.destroy()

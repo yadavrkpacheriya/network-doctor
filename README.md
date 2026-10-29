@@ -57,6 +57,14 @@ Optional: install [Npcap](https://npcap.com) to turn on the packet sniffer. It a
 - a list of which devices send the broadcasts
 - NetCut / ARP-spoofing detection
 
+## Phone app link
+
+In **Setup → Phone app link**, tick *Allow the Network Doctor phone app to connect*. The phone app then finds the PC on the office Wi-Fi by itself. You enter the 6-digit code shown on the PC once, and the phone can then show the PC's devices, problems, root cause, live monitor and top bandwidth users.
+
+- It works on the local network only (TCP 8787, discovery on UDP 8788).
+- Requests from internet addresses are refused.
+- Each pairing code works once.
+
 ## Privacy
 
 Network Doctor runs entirely on your PC.
@@ -89,6 +97,7 @@ desktop/   Windows (later also macOS) app - Python + Tkinter
   nd_core.py         scan engine
   nd_monitor.py      live monitor, traffic, threat lists, root cause
   nd_update.py       online updates from GitHub Releases
+  nd_share.py        phone app link (LAN only, pairing code)
 mobile/    Android / iPhone app (coming)
 docs/      screenshots
 ```
