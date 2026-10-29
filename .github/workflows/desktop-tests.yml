@@ -1,0 +1,42 @@
+name: Desktop - tests
+
+# Runs the desktop tests on every pull request and push that touches desktop/,
+# on Windows, macOS and Linux, so a change is checked before it is released.
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check that the engine modules load
+        run: python -c "import nd_core, nd_net, nd_snmp, nd_plugins; print('engine modules OK')"
+
+      - name: Run the tests
+        run: python -m unittest discover -s tests -v

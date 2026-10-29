@@ -43,7 +43,7 @@ Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/re
 | **Problems / Health checks** | Results of the scan. |
 | **IP-MAC binding** | Makes the MikroTik commands that reserve each device's IP for its MAC (with optional strict mode and randomized-MAC blocking, and an UNDO set). Also makes the **PC fix script** to run on every PC: random Wi-Fi MAC off, back to automatic IP, router MAC lock, and a report back that tags the PC. |
 | **Commands** | About 40 ready Windows, MikroTik and Mac commands with a short line on what each does, filled in for the chosen device. Copy or run, and add your own. |
-| **Tools** | Critical-device watch (alert when the router, server, ERP PC, DVR or a switch stops answering), internet speed and quality, port scanner, DNS lookup and DNS server test, website / server check, LAN speed test between two PCs, Wi-Fi analyzer, this PC's adapters (cable speed, duplex, errors), MTU finder, subnet calculator, Wake-on-LAN, MAC lookup, and a setup check that lists what is still missing. |
+| **Tools** | Critical-device watch (alert when the router, server, ERP PC, DVR or a switch stops answering), switch / router details over SNMP for any brand (ports, speed, errors, LLDP neighbours, which device is on which port), internet speed and quality, port scanner, DNS lookup and DNS server test, website / server check, LAN speed test between two PCs, Wi-Fi analyzer, this PC's adapters (cable speed, duplex, errors), MTU finder, subnet calculator, Wake-on-LAN, MAC lookup, and a setup check that lists what is still missing. |
 | **Setup** | One-time router settings, Windows Firewall, threat lists and updates. |
 
 ![Network map](docs/network-map.png)
@@ -125,6 +125,9 @@ desktop/   Windows and macOS app - Python + Tkinter
   nd_tabs.py         Network map, IP-MAC binding and Commands tabs
   nd_net.py          engineer tools: port scan, DNS, speed tests, Wi-Fi, adapters, MTU, subnet, Wake-on-LAN
   nd_toolstab.py     Tools tab (including the critical-device watch)
+  nd_plugins.py      device plugins: one per protocol or brand, same shape for all
+  nd_snmp.py         SNMP reader (v1 / v2c, read-only) for switches and routers of any brand
+  tests/             tests (python -m unittest discover -s tests, from desktop/)
 mobile/    Android phone app - Flutter (iPhone possible later from the same code)
 docs/      screenshots
 ```
