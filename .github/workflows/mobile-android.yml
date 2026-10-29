@@ -14,6 +14,10 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/mobile-android.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-android.yml"
   workflow_dispatch:
 
 permissions:
@@ -101,8 +105,11 @@ jobs:
 
       - name: Build APK
         run: |
-          flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk build/NetworkDoctor-Android.apk
+          # One APK per processor type instead of one APK holding all three: about a third of the size.
+          flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/NetworkDoctor-Android.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/NetworkDoctor-Android-32bit.apk
+          ls -lh build/NetworkDoctor-Android*.apk
 
       - name: Build Play Store bundle (.aab)
         if: env.KS_B64 != ''
@@ -115,11 +122,12 @@ jobs:
           name: network-doctor-android
           path: |
             mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android-32bit.apk
             mobile/build/NetworkDoctor-Android.aab
           if-no-files-found: ignore
 
       - name: Publish APK as a GitHub Release
-        if: steps.ver.outputs.exists == 'false'
+        if: steps.ver.outputs.exists == 'false' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mobile-v${{ steps.ver.outputs.version }}
@@ -131,7 +139,12 @@ jobs:
             Install on a phone for testing: open this page on the phone, download NetworkDoctor-Android.apk
             and allow "Install unknown apps" for your browser when Android asks. The Google Play version
             will update automatically through the Play Store once it is published there.
-          files: mobile/build/NetworkDoctor-Android.apk
+
+            NetworkDoctor-Android.apk is for every phone made since about 2017 (64-bit). Only if Android says
+            the app is not compatible, use NetworkDoctor-Android-32bit.apk instead.
+          files: |
+            mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android-32bit.apk
 
       - name: Clean up signing files
         if: always()

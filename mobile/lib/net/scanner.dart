@@ -39,7 +39,11 @@ class Scanner {
     var done = 0;
 
     onProgress(0.02, 'Looking for devices on ${hosts.length} addresses...');
-    await pool<String>(hosts, 24, (ip) async {
+    // Names (NetBIOS) and UPnP descriptions are asked for at the same time as the sweep, not after it.
+    // Devices that answer them are also counted as found, even if every TCP port was silent.
+    final namesF = netbiosNames(hosts.where((ip) => ip != myIp).toList());
+    final upnpF = ssdpDiscover();
+    await pool<String>(hosts, 48, (ip) async {
       if (ip == myIp) return;
       final results = await Future.wait(alivePorts.map((p) => tcpProbe(ip, p)));
       Device? d;
@@ -57,33 +61,14 @@ class Scanner {
     }, cancelled: () => _cancel);
     if (_cancel) throw const ScanCancelled();
 
-    if (gateway != null && !found.containsKey(gateway)) {
-      found[gateway] = Device(gateway);
+    onProgress(0.52, 'Reading computer names and device descriptions...');
+    final names = await namesF;
+    final upnp = await upnpF;
+    final inNet = hosts.toSet();
+    for (final ip in [...names.keys, ...upnp.keys]) {
+      if (ip != myIp && inNet.contains(ip)) found.putIfAbsent(ip, () => Device(ip));
     }
-    final me = Device(myIp)..isSelf = true;
-    found[myIp] = me;
-    final alive = found.keys.where((ip) => ip != myIp).toList();
-
-    onProgress(0.55, 'Checking services of ${alive.length} devices...');
-    var n = 0;
-    await pool<String>(alive, 12, (ip) async {
-      final d = found[ip]!;
-      final todo = fullPorts.where((p) => !alivePorts.contains(p)).toList();
-      final res = await Future.wait(todo.map((p) => tcpProbe(ip, p, timeout: const Duration(milliseconds: 600))));
-      for (var i = 0; i < res.length; i++) {
-        if (res[i].open) d.ports.add(todo[i]);
-      }
-      n++;
-      onProgress(0.55 + 0.25 * n / alive.length, 'Checking services... $n/${alive.length}');
-    }, cancelled: () => _cancel);
-    if (_cancel) throw const ScanCancelled();
-
-    onProgress(0.82, 'Reading computer names...');
-    final names = await netbiosNames(alive);
     names.forEach((ip, name) => found[ip]?.netbios = name);
-
-    onProgress(0.88, 'Asking routers, cameras and TVs to describe themselves (UPnP)...');
-    final upnp = await ssdpDiscover();
     upnp.forEach((ip, info) {
       final d = found[ip];
       if (d == null) return;
@@ -94,10 +79,31 @@ class Scanner {
       d.server = info['server'] ?? '';
     });
 
-    onProgress(0.94, 'Looking up names...');
-    await pool<String>(alive, 16, (ip) async {
-      found[ip]!.dns = await reverseName(ip);
-    });
+    if (gateway != null && !found.containsKey(gateway)) {
+      found[gateway] = Device(gateway);
+    }
+    final me = Device(myIp)..isSelf = true;
+    found[myIp] = me;
+    final alive = found.keys.where((ip) => ip != myIp).toList();
+
+    onProgress(0.55, 'Checking services of ${alive.length} devices...');
+    var n = 0;
+    final todo = fullPorts.where((p) => !alivePorts.contains(p)).toList();
+    await Future.wait([
+      pool<String>(alive, 24, (ip) async {
+        final d = found[ip]!;
+        final res = await Future.wait(todo.map((p) => tcpProbe(ip, p, timeout: const Duration(milliseconds: 600))));
+        for (var i = 0; i < res.length; i++) {
+          if (res[i].open) d.ports.add(todo[i]);
+        }
+        n++;
+        onProgress(0.55 + 0.4 * n / alive.length, 'Checking services... $n/${alive.length}');
+      }, cancelled: () => _cancel),
+      pool<String>(alive, 16, (ip) async {
+        found[ip]!.dns = await reverseName(ip);
+      }, cancelled: () => _cancel),
+    ]);
+    if (_cancel) throw const ScanCancelled();
 
     for (final d in found.values) {
       d.isGateway = d.ip == gateway;
