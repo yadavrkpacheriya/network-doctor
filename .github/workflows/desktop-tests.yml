@@ -36,7 +36,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check that the engine modules load
-        run: python -c "import nd_core, nd_net, nd_snmp, nd_plugins, nd_linux; print('engine modules OK')"
+        run: python -c "import nd_core, nd_net, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter; print('engine modules OK')"
 
       - name: Run the tests
         run: python -m unittest discover -s tests -v
@@ -59,7 +59,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter \
             NetworkDoctor.py
           ls -lh dist/NetworkDoctor
 
