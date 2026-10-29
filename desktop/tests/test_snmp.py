@@ -187,7 +187,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(ifs[1]["in_octets"], None)
         self.assertEqual(ifs[0]["in_errors"], 7)
         nb = S.lldp_neighbors(c)
-        self.assertEqual(nb, [{"local_port": "Gi1/0/1", "name": "ap-lobby", "port": "eth0", "port_descr": "",
+        self.assertEqual(nb, [{"local_port": "Gi1/0/1", "ip": "", "name": "ap-lobby", "port": "eth0", "port_descr": "",
                                "descr": "", "chassis": "A0:B1:C2:D3:E4:F5"}])
         macs = S.mac_table(c, ifs)
         self.assertEqual(macs, {"00:11:22:33:44:55": "Gi1/0/2", "A0:B1:C2:D3:E4:F5": "Gi1/0/1"})
@@ -295,6 +295,46 @@ class PortControl(unittest.TestCase):
         self.assertIn("this PC", S.port_risk("Gi1/0/1", macs, ["AA"]))
         self.assertIn("10 devices", S.port_risk("Gi1/0/24", macs))
         self.assertEqual(S.port_risk("Gi1/0/2", macs, ["AA"]), "")
+
+
+class SwitchMap(unittest.TestCase):
+    """discover(): every switch reachable through LLDP, each cable once, rings and spanning tree."""
+
+    @staticmethod
+    def dev(name, nbs, stp=None):
+        return {"system": {"name": name}, "interfaces": [], "macs": {}, "stp": stp or {},
+                "neighbors": [{"local_port": lp, "ip": ip, "name": nm, "port": "", "port_descr": rp, "descr": "",
+                               "chassis": ""} for lp, ip, nm, rp in nbs]}
+
+    def net(self, blocked):
+        return {
+            "10.0.0.1": self.dev("core", [("p1", "10.0.0.2", "acc1", "u1"), ("p2", "10.0.0.3", "acc2", "u1"),
+                                          ("p3", "", "ap-lobby", "eth0")]),
+            "10.0.0.2": self.dev("acc1", [("u1", "10.0.0.1", "core", "p1"), ("u2", "10.0.0.3", "acc2", "u2")]),
+            "10.0.0.3": self.dev("acc2", [("u1", "10.0.0.1", "core", "p2"), ("u2", "10.0.0.2", "acc1", "u2")],
+                                 {"u2": "blocking"} if blocked else {"u2": "forwarding"}),
+        }
+
+    def test_ring_protected_by_stp(self):
+        net = self.net(True)
+        r = S.discover("10.0.0.1", reader=lambda ip: net[ip])
+        self.assertEqual(sorted(r["devices"]), ["10.0.0.1", "10.0.0.2", "10.0.0.3"])
+        self.assertEqual(len(r["links"]), 4)  # 3 cables between switches + the AP
+        self.assertEqual(r["unreached"], {"ap-lobby": ""})
+        self.assertEqual(r["loops"], [["10.0.0.1", "10.0.0.2", "10.0.0.3"]])
+        self.assertEqual(S.ring_blocked(r["devices"], r["loops"][0]), [("10.0.0.3", "u2")])
+
+    def test_ring_without_stp_and_tree(self):
+        net = self.net(False)
+        r = S.discover("10.0.0.1", reader=lambda ip: net[ip])
+        self.assertEqual(S.ring_blocked(r["devices"], r["loops"][0]), [])  # nothing protects it: a loop
+        del net["10.0.0.2"]["neighbors"][1], net["10.0.0.3"]["neighbors"][1]
+        self.assertEqual(S.discover("10.0.0.1", reader=lambda ip: net[ip])["loops"], [])  # a tree has no ring
+
+    def test_unreachable_seed(self):
+        def fail(ip):
+            raise S.SnmpError("no answer")
+        self.assertEqual(S.discover("10.0.0.9", reader=fail)["devices"], {})
 
 
 if __name__ == "__main__":

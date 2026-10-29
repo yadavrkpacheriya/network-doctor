@@ -436,6 +436,7 @@ class ToolsTab:
         row2 = ttk.Frame(f)
         row2.pack(fill="x", pady=(4, 0))
         self._run_btn(row2, "switch", "Live traffic + loop check", self._switch_live)
+        self._run_btn(row2, "switch", "Map all switches", self._switch_map)
         self._stop_btn(row2, "switch")
         row3 = ttk.Frame(f)
         row3.pack(fill="x", pady=(4, 0))
@@ -603,6 +604,59 @@ class ToolsTab:
             if not loops and not alerts:
                 out("\nNo loop signs and no busy or faulty ports right now.", "ok")
             out(f"{name}: {len(rows)} ports, updated {time.strftime('%H:%M:%S')}", "status")
+
+    def _switch_map(self, out, stop):
+        """Every switch reachable from this one through LLDP, how they are cabled, and rings / loops."""
+        host = self._ip_of(self.var_sw.get())
+        if not host:
+            out("Choose the main switch or router, or type its IP.", "warn")
+            return
+        out(f"Mapping the switches from {host} ...", "h")
+        r = nd_snmp.discover(host, self.var_sw_comm.get().strip() or "public", self.var_sw_ver.get(),
+                             progress=lambda ip, n: out(f"reading {ip} ({n} switches so far)", "status"))
+        devs = r["devices"]
+        if not devs:
+            out("No SNMP answer from the switch. Check that SNMP is on and the community name is right.", "crit")
+            return
+        known = {x.get("ip"): x for x in self.app.devices if x.get("ip")}
+        out(f"\n{len(devs)} switch(es) / router(s), {len(r['links'])} cable(s) between them and to other devices", "h")
+        for ip, d in devs.items():
+            si = d["system"]
+            uplinks = {lp for a, lp, b, _ in r["links"] if a == ip} | {bp for a, _, b, bp in r["links"] if b == ip}
+            hosts = sum(1 for p in d["macs"].values() if p not in uplinks)
+            out(f"\n{si['name'] or ip}  ({ip})" + (f"  -  {si['vendor']}" if si.get("vendor") else "")
+                + f"   {len([i for i in d['interfaces'] if i['status'] == 'up'])} ports up, {hosts} devices", "h")
+            for a, ap, b, bp in r["links"]:
+                if ip not in (a, b):
+                    continue
+                mine, other, oport = (ap, b, bp) if a == ip else (bp, a, ap)
+                name = devs[other]["system"]["name"] if other in devs else other
+                st = d.get("stp", {}).get(mine, "")
+                out(f"  {mine[:20]:<20} -> {name}" + (f" ({other})" if other in devs else "")
+                    + (f" port {oport}" if oport else "")
+                    + (f"   [spanning tree: {st}]" if st and st != "forwarding" else ""),
+                    "warn" if st == "blocking" else "")
+        for name, ip in r["unreached"].items():
+            if ip:
+                x = known.get(ip)
+                out(f"\n  Not read: {name} ({ip}) - it uses another community or has SNMP off" if not x else
+                    f"\n  Not read: {name} ({ip}, {x.get('name') or ''}) - another community or SNMP off", "mute")
+        if r["loops"]:
+            out("\nRings (more than one path between switches)", "h")
+            for ring in r["loops"]:
+                names = ", ".join(devs[i]["system"]["name"] or i for i in ring)
+                blocked = nd_snmp.ring_blocked(devs, ring)
+                if blocked:
+                    out(f"  {names}: OK - spanning tree blocks " + ", ".join(
+                        f"{devs[i]['system']['name'] or i} {p}" for i, p in blocked) + " (backup path)", "ok")
+                else:
+                    out(f"  {names}: NOT protected - no port is blocked by spanning tree. This is a network loop "
+                        "unless the extra cables are a link aggregation (LACP). Turn on spanning tree (RSTP) on these "
+                        "switches, or unplug one of the cables listed above.", "crit")
+                    out(("Loop check", "crit", f"ring without spanning tree: {names}"), "log")
+        else:
+            out("\nNo rings: there is exactly one path between any two switches, so no loop between them.", "ok")
+        out(f"{len(devs)} switches mapped", "status")
 
     def _switch_change(self, action):
         """Port off / on / restart / rename / undo. Asks first (in the window), then runs in the background."""

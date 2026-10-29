@@ -285,6 +285,9 @@ IF = "1.3.6.1.2.1.2.2.1."      # IF-MIB ifTable
 IFX = "1.3.6.1.2.1.31.1.1.1."  # IF-MIB ifXTable
 LLDP_REM = "1.0.8802.1.1.2.1.4.1.1."
 LLDP_LOC_PORT = "1.0.8802.1.1.2.1.3.7.1."
+LLDP_MAN_ADDR = "1.0.8802.1.1.2.1.4.2.1.3"
+STP_PORT_STATE = "1.3.6.1.2.1.17.2.15.1.3"
+STP_STATES = {1: "disabled", 2: "blocking", 3: "listening", 4: "learning", 5: "forwarding", 6: "broken"}
 BRIDGE_PORT_IF = "1.3.6.1.2.1.17.1.4.1.2"
 FDB_PORT = "1.3.6.1.2.1.17.4.3.1.2"
 FDB_STATUS = "1.3.6.1.2.1.17.4.3.1.3"
@@ -391,11 +394,20 @@ def lldp_neighbors(c):
         loc = {k: c.table(LLDP_LOC_PORT + n) for k, n in {"id": "3", "descr": "4"}.items()}
     except SnmpError:
         return []
+    ips = {}
+    try:  # lldpRemManAddrIfSubtype, index timeMark.localPort.remIndex.addrSubtype.addrLen.addr...
+        for idx in c.table(LLDP_MAN_ADDR):
+            p = idx.split(".")
+            if len(p) == 9 and p[3] == "1" and p[4] == "4":  # IPv4
+                ips.setdefault(".".join(p[:3]), ".".join(p[5:]))
+    except SnmpError:
+        pass
     out = []
     for idx in cols["name"].keys() | cols["chassis"].keys():
         p = idx.split(".")  # timeMark.localPortNum.remIndex
         lp = p[1] if len(p) >= 3 else ""
         out.append({"local_port": text(loc["descr"].get(lp)) or text(loc["id"].get(lp)) or lp,
+                    "ip": ips.get(idx, ""),
                     "name": text(cols["name"].get(idx)),
                     "port": text(cols["port"].get(idx)),
                     "port_descr": text(cols["port_descr"].get(idx)),
@@ -603,3 +615,95 @@ def port_risk(port_name, macs, my_macs=()):
     if len(on) > 4:
         return f"{len(on)} devices are behind this port (another switch, an AP or the router): all of them go offline"
     return ""
+
+
+# ==========================================================================
+# map of all switches (LLDP) and spanning tree
+# ==========================================================================
+def stp_states(c, ifs=None):
+    """{port name: "forwarding" / "blocking" / ...} from BRIDGE-MIB spanning tree, {} when STP is off."""
+    names = {i["index"]: i["name"] for i in (ifs or [])}
+    try:
+        bp_if = {int(k): v for k, v in c.table(BRIDGE_PORT_IF).items() if k.isdigit()}
+        st = c.table(STP_PORT_STATE)
+    except SnmpError:
+        return {}
+    out = {}
+    for bp, v in st.items():
+        if bp.isdigit() and v != 1:  # 1 = disabled (port not in STP)
+            ifx = bp_if.get(int(bp), int(bp))
+            out[names.get(ifx) or f"port {bp}"] = STP_STATES.get(v, str(v))
+    return out
+
+
+def discover(seed, community="public", version="2c", max_devices=60, timeout=1.5, progress=None, reader=None):
+    """Walks from one switch to every switch it can reach through LLDP neighbours that share the community.
+    Returns {"devices": {ip: {system, interfaces, neighbors, macs, stp}}, "links": [(ip_a, port_a, ip_or_name_b,
+    port_b)], "unreached": {name: ip}, "loops": [[ip, ...]]}."""
+    def read(ip):
+        c = Snmp(ip, community, version, timeout=timeout)
+        info = system_info(c)
+        if not any(info[k] for k in ("descr", "name", "object_id")):
+            raise SnmpError("no answer")
+        ifs = interfaces(c)
+        return {"system": info, "interfaces": ifs, "neighbors": lldp_neighbors(c), "macs": mac_table(c, ifs),
+                "stp": stp_states(c, ifs)}
+    read = reader or read
+    devices, todo, unreached, links = {}, [seed], {}, set()
+    by_name = {}
+    while todo and len(devices) < max_devices:
+        ip = todo.pop(0)
+        if ip in devices:
+            continue
+        if progress:
+            progress(ip, len(devices))
+        try:
+            d = read(ip)
+        except (SnmpError, OSError):
+            continue
+        devices[ip] = d
+        by_name[d["system"]["name"]] = ip
+        for n in d["neighbors"]:
+            if n["ip"] and n["ip"] not in devices and n["ip"] not in todo:
+                todo.append(n["ip"])
+    for ip, d in devices.items():
+        for n in d["neighbors"]:
+            other = n["ip"] if n["ip"] in devices else by_name.get(n["name"])
+            if other:
+                if ip < other:  # each cable once: as the switch with the lower address sees it
+                    links.add((ip, n["local_port"], other, n["port_descr"] or n["port"]))
+            else:
+                unreached[n["name"] or n["chassis"]] = n["ip"]
+                links.add((ip, n["local_port"], n["name"] or n["chassis"], n["port_descr"] or n["port"]))
+    return {"devices": devices, "links": sorted(links), "unreached": unreached,
+            "loops": _cycles(devices, links)}
+
+
+def _cycles(devices, links):
+    """Groups of switches joined by more than one path (a ring). Spanning tree must block one link in each,
+    otherwise it is a loop."""
+    adj = {}
+    for a, _, b, _ in links:
+        if a in devices and b in devices and a != b:
+            adj.setdefault(a, []).append(b)
+            adj.setdefault(b, []).append(a)
+    rings, seen = [], set()
+    for start in adj:
+        if start in seen:
+            continue
+        comp, stack = set(), [start]
+        while stack:
+            x = stack.pop()
+            if x not in comp:
+                comp.add(x)
+                stack += adj.get(x, [])
+        seen |= comp
+        edges = sum(len(adj[x]) for x in comp) // 2  # parallel cables count twice
+        if edges >= len(comp):  # a tree has exactly n - 1 links
+            rings.append(sorted(comp))
+    return rings
+
+
+def ring_blocked(devices, ring):
+    """Ports that spanning tree blocks inside a ring; empty means nothing protects it from a loop."""
+    return [(ip, port) for ip in ring for port, st in devices[ip].get("stp", {}).items() if st == "blocking"]

@@ -1,3 +1,22 @@
+## Network Doctor 3.9.0
+
+**New: website firewall for the whole network, switch control, and a map of all switches with ring / loop check.**
+
+- **Tools -> Website firewall.** Blocks ads and trackers, adult sites, gambling, social media, video streaming or online games, plus your own list, for every phone, PC and TV on the network. Nothing is installed on them: set the router's DHCP DNS server to this PC's IP. It also has:
+  - **Safe search** for Google, Bing, YouTube and DuckDuckGo
+  - an always-allow list
+  - a live report of which device tried to open what, and the most blocked sites
+
+  The lists update weekly, and built-in names keep it working offline.
+- **Switch control (any brand, SNMP).** In Switch / router details, after **Read**, choose a port. You can:
+  - **Turn it off / on**
+  - **Restart** it (reboots a hung camera or AP)
+  - **Rename** it
+  - **Undo** the last change
+
+  It needs the switch's read-write community. Every change asks first and warns when the port carries this PC or a whole group of devices.
+- **Map all switches.** Starting from one switch, Network Doctor follows the LLDP neighbours to every switch that shares the community. It shows which port connects to which switch. It also finds **rings** (more than one path) and checks that spanning tree blocks one port in each. A ring with nothing blocked is a network loop, and it names the cables.
+
 ## Network Doctor 3.8.0
 
 **New: Linux version, switch and router details for any brand, a loop finder, and device filters.**
