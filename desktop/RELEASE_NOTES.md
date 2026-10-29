@@ -1,6 +1,6 @@
 ## Network Doctor 3.8.0
 
-**New: Linux version, switch and router details for any brand, and device filters.**
+**New: Linux version, switch and router details for any brand, a loop finder, and device filters.**
 
 - **Linux app.** Download `NetworkDoctor-Linux` from this release, make it runnable once (`chmod +x NetworkDoctor-Linux`) and start it. It works without the old `arp` / `ifconfig` tools and updates itself like the Windows and Mac versions. Run it with `sudo` for the full IP-conflict tests.
 - **Tools -> Switch / router details (SNMP, any brand).** Pick a managed switch or router (Cisco, TP-Link, MikroTik, Ubiquiti, HP, D-Link, Netgear and others) and its SNMP community. It shows:
@@ -9,6 +9,9 @@
   - LLDP neighbours (which switch, AP or phone is on which port)
   - **which device is plugged into which port**, using the names Network Doctor already knows
   It is read-only and never changes anything on the switch.
+- **Live traffic + loop check** (same tool, new button). Every 5 seconds: each port's in / out speed, how busy it is and broadcasts per second, with the device on it. It warns about:
+  - **network loops**: a broadcast storm on a port, or devices jumping between the same two ports. It names the port, or both ports, so you know which cable to unplug. Loops are also written to the health log.
+  - ports over 80% busy, errors and dropped packets.
 - **Devices tab filters.**
   - Department and Location lists, filled from your tags.
   - A Show list: online only, *not tagged yet* (makes tagging everything easy), or *watched*.
