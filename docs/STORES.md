@@ -50,7 +50,7 @@ Store publishing needs a developer account for each store. Only you can register
    - personal account: closed testing for 14 days with 12 testers, then **Production**;
    - organization account: straight to **Production**.
 
-**Package name:** the app's ID is `io.github.yadavrkpacheriya.network_doctor`. It **cannot be changed after the first upload to Play**. If you want a company ID instead (for example `in.fanair.networkdoctor`), tell Claude **before** the first upload.
+**Package name:** the app's ID on Google Play is `com.pacheriya.networkdoctor` (chosen 29 Oct 2026). It can never change after the first upload to Play.
 
 **Updates:** raise `version:` in `mobile/pubspec.yaml`. GitHub then builds a new signed `.aab`, which you upload in Play Console. Uploading can be automated later with a Google Play service account.
 
