@@ -6,7 +6,8 @@ name: Mobile - build Android app
 #  * Every run: checks the code (flutter analyze), runs the tests, builds the APK.
 #  * When the version in mobile/pubspec.yaml is new, the APK is published as a GitHub Release
 #    "mobile-vX.Y.Z" (never marked "latest", so the Windows app's updater is not affected).
-#  * When the Play Store upload-key secrets exist, an .aab for Google Play is built and signed too.
+#  * When the Play Store upload-key secrets exist, an .aab for Google Play is built, signed and attached
+#    to the "mobile-vX.Y.Z" release (NetworkDoctor-Android.aab - the file to upload in Play Console).
 
 on:
   push:
@@ -145,6 +146,16 @@ jobs:
           files: |
             mobile/build/NetworkDoctor-Android.apk
             mobile/build/NetworkDoctor-Android-32bit.apk
+
+      - name: Attach the Play Store bundle (.aab) to the release
+        # Also for an existing release, so the file Google Play needs is always one click away.
+        if: env.KS_B64 != '' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f build/NetworkDoctor-Android.aab
+          gh release upload "mobile-v${{ steps.ver.outputs.version }}" build/NetworkDoctor-Android.aab --clobber \
+            --repo "${{ github.repository }}"
 
       - name: Clean up signing files
         if: always()
