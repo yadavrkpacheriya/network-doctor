@@ -54,7 +54,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.9.0"
+VERSION = "3.10.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -426,7 +426,8 @@ class App(tk.Tk):
         self.share = None
         if self.var_share.get() or self._settings().get("reports_enabled"):
             self.after(1200, self._ensure_share)
-        self.after(15000, lambda: self.check_updates(True))
+        self.after(20000, lambda: self.check_updates(True))
+        self.after(3000, self._after_update_note)
         threading.Thread(target=self._watch_loop, daemon=True).start()
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
         if "--minimized" in sys.argv:  # started automatically at login
@@ -468,7 +469,8 @@ class App(tk.Tk):
         else:
             ttk.Label(top, text="Standard tests (IP-conflict rounds need administrator)",
                       foreground="#8a4b00").pack(side="right")
-        self.btn_update = ttk.Button(top, text="Update", style="Big.TButton", command=self.update_now)
+        self.btn_update = ttk.Button(top, text=f"Updates (v{VERSION})", command=self.update_now)
+        self.btn_update.pack(side="right", padx=6)
         self.var_mon = tk.StringVar(value="Live monitor: off")
         ttk.Label(top, textvariable=self.var_mon, foreground="#5b21b6").pack(side="right", padx=12)
 
@@ -689,13 +691,17 @@ class App(tk.Tk):
         up = ttk.Frame(f, padding=(0, 0, 0, 6))
         up.pack(fill="x")
         ttk.Button(up, text="Check for updates", command=lambda: self.check_updates(False)).pack(side="left")
-        self.var_autoupd = tk.BooleanVar(value=self._settings().get("auto_update", True))
+        ttk.Label(up, text="   New versions:").pack(side="left")
+        self.var_updmode = tk.StringVar(value=self._update_mode())
+        cbu = ttk.Combobox(up, textvariable=self.var_updmode, values=list(self.UPDATE_MODES), width=34, state="readonly")
+        cbu.pack(side="left", padx=4)
 
-        def _toggle():
-            self._settings()["auto_update"] = self.var_autoupd.get()
+        def _mode(_=None):
+            self._settings()["update_mode"] = self.UPDATE_MODES[self.var_updmode.get()]
             self._save_settings()
-        ttk.Checkbutton(up, text="Check automatically every day", variable=self.var_autoupd,
-                        command=_toggle).pack(side="left", padx=8)
+            if self.UPDATE_MODES[self.var_updmode.get()] != "off":
+                self.check_updates(True, force=True)
+        cbu.bind("<<ComboboxSelected>>", _mode)
         self.var_upd = tk.StringVar(value=f"Version {VERSION}")
         ttk.Label(up, textvariable=self.var_upd).pack(side="left", padx=10)
         ttk.Button(up, text="Release page", command=lambda: webbrowser.open(U.RELEASES_PAGE)).pack(side="right")
@@ -2022,14 +2028,25 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    def check_updates(self, auto=False):
+    UPDATE_MODES = {"Install automatically (recommended)": "auto", "Ask me first": "ask", "Never check": "off"}
+    UPDATE_EVERY = 6 * 3600  # seconds between automatic checks
+
+    def _update_mode(self, code=False):
         st = self._settings()
+        m = st.get("update_mode")
+        if m not in ("auto", "ask", "off"):
+            m = "auto" if st.get("auto_update", True) else "off"  # setting from older versions
+        return m if code else next(k for k, v in self.UPDATE_MODES.items() if v == m)
+
+    def check_updates(self, auto=False, force=False):  # noqa: ARG002 (force kept for callers)
+        """auto=True: the scheduled check (start-up + every 6 hours). auto=False: the user pressed a button."""
         if auto:
-            if not self.var_autoupd.get():
+            if self._update_mode(True) == "off":
+                self.after(self.UPDATE_EVERY * 1000, lambda: self.check_updates(True))
                 return
-            if time.time() - st.get("last_check", 0) < 20 * 3600:
-                self.after(3600 * 1000, lambda: self.check_updates(True))
-                return
+        if getattr(self, "_checking", False):
+            return
+        self._checking = True
         self.var_upd.set("Checking GitHub for a new version...")
         threading.Thread(target=self._check_worker, args=(auto,), daemon=True).start()
 
@@ -2041,27 +2058,40 @@ class App(tk.Tk):
         self.q.put(("upd", info, err, auto))
 
     def _on_update_info(self, info, err, auto):
+        self._checking = False
         st = self._settings()
         st["last_check"] = time.time()
         self._save_settings()
-        if auto:
-            self.after(24 * 3600 * 1000, lambda: self.check_updates(True))
+        if auto and not getattr(self, "_upd_next", None):
+            self._upd_next = self.after(self.UPDATE_EVERY * 1000, self._scheduled_check)
         if err:
-            self.var_upd.set(f"Update check: {err}")
+            self.var_upd.set(f"Update check failed: {err}")
             if not auto:
                 messagebox.showwarning(APP, err)
             return
         if not info:
             self.var_upd.set(f"Version {VERSION} - up to date (checked {time.strftime('%d-%b %H:%M')})")
+            self.btn_update.configure(text=f"Updates (v{VERSION})")
             if not auto:
                 messagebox.showinfo(APP, f"You have the latest version ({VERSION}).")
             return
         self.update_info = info
         self.var_upd.set(f"Version {info['version']} is available (you have {VERSION})")
-        self.btn_update.configure(text=f"Update to {info['version']}")
-        self.btn_update.pack(side="right", padx=6)
-        if auto and st.get("skip") == info["version"]:
+        self.btn_update.configure(text=f"Update to {info['version']}", style="Big.TButton")
+        if not auto:
+            self._ask_update(info)
             return
+        mode = self._update_mode(True)
+        if mode == "auto":
+            self._auto_update(info)
+        elif mode == "ask" and st.get("skip") != info["version"]:
+            self._ask_update(info)
+
+    def _scheduled_check(self):
+        self._upd_next = None
+        self.check_updates(True)
+
+    def _ask_update(self, info):
         notes = info["notes"][:900] or "(no release notes)"
         r = messagebox.askyesnocancel(
             APP, f"Network Doctor {info['version']} is available - you have {VERSION}.\n\n{notes}\n\n"
@@ -2069,10 +2099,33 @@ class App(tk.Tk):
         if r is True:
             self.update_now()
         elif r is None:
-            st["skip"] = info["version"]
+            self._settings()["skip"] = info["version"]
             self._save_settings()
 
-    def update_now(self):
+    def _auto_update(self, info):
+        """Installs without asking - waits for a running scan / check to finish first."""
+        if getattr(self, "_updating", False):
+            return
+        if getattr(self, "scanning", False) or self.quick_running:
+            self.after(60 * 1000, lambda: self._auto_update(info))
+            return
+        if time.time() < self._settings().get("upd_postpone_until", 0):
+            return
+        self.update_now(silent=True)
+
+    def _restart_args(self):
+        args = ["--updated-from", VERSION]
+        if self.state() == "iconic" or "--minimized" in sys.argv:
+            args.append("--minimized")
+        return args
+
+    def update_now(self, silent=False):
+        if getattr(self, "_ready_path", None) and not silent:
+            path, self._ready_path = self._ready_path, None
+            self._updating = True
+            self._upd_silent = False
+            self._install(path)
+            return
         info = getattr(self, "update_info", None)
         if not info:
             self.check_updates(False)
@@ -2080,16 +2133,15 @@ class App(tk.Tk):
         if getattr(self, "_updating", False):
             return
         self._updating = True
-        win = tk.Toplevel(self)
-        win.title("Updating Network Doctor")
-        win.geometry("460x130")
-        win.transient(self)
-        ttk.Label(win, text=f"Downloading version {info['version']} from GitHub...", padding=10).pack(anchor="w")
-        self.upd_pb = ttk.Progressbar(win, maximum=100, length=420)
-        self.upd_pb.pack(padx=14)
+        self._upd_silent = silent
         self.upd_lbl = tk.StringVar(value="")
-        ttk.Label(win, textvariable=self.upd_lbl, padding=10).pack(anchor="w")
-        self.upd_win = win
+        self.upd_pb = None
+        self.upd_win = None
+        if silent:
+            self.btn_update.configure(text=f"Downloading {info['version']}...")
+            self.var_upd.set(f"Downloading version {info['version']} in the background...")
+        else:
+            self._update_window(info)
 
         def work():
             try:
@@ -2105,33 +2157,133 @@ class App(tk.Tk):
                 self.q.put(("upd_err", f"{type(e).__name__}: {e}"))
         threading.Thread(target=work, daemon=True).start()
 
+    def _update_window(self, info):
+        win = tk.Toplevel(self)
+        win.title("Updating Network Doctor")
+        win.geometry("460x130")
+        win.transient(self)
+        ttk.Label(win, text=f"Downloading version {info['version']} from GitHub...", padding=10).pack(anchor="w")
+        self.upd_pb = ttk.Progressbar(win, maximum=100, length=420)
+        self.upd_pb.pack(padx=14)
+        ttk.Label(win, textvariable=self.upd_lbl, padding=10).pack(anchor="w")
+        self.upd_win = win
+
     def _on_update_msg(self, msg):
         k = msg[0]
         if k == "upd_prog":
             d, t = msg[1], msg[2]
-            if t:
+            if t and self.upd_pb is not None:
                 self.upd_pb["value"] = 100 * d / t
-            self.upd_lbl.set(f"{d / 1048576:.1f} MB" + (f" of {t / 1048576:.1f} MB" if t else ""))
+            txt = f"{d / 1048576:.1f} MB" + (f" of {t / 1048576:.1f} MB" if t else "")
+            self.upd_lbl.set(txt)
+            if self._upd_silent:
+                self.var_upd.set(f"Downloading the new version: {txt}")
         elif k == "upd_err":
             self._updating = False
             try:
-                self.upd_win.destroy()
+                if self.upd_win:
+                    self.upd_win.destroy()
             except Exception:
                 pass
-            messagebox.showerror(APP, "Update failed: " + msg[1] + f"\n\nYou can also download it from:\n{U.RELEASES_PAGE}")
+            self.btn_update.configure(text="Update now" if getattr(self, "update_info", None) else
+                                      f"Updates (v{VERSION})")
+            self.var_upd.set("Update failed: " + msg[1][:120])
+            self._health_log("Update", "warning", "update failed: " + msg[1][:200])
+            if not self._upd_silent:
+                messagebox.showerror(APP, "Update failed: " + msg[1] +
+                                     f"\n\nYou can also download it from:\n{U.RELEASES_PAGE}")
         elif k == "upd_ready":
-            self.upd_lbl.set("Verified. Restarting...")
-            self.update_idletasks()
-            try:
-                if msg[1]:
-                    U.apply_update(msg[1])
-                else:
-                    U.restart_sources(core.HERE)
-            except Exception as e:
-                self._updating = False
-                messagebox.showerror(APP, f"Update failed: {e}\n\nYou can also download it from:\n{U.RELEASES_PAGE}")
+            if self._upd_silent:
+                self._countdown(msg[1])
+            else:
+                self.upd_lbl.set("Verified. Restarting...")
+                self.update_idletasks()
+                self._install(msg[1])
+
+    def _countdown(self, path, secs=60):
+        """Downloaded and verified: restart in 60 s unless the user says Later."""
+        info = self.update_info
+        self.btn_update.configure(text=f"Install {info['version']}")
+        win = tk.Toplevel(self)
+        win.title("Network Doctor update")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        ttk.Label(win, text=f"Network Doctor {info['version']} is ready (you have {VERSION}).",
+                  font=("Segoe UI", 11, "bold"), padding=(14, 12, 14, 2)).pack(anchor="w")
+        var = tk.StringVar()
+        ttk.Label(win, textvariable=var, padding=(14, 2)).pack(anchor="w")
+        ttk.Label(win, text="Monitoring and automatic checks continue after the restart.", foreground="#667085",
+                  padding=(14, 0, 14, 8)).pack(anchor="w")
+        bar = ttk.Frame(win, padding=(14, 0, 14, 12))
+        bar.pack(fill="x")
+        state = {"left": secs, "done": False}
+
+        def now():
+            if state["done"]:
                 return
-            self._close()
+            state["done"] = True
+            var.set("Restarting...")
+            win.update_idletasks()
+            self._install(path)
+
+        def later():
+            state["done"] = True
+            self._updating = False
+            self._settings()["upd_postpone_until"] = time.time() + 20 * 3600
+            self._save_settings()
+            self.var_upd.set(f"Version {info['version']} downloaded - press 'Update' at the top to install it")
+            self.btn_update.configure(text=f"Update to {info['version']}")
+            self._ready_path = path
+            win.destroy()
+        ttk.Button(bar, text="Restart now", style="Big.TButton", command=now).pack(side="left")
+        ttk.Button(bar, text="Later (tomorrow)", command=later).pack(side="left", padx=8)
+        win.protocol("WM_DELETE_WINDOW", later)
+        try:  # top-right corner of the main window, away from the alert pop-up (top-left)
+            win.update_idletasks()
+            x = self.winfo_rootx() + self.winfo_width() - win.winfo_reqwidth() - 30
+            win.geometry(f"+{max(0, x)}+{self.winfo_rooty() + 60}")
+        except Exception:
+            pass
+
+        def tick():
+            if state["done"]:
+                return
+            if state["left"] <= 0:
+                now()
+                return
+            var.set(f"Restarting in {state['left']} seconds to install it.")
+            state["left"] -= 1
+            self.after(1000, tick)
+        tick()
+
+    def _install(self, path):
+        self._health_log("Update", "info", f"updating {VERSION} -> {self.update_info['version']}")
+        try:
+            if path:
+                U.apply_update(path, self._restart_args())
+            else:
+                U.restart_sources(core.HERE, self._restart_args())
+        except Exception as e:
+            self._updating = False
+            messagebox.showerror(APP, f"Update failed: {e}\n\nYou can also download it from:\n{U.RELEASES_PAGE}")
+            return
+        self._close()
+
+    def _after_update_note(self):
+        """Started by the updater: say so, once."""
+        if "--updated-from" not in sys.argv:
+            return
+        try:
+            old = sys.argv[sys.argv.index("--updated-from") + 1]
+        except IndexError:
+            old = "?"
+        self.var_status.set(f"Updated from {old} to {VERSION}. What's new: Setup > Release page.")
+        self.var_upd.set(f"Version {VERSION} - updated from {old} just now")
+        self._health_log("Update", "info", f"updated from {old} to {VERSION}")
+        st = self._settings()
+        st.pop("upd_postpone_until", None)
+        st.pop("skip", None)
+        self._save_settings()
 
     def _close(self):
         self.alive = False
