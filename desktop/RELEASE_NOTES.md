@@ -1,3 +1,13 @@
+## Network Doctor 3.10.0
+
+**Updates now install by themselves.**
+
+- Network Doctor checks GitHub when it starts and then every 6 hours (before, it checked only once a day).
+- When a new version is found, it downloads in the background. A small window then says **"Restarting in 60 seconds"**, with **Restart now** and **Later (tomorrow)** buttons. If nobody is at the PC, it installs and starts again by itself, minimised, with monitoring and automatic checks running.
+- It waits for a running scan or check to finish before updating.
+- The **Updates** button at the top is always there. It shows your version, turns into **Update to x.y.z** when a new version is waiting, and installs it with one click.
+- **Setup → New versions** lets you choose **Install automatically** (the default), **Ask me first**, or **Never check**.
+- After an update, the status line and the health log show which version it updated from.
 ## Network Doctor 3.9.0
 
 **New: website firewall for the whole network, switch control, and a map of all switches with ring / loop check.**

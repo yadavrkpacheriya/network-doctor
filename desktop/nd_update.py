@@ -126,7 +126,7 @@ def mac_bundle():
     return None
 
 
-def apply_mac(zip_path):
+def apply_mac(zip_path, args=()):
     """Unpacks the verified zip and starts a helper that swaps the .app after this process exits."""
     import zipfile
     bundle = mac_bundle()
@@ -156,24 +156,25 @@ while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done
 rm -rf "{bundle}.old"
 mv "{bundle}" "{bundle}.old" && mv "{new_app}" "{bundle}" && rm -rf "{bundle}.old"
 [ -d "{bundle}" ] || mv "{bundle}.old" "{bundle}"
-open "{bundle}"
+open "{bundle}"{(" --args " + " ".join(args)) if args else ""}
 rm -rf "{work}" "{zip_path}"
 """)
     os.chmod(script, 0o755)
     subprocess.Popen(["/bin/sh", script], start_new_session=True, close_fds=True)
 
 
-def apply_update(path):
-    """Platform-independent: replace the running app with the verified download. Caller must exit."""
+def apply_update(path, args=()):
+    """Platform-independent: replace the running app with the verified download and start it again with <args>.
+    Caller must exit."""
     if IS_MAC:
-        apply_mac(path)
+        apply_mac(path, args)
     elif IS_LINUX:
-        apply_linux(path)
+        apply_linux(path, args)
     else:
-        apply_exe(path)
+        apply_exe(path, args)
 
 
-def apply_linux(new_path):
+def apply_linux(new_path, args=()):
     """Linux lets a running program's file be replaced: swap it in, then start the new one. Caller must exit."""
     exe = sys.executable
     try:
@@ -182,10 +183,10 @@ def apply_linux(new_path):
     except OSError as e:
         _rm(new_path)
         raise UpdateError(f"Could not replace {exe} ({e}). Move Network Doctor to a folder you can write to.")
-    subprocess.Popen([exe], start_new_session=True, close_fds=True)
+    subprocess.Popen([exe, *args], start_new_session=True, close_fds=True)
 
 
-def apply_exe(new_path):
+def apply_exe(new_path, args=()):
     """Starts a helper that swaps the exe after this process exits, then restarts it. Caller must exit."""
     exe = sys.executable
     bat = os.path.join(tempfile.gettempdir(), f"nd_update_{int(time.time())}.cmd")
@@ -199,7 +200,7 @@ if %n% lss 40 goto wait
 echo Network Doctor could not replace "{exe}" - it may still be open. > "%TEMP%\\NetworkDoctor_update_failed.txt"
 goto end
 :done
-start "" "{exe}"
+start "" "{exe}" {" ".join(args)}
 :end
 del "%~f0"
 """
@@ -212,7 +213,15 @@ del "%~f0"
 def update_sources(info, folder):
     """Source (.py) install: downloads the files of the new version tag, keeping .bak copies."""
     new = {}
-    for name in SOURCE_FILES:
+    names = list(SOURCE_FILES)
+    try:  # newer versions list their own files, so files added later are fetched too
+        lst = _get(f"https://raw.githubusercontent.com/{REPO}/{info['tag']}/desktop/SOURCE_FILES.txt", 20).read()
+        extra = [x.strip() for x in lst.decode("utf-8", "replace").splitlines()
+                 if x.strip().endswith(".py") and "/" not in x and "\\" not in x]
+        names = list(dict.fromkeys(names + extra))
+    except Exception:
+        pass
+    for name in names:
         url = f"https://raw.githubusercontent.com/{REPO}/{info['tag']}/desktop/{name}"
         try:
             new[name] = _get(url, 30).read()
@@ -237,8 +246,8 @@ def update_sources(info, folder):
             f.write(data)
 
 
-def restart_sources(folder):
-    subprocess.Popen([sys.executable, os.path.join(folder, "NetworkDoctor.py")], cwd=folder, close_fds=True)
+def restart_sources(folder, args=()):
+    subprocess.Popen([sys.executable, os.path.join(folder, "NetworkDoctor.py"), *args], cwd=folder, close_fds=True)
 
 
 def cleanup_leftovers():

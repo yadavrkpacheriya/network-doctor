@@ -113,7 +113,7 @@ Nothing about your own network is uploaded.
 2. Raise `VERSION = "x.y.z"` near the top of `desktop/NetworkDoctor.py`, and update `desktop/RELEASE_NOTES.md`.
 3. Push to `main`. You can also edit the files directly on github.com and commit.
 
-The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and the Mac app on a free Mac machine, and publishes both in one Release with checksums. Every installed copy then offers the update within a day.
+The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and the Mac app on a free Mac machine, and publishes both in one Release with checksums. Every installed copy finds it within 6 hours and installs it by itself (after a 60-second notice with a *Later* button), unless the user chose *Ask me first* in Setup.
 
 **Phone app:** change the code in `mobile/`, raise `version:` in `mobile/pubspec.yaml` (and `appVersion` in `mobile/lib/main.dart`), push. The **Mobile - build Android app** workflow checks the code, runs the tests and publishes a new APK. Once the Google Play upload-key secrets are added, it also builds the signed `.aab` for the Play Store.
 
