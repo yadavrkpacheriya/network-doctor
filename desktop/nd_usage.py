@@ -32,58 +32,6 @@ SLOT = 300            # seconds: a device counts as "using" an app in a 5-minute
 ACTIVE_BYTES = 150_000
 KEEP_DAYS = 120
 
-# (words in the site name / organisation, app, category) - first match wins
-RULES = [
-    (("youtube", "googlevideo", "ytimg", "youtu.be"), "YouTube", PERSONAL),
-    (("netflix", "nflxvideo", "nflxso", "nflximg"), "Netflix", PERSONAL),
-    (("hotstar", "jiocinema", "sonyliv", "zee5", "mxplayer", "voot", "altbalaji", "erosnow"), "OTT video (India)",
-     PERSONAL),
-    (("primevideo", "aiv-cdn", "pv-cdn", "aiv-delivery"), "Amazon Prime Video", PERSONAL),
-    (("instagram", "cdninstagram"), "Instagram", PERSONAL),
-    (("facebook", "fbcdn", "fbsbx", "messenger.com"), "Facebook", PERSONAL),
-    (("whatsapp",), "WhatsApp", NEUTRAL),
-    (("tiktok", "bytedance", "byteoversea", "ibytedtos", "musical.ly"), "TikTok", PERSONAL),
-    (("snapchat", "sc-cdn"), "Snapchat", PERSONAL),
-    (("twitter", "twimg", "x.com"), "X / Twitter", PERSONAL),
-    (("reddit", "redd.it", "pinterest", "pinimg", "quora", "sharechat", "mojapp", "josh"), "Social / forums",
-     PERSONAL),
-    (("spotify", "scdn.co", "gaana", "jiosaavn", "saavn", "wynk", "hungama", "soundcloud"), "Music streaming",
-     PERSONAL),
-    (("steam", "valve", "epicgames", "riotgames", "pubg", "krafton", "garena", "roblox", "ea.com",
-      "xboxlive", "playstation", "battle.net", "supercell", "miniclip"), "Online games", PERSONAL),
-    (("flipkart", "myntra", "meesho", "ajio", "nykaa", "snapdeal", "amazon.in", "media-amazon"), "Online shopping",
-     PERSONAL),
-    (("cricbuzz", "espncricinfo", "dream11", "my11circle", "mpl.live"), "Sports / fantasy games", PERSONAL),
-    (("telegram", "t.me"), "Telegram", PERSONAL),
-    (("bittorrent", "torrent", "tracker"), "BitTorrent", PERSONAL),
-    (("outlook", "office", "microsoftonline", "office365", "sharepoint", "onedrive", "teams", "skype",
-      "live.com", "lync", "msauth", "office.net", "officeapps"), "Microsoft 365", WORK),
-    (("mail.google", "gmail", "docs.google", "drive.google", "meet.google", "calendar.google", "sheets.google",
-      "googleusercontent", "workspace.google"), "Google Workspace", WORK),
-    (("zoom",), "Zoom", WORK), (("webex",), "Webex", WORK), (("gotomeeting", "goto.com"), "GoTo Meeting", WORK),
-    (("anydesk",), "AnyDesk", WORK), (("teamviewer",), "TeamViewer", WORK),
-    (("tally", "tallysolutions"), "Tally", WORK),
-    (("gst.gov", "gstn", "incometax", "mca.gov", "icegate", "epfindia", "esic", "tdscpc", "einvoice", "ewaybill",
-      "nic.in", "gov.in"), "Government portals", WORK),
-    (("indiamart", "tradeindia", "justdial", "linkedin", "naukri"), "Business portals", WORK),
-    (("zoho", "salesforce", "hubspot", "freshworks", "freshdesk", "sap.com", "oraclecloud", "odoo"),
-     "Business software (cloud)", WORK),
-    (("hdfcbank", "icicibank", "sbi.co", "onlinesbi", "axisbank", "kotak", "yesbank", "pnbindia", "bankofbaroda",
-      "razorpay", "paytm", "npci"), "Banking / payments", WORK),
-    (("dropbox",), "Dropbox", WORK), (("slack",), "Slack", WORK), (("github", "gitlab", "atlassian"), "Dev tools",
-                                                                   WORK),
-    (("windowsupdate", "update.microsoft", "delivery.mp.microsoft", "dl.delivery", "download.windowsupdate"),
-     "Windows Update", NEUTRAL),
-    (("avast", "avg.com", "quickheal", "kaspersky", "eset", "mcafee", "norton", "bitdefender", "sophos",
-      "defender", "trendmicro"), "Antivirus updates", NEUTRAL),
-    (("icloud", "apple", "mzstatic", "aaplimg", "cdn-apple"), "Apple / iCloud", NEUTRAL),
-    (("hik-connect", "hikvision", "ezviz", "dahua", "imou", "easy4ip", "cpplus"), "CCTV cloud", NEUTRAL),
-    (("microsoft", "msedge", "bing", "azure", "msn", "windows"), "Microsoft (other)", NEUTRAL),
-    (("google", "1e100", "gstatic", "gvt1", "gvt2", "googleapis"), "Google (other)", NEUTRAL),
-    (("akamai", "cloudflare", "fastly", "cloudfront", "edgecast", "cdn77", "jsdelivr", "bunny"), "CDN (various)",
-     NEUTRAL),
-    (("amazonaws", "aws"), "Amazon cloud (AWS)", NEUTRAL),
-]
 PORT_RULES = {25: ("Email", WORK), 465: ("Email", WORK), 587: ("Email", WORK), 993: ("Email", WORK),
               995: ("Email", WORK), 143: ("Email", WORK), 110: ("Email", WORK), 3389: ("Remote Desktop", WORK),
               53: ("DNS", NEUTRAL), 853: ("DNS", NEUTRAL), 123: ("Time sync", NEUTRAL),
@@ -112,21 +60,410 @@ def site_of(name):
     return base
 
 
-def classify(site, org="", port=0, overrides=None):
-    """(app, category). overrides: {"app:<app>" or "site:<site>": category} chosen by the user."""
-    text = f"{site} {org}".lower()
-    app, cat = None, None
-    for words, nm, c in RULES:
-        if any(w in text for w in words):
-            app, cat = nm, c
-            break
+# ==========================================================================
+# App catalogue: which web addresses belong to which app. Matched on the end of the full DNS name
+# (m.facebook.com -> facebook.com), the longest match wins, so youtubei.googleapis.com is YouTube while
+# www.googleapis.com stays "Google (other)". Facebook, Instagram, WhatsApp and Messenger are kept apart.
+# (app, category, group, [domain endings])
+# ==========================================================================
+CATALOG = [
+    # ---- Meta: four different apps on the same company's servers
+    ("WhatsApp", NEUTRAL, "Messaging", ["whatsapp.com", "whatsapp.net", "wa.me", "whatsapp.biz"]),
+    ("Instagram", PERSONAL, "Social media", ["instagram.com", "cdninstagram.com", "ig.me", "instagr.am"]),
+    ("Facebook", PERSONAL, "Social media", ["facebook.com", "facebook.net", "fbcdn.net", "fb.com", "fb.me",
+                                            "fbsbx.com", "fb.gg", "facebook.in"]),
+    ("Messenger", PERSONAL, "Messaging", ["messenger.com", "m.me"]),
+    ("Threads", PERSONAL, "Social media", ["threads.net", "threads.com"]),
+    # ---- Google: each service by its own address
+    ("YouTube", PERSONAL, "Video", ["youtube.com", "googlevideo.com", "ytimg.com", "youtu.be",
+                                     "youtube-nocookie.com", "youtubei.googleapis.com", "yt3.ggpht.com",
+                                     "youtube.googleapis.com", "ytstatic.com"]),
+    ("YouTube Music", PERSONAL, "Music", ["music.youtube.com"]),
+    ("Google Drive / Docs", WORK, "Cloud storage & office", [
+        "drive.google.com", "docs.google.com", "sheets.google.com", "slides.google.com", "forms.google.com",
+        "drive.googleapis.com", "docs.googleusercontent.com", "drive.usercontent.google.com",
+        "drivefrontend-pa.clients6.google.com", "content.googleapis.com"]),
+    ("Gmail", WORK, "Email", ["mail.google.com", "gmail.com", "inbox.google.com", "gmail.googleapis.com"]),
+    ("Google Meet", WORK, "Video calls", ["meet.google.com", "meet.googleapis.com", "hangouts.google.com"]),
+    ("Google Calendar / Contacts", WORK, "Cloud storage & office", ["calendar.google.com", "contacts.google.com"]),
+    ("Google Photos", PERSONAL, "Photos", ["photos.google.com", "photos.googleapis.com",
+                                           "photoslibrary.googleapis.com"]),
+    ("Google Play Store", NEUTRAL, "App stores", ["play.google.com", "play.googleapis.com",
+                                                            "play-fe.googleapis.com", "android.clients.google.com",
+                                                            "play-lh.googleusercontent.com"]),
+    ("Google Maps", NEUTRAL, "Maps & travel", ["maps.google.com", "maps.googleapis.com", "maps.gstatic.com",
+                                               "maps.app.goo.gl"]),
+    ("Google Pay", NEUTRAL, "Banking & payments", ["pay.google.com", "payments.google.com"]),
+    ("Gemini (Google AI)", WORK, "AI tools", ["gemini.google.com", "bard.google.com",
+                                              "generativelanguage.googleapis.com"]),
+    ("Google Translate", WORK, "AI tools", ["translate.google.com", "translate.googleapis.com"]),
+    ("Google Search & other", NEUTRAL, "Search & system", ["google.com", "google.co.in", "googleapis.com",
+                                                           "gstatic.com", "googleusercontent.com", "ggpht.com",
+                                                           "gvt1.com", "gvt2.com", "1e100.net", "goo.gl",
+                                                           "googletagservices.com", "withgoogle.com"]),
+    # ---- Microsoft
+    ("Microsoft Teams", WORK, "Video calls", ["teams.microsoft.com", "teams.live.com", "teams.cdn.office.net",
+                                              "teams.events.data.microsoft.com", "lync.com", "skype.com",
+                                              "skypeforbusiness.com", "trouter.teams.microsoft.com"]),
+    ("Outlook / Exchange", WORK, "Email", ["outlook.office.com", "outlook.office365.com", "outlook.live.com",
+                                           "outlook.com", "hotmail.com", "protection.outlook.com"]),
+    ("OneDrive / SharePoint", WORK, "Cloud storage & office", ["onedrive.live.com", "onedrive.com", "1drv.com",
+                                                               "1drv.ms", "sharepoint.com", "sharepointonline.com",
+                                                               "storage.live.com"]),
+    ("Microsoft 365 (Office)", WORK, "Cloud storage & office", ["office.com", "office.net", "office365.com",
+                                                                "officeapps.live.com", "microsoft365.com",
+                                                                "microsoftonline.com", "msauth.net", "msftauth.net",
+                                                                "cloud.microsoft"]),
+    ("Copilot / Bing AI", WORK, "AI tools", ["copilot.microsoft.com", "copilot.cloud.microsoft", "sydney.bing.com"]),
+    ("Windows Update", NEUTRAL, "Updates & drivers", [
+        "windowsupdate.com", "update.microsoft.com", "delivery.mp.microsoft.com", "download.windowsupdate.com",
+        "windowsupdate.microsoft.com", "dl.delivery.mp.microsoft.com", "tlu.dl.delivery.mp.microsoft.com",
+        "emdl.ws.microsoft.com", "wustat.windows.com", "ntservicepack.microsoft.com"]),
+    ("Microsoft Office updates", NEUTRAL, "Updates & drivers", ["officecdn.microsoft.com",
+                                                                "officecdn.microsoft.com.edgesuite.net",
+                                                                "officecdnmac.microsoft.com"]),
+    ("Windows Defender updates", NEUTRAL, "Updates & drivers", ["definitionupdates.microsoft.com",
+                                                                "wdcp.microsoft.com", "wdcpalt.microsoft.com",
+                                                                "smartscreen-prod.microsoft.com",
+                                                                "unitedstates.cp.wd.microsoft.com"]),
+    ("Edge browser updates", NEUTRAL, "Updates & drivers", ["msedge.api.cdp.microsoft.com", "edge.microsoft.com"]),
+    ("Microsoft Store", NEUTRAL, "App stores", ["storeedgefd.dsx.mp.microsoft.com",
+                                                          "displaycatalog.mp.microsoft.com", "apps.microsoft.com"]),
+    ("Xbox", PERSONAL, "Games", ["xboxlive.com", "xbox.com", "xboxservices.com", "gamepass.com"]),
+    ("MSN news", PERSONAL, "News & sports", ["msn.com", "msn.cn"]),
+    ("Bing search", NEUTRAL, "Search & system", ["bing.com", "bing.net"]),
+    ("Microsoft (other)", NEUTRAL, "Search & system", ["microsoft.com", "windows.com", "windows.net", "live.com",
+                                                       "live.net", "azure.com", "azureedge.net", "msedge.net",
+                                                       "msecnd.net", "aka.ms", "microsoftonline-p.com",
+                                                       "msftncsi.com", "visualstudio.com"]),
+    # ---- AI tools
+    ("ChatGPT", WORK, "AI tools", ["chatgpt.com", "openai.com", "oaiusercontent.com", "oaistatic.com"]),
+    ("Claude", WORK, "AI tools", ["claude.ai", "anthropic.com", "claudeusercontent.com"]),
+    ("Perplexity", WORK, "AI tools", ["perplexity.ai"]),
+    ("DeepSeek", WORK, "AI tools", ["deepseek.com"]),
+    # ---- video & OTT
+    ("Netflix", PERSONAL, "Video", ["netflix.com", "nflxvideo.net", "nflximg.net", "nflximg.com", "nflxso.net",
+                                    "nflxext.com"]),
+    ("Amazon Prime Video", PERSONAL, "Video", ["primevideo.com", "aiv-cdn.net", "aiv-delivery.net",
+                                              "amazonvideo.com", "pv-cdn.net", "media-amazon.com.akamaized.net"]),
+    ("JioHotstar", PERSONAL, "Video", ["hotstar.com", "hotstarext.com", "jiocinema.com", "jiohotstar.com",
+                                       "hscdn.com"]),
+    ("SonyLIV", PERSONAL, "Video", ["sonyliv.com"]),
+    ("ZEE5", PERSONAL, "Video", ["zee5.com", "zee5.in"]),
+    ("MX Player", PERSONAL, "Video", ["mxplayer.in", "mxplay.com"]),
+    ("Other Indian OTT", PERSONAL, "Video", ["voot.com", "altbalaji.com", "erosnow.com", "hoichoi.tv", "aha.video",
+                                            "sunnxt.com", "airtelxstream.in", "shemaroome.com", "discoveryplus.in",
+                                            "lionsgateplay.com", "chaupal.tv", "stage.in"]),
+    ("Twitch", PERSONAL, "Video", ["twitch.tv", "ttvnw.net", "jtvnw.net", "twitchcdn.net"]),
+    ("Vimeo", NEUTRAL, "Video", ["vimeo.com", "vimeocdn.com"]),
+    ("Dailymotion", PERSONAL, "Video", ["dailymotion.com", "dmcdn.net"]),
+    ("TikTok", PERSONAL, "Short videos", ["tiktok.com", "tiktokcdn.com", "tiktokv.com", "tiktokcdn-us.com",
+                                          "byteoversea.com", "ibytedtos.com", "ibyteimg.com", "musical.ly",
+                                          "tiktokcdn-eu.com"]),
+    ("Moj / ShareChat", PERSONAL, "Short videos", ["sharechat.com", "mojapp.in", "moj.app", "sharechat.co"]),
+    ("Josh", PERSONAL, "Short videos", ["myjosh.in", "joshapp.in"]),
+    ("Chingari / Roposo", PERSONAL, "Short videos", ["chingari.io", "roposo.com"]),
+    # ---- social & forums
+    ("Snapchat", PERSONAL, "Social media", ["snapchat.com", "sc-cdn.net", "snap-dev.net", "snapkit.com",
+                                            "sc-static.net", "feelinsonice.appspot.com"]),
+    ("X / Twitter", PERSONAL, "Social media", ["twitter.com", "x.com", "twimg.com", "t.co", "twttr.com"]),
+    ("LinkedIn", WORK, "Business & jobs", ["linkedin.com", "licdn.com", "lnkd.in"]),
+    ("Reddit", PERSONAL, "Social media", ["reddit.com", "redd.it", "redditmedia.com", "redditstatic.com"]),
+    ("Pinterest", PERSONAL, "Social media", ["pinterest.com", "pinimg.com", "pinterest.in"]),
+    ("Quora", PERSONAL, "Social media", ["quora.com", "quoracdn.net"]),
+    ("Tumblr", PERSONAL, "Social media", ["tumblr.com"]),
+    ("Koo", PERSONAL, "Social media", ["kooapp.com"]),
+    ("Dating apps", PERSONAL, "Social media", ["tinder.com", "gotinder.com", "bumble.com", "bumbleapp.com",
+                                               "hinge.co", "aisle.co", "trulymadly.com"]),
+    # ---- messaging & calls
+    ("Telegram", PERSONAL, "Messaging", ["telegram.org", "t.me", "telegram.me", "telesco.pe", "cdn-telegram.org",
+                                         "tdesktop.com"]),
+    ("Signal", NEUTRAL, "Messaging", ["signal.org", "whispersystems.org", "signal.art"]),
+    ("Discord", PERSONAL, "Messaging", ["discord.com", "discord.gg", "discordapp.com", "discordapp.net",
+                                        "discord.media"]),
+    ("Slack", WORK, "Messaging", ["slack.com", "slack-edge.com", "slack-msgs.com", "slack-imgs.com"]),
+    ("Zoom", WORK, "Video calls", ["zoom.us", "zoom.com", "zoomgov.com", "zoomcdn.com"]),
+    ("Webex", WORK, "Video calls", ["webex.com", "wbx2.com", "ciscospark.com"]),
+    ("GoTo Meeting", WORK, "Video calls", ["gotomeeting.com", "goto.com", "logmein.com"]),
+    ("Truecaller", NEUTRAL, "Messaging", ["truecaller.com", "tcaller.com"]),
+    ("AnyDesk", WORK, "Remote access", ["anydesk.com", "net.anydesk.com"]),
+    ("TeamViewer", WORK, "Remote access", ["teamviewer.com", "tvcdn.de"]),
+    ("Chrome Remote Desktop", WORK, "Remote access", ["remotedesktop.google.com",
+                                                      "remotedesktop-pa.googleapis.com"]),
+    # ---- music
+    ("Spotify", PERSONAL, "Music", ["spotify.com", "scdn.co", "spotifycdn.com", "pscdn.co", "spotify.design",
+                                    "spoti.fi"]),
+    ("JioSaavn", PERSONAL, "Music", ["saavn.com", "jiosaavn.com", "saavncdn.com"]),
+    ("Gaana", PERSONAL, "Music", ["gaana.com", "gaanacdn.com"]),
+    ("Wynk Music", PERSONAL, "Music", ["wynk.in"]),
+    ("Amazon Music", PERSONAL, "Music", ["music.amazon.in", "music.amazon.com", "amazonmusic.com"]),
+    ("Apple Music", PERSONAL, "Music", ["music.apple.com"]),
+    ("SoundCloud", PERSONAL, "Music", ["soundcloud.com", "sndcdn.com"]),
+    ("Pocket FM / audio stories", PERSONAL, "Music", ["pocketfm.com", "pocketfm.in", "kukufm.com"]),
+    # ---- games & betting
+    ("Steam", PERSONAL, "Games", ["steampowered.com", "steamcommunity.com", "steamcontent.com", "steamstatic.com",
+                                  "steamserver.net", "valvesoftware.com", "steamusercontent.com"]),
+    ("Epic Games / Fortnite", PERSONAL, "Games", ["epicgames.com", "epicgames.dev", "unrealengine.com",
+                                                  "fortnite.com", "epicgamescdn.com"]),
+    ("BGMI / PUBG", PERSONAL, "Games", ["pubg.com", "battlegroundsmobileindia.com", "krafton.com", "igamecj.com",
+                                        "proximabeta.net", "pubgmobile.com", "gcloudsdk.com"]),
+    ("Free Fire", PERSONAL, "Games", ["garena.com", "freefiremobile.com", "garenanow.com", "ff.garena.com"]),
+    ("Riot Games / Valorant", PERSONAL, "Games", ["riotgames.com", "leagueoflegends.com", "playvalorant.com",
+                                                  "riotcdn.net"]),
+    ("Roblox", PERSONAL, "Games", ["roblox.com", "rbxcdn.com", "rbx.com"]),
+    ("Minecraft", PERSONAL, "Games", ["minecraft.net", "mojang.com"]),
+    ("PlayStation", PERSONAL, "Games", ["playstation.com", "playstation.net", "sonyentertainmentnetwork.com"]),
+    ("EA / Origin", PERSONAL, "Games", ["ea.com", "origin.com", "eapc.com"]),
+    ("Blizzard / Battle.net", PERSONAL, "Games", ["battle.net", "blizzard.com"]),
+    ("Supercell (Clash, Brawl)", PERSONAL, "Games", ["supercell.com", "supercell.net", "clashofclans.com"]),
+    ("Chess.com", PERSONAL, "Games", ["chess.com", "chesscomfiles.com"]),
+    ("Mobile games (other)", PERSONAL, "Games", ["miniclip.com", "king.com", "candycrush.com", "unity3d.com",
+                                                 "ludoking.com", "gameloft.com", "playrix.com",
+                                                 "zynga.com", "moonfroglabs.com"]),
+    ("Fantasy / real-money games", PERSONAL, "Games", ["dream11.com", "my11circle.com", "mpl.live",
+                                                       "winzogames.com", "rummycircle.com", "jungleerummy.com",
+                                                       "a23.com", "pokerbaazi.com", "zupee.com", "howzat.com",
+                                                       "probo.in", "sportsbaazi.com"]),
+    # ---- shopping & food
+    ("Amazon shopping", PERSONAL, "Shopping", ["amazon.in", "amazon.com", "media-amazon.com",
+                                               "ssl-images-amazon.com", "images-amazon.com", "amazon.co.in"]),
+    ("Flipkart", PERSONAL, "Shopping", ["flipkart.com", "flixcart.com", "flipkart.net", "fkcdn.com"]),
+    ("Myntra", PERSONAL, "Shopping", ["myntra.com", "myntassets.com"]),
+    ("Meesho", PERSONAL, "Shopping", ["meesho.com", "meeshosupplyassets.com"]),
+    ("Other shopping", PERSONAL, "Shopping", ["ajio.com", "nykaa.com", "nykaafashion.com", "snapdeal.com",
+                                              "tatacliq.com", "jiomart.com", "shopsy.in", "firstcry.com",
+                                              "lenskart.com", "croma.com", "reliancedigital.in", "pepperfry.com",
+                                              "urbanladder.com", "purplle.com", "mamaearth.in", "boat-lifestyle.com",
+                                              "aliexpress.com", "shein.in", "temu.com", "olx.in"]),
+    ("Groceries (Blinkit, Zepto...)", PERSONAL, "Shopping", ["blinkit.com", "grofers.com", "zeptonow.com",
+                                                             "bigbasket.com", "swiggyinstamart.com", "dunzo.com"]),
+    ("Swiggy", PERSONAL, "Food delivery", ["swiggy.com", "swiggy.in"]),
+    ("Zomato", PERSONAL, "Food delivery", ["zomato.com", "zmtcdn.com", "zomato.in"]),
+    # ---- news & sports
+    ("Cricket scores", PERSONAL, "News & sports", ["cricbuzz.com", "espncricinfo.com", "iplt20.com",
+                                                   "bcci.tv", "crictracker.com", "fancode.com"]),
+    ("News sites", PERSONAL, "News & sports", ["indiatimes.com", "timesofindia.com", "ndtv.com",
+                                               "hindustantimes.com", "indianexpress.com", "thehindu.com",
+                                               "news18.com", "aajtak.in", "abplive.com", "zeenews.india.com",
+                                               "dailyhunt.in", "inshorts.com", "jagran.com", "bhaskar.com",
+                                               "amarujala.com", "livehindustan.com", "moneycontrol.com",
+                                               "economictimes.com", "livemint.com", "business-standard.com",
+                                               "bbc.com", "bbc.co.uk", "cnn.com", "indiatoday.in"]),
+    ("Stock trading apps", PERSONAL, "Banking & payments", ["zerodha.com", "kite.zerodha.com", "groww.in",
+                                                            "upstox.com", "angelone.in", "5paisa.com", "dhan.co",
+                                                            "paytmmoney.com", "sharekhan.com"]),
+    # ---- work: government, business, banking, office tools
+    ("GST portal", WORK, "Government", ["gst.gov.in", "ewaybillgst.gov.in", "einvoice1.gst.gov.in",
+                                        "gstsystem.gov.in"]),
+    ("Income tax / TDS", WORK, "Government", ["incometax.gov.in", "incometaxindiaefiling.gov.in", "tdscpc.gov.in",
+                                              "tin-nsdl.com", "protean-tinpan.com", "onlineservices.nsdl.com"]),
+    ("MCA / company affairs", WORK, "Government", ["mca.gov.in"]),
+    ("EPFO / ESIC", WORK, "Government", ["epfindia.gov.in", "esic.gov.in", "esic.nic.in", "unifiedportal-mem.epfindia.gov.in"]),
+    ("Customs / DGFT", WORK, "Government", ["icegate.gov.in", "dgft.gov.in", "cbic.gov.in"]),
+    ("GeM / tenders", WORK, "Government", ["gem.gov.in", "eprocure.gov.in", "etenders.gov.in",
+                                           "eproc.rajasthan.gov.in", "tenderwizard.com", "tendertiger.com"]),
+    ("Government portals (other)", WORK, "Government", ["gov.in", "nic.in", "udyamregistration.gov.in",
+                                                        "uidai.gov.in", "digilocker.gov.in", "rajasthan.gov.in"]),
+    ("Tally", WORK, "Accounts & ERP", ["tallysolutions.com", "tallyprime.com", "tally.in"]),
+    ("Zoho", WORK, "Accounts & ERP", ["zoho.com", "zoho.in", "zohocdn.com", "zohostatic.com", "zohopublic.com"]),
+    ("Business software (cloud)", WORK, "Accounts & ERP", [
+        "salesforce.com", "force.com", "hubspot.com", "hsforms.com", "freshworks.com", "freshdesk.com",
+        "freshsales.io", "odoo.com", "sap.com", "oraclecloud.com", "netsuite.com", "busy.in", "marg.com",
+        "margcompusoft.com", "vyaparapp.in", "khatabook.com", "mybillbook.in", "cleartax.in", "clear.in",
+        "razorpayx.com", "quickbooks.com", "intuit.com", "keka.com", "greythr.com", "zinghr.com", "darwinbox.in"]),
+    ("IndiaMART / B2B", WORK, "Business & jobs", ["indiamart.com", "imimg.com", "tradeindia.com", "justdial.com",
+                                                  "exportersindia.com", "alibaba.com", "made-in-china.com",
+                                                  "udaan.com"]),
+    ("Banking", WORK, "Banking & payments", ["hdfcbank.com", "hdfc.com", "icicibank.com", "onlinesbi.sbi",
+                                             "sbi.co.in", "onlinesbi.com", "axisbank.com", "kotak.com",
+                                             "kotak.bank.in", "yesbank.in", "pnbindia.in", "netpnb.com",
+                                             "bankofbaroda.in", "bobibanking.com", "canarabank.com",
+                                             "unionbankofindia.co.in", "idfcfirstbank.com", "indusind.com",
+                                             "federalbank.co.in", "rblbank.com", "aubank.in", "bank.in"]),
+    ("Payments (UPI, gateways)", NEUTRAL, "Banking & payments", ["paytm.com", "paytm.in", "phonepe.com",
+                                                                 "razorpay.com", "npci.org.in", "bhimupi.org.in",
+                                                                 "cashfree.com", "payu.in", "ccavenue.com",
+                                                                 "billdesk.com", "mobikwik.com", "cred.club"]),
+    ("Logistics & courier", WORK, "Business & jobs", ["delhivery.com", "bluedart.com", "dtdc.in", "dtdc.com",
+                                                      "shiprocket.in", "xpressbees.com", "ecomexpress.in",
+                                                      "vrlgroup.in", "tcil.com", "gati.com", "safexpress.com",
+                                                      "indiapost.gov.in", "fedex.com", "dhl.com"]),
+    ("Dropbox", WORK, "Cloud storage & office", ["dropbox.com", "dropboxapi.com", "dropboxusercontent.com",
+                                                 "dropboxstatic.com", "db.tt"]),
+    ("WeTransfer / file sharing", WORK, "Cloud storage & office", ["wetransfer.com", "we.tl", "box.com",
+                                                                   "boxcdn.net", "sendanywhere.com"]),
+    ("MEGA (file sharing)", PERSONAL, "Cloud storage & office", ["mega.nz", "mega.io", "mega.co.nz"]),
+    ("Canva", WORK, "Design & CAD", ["canva.com", "canva.cn"]),
+    ("Autodesk / CAD", WORK, "Design & CAD", ["autodesk.com", "autodesk360.com", "solidworks.com", "3ds.com",
+                                              "ptc.com", "onshape.com", "sketchup.com", "trimble.com"]),
+    ("Adobe", WORK, "Design & CAD", ["adobe.com", "adobe.io", "adobelogin.com", "adobecc.com", "typekit.net",
+                                     "acrobat.com"]),
+    ("Dev tools (GitHub...)", WORK, "Business & jobs", ["github.com", "githubusercontent.com", "githubassets.com",
+                                                        "gitlab.com", "atlassian.net", "atlassian.com",
+                                                        "bitbucket.org", "stackoverflow.com", "sstatic.net",
+                                                        "npmjs.org", "pypi.org", "pythonhosted.org"]),
+    ("Email (other)", NEUTRAL, "Email", ["mail.yahoo.com", "yahoo.com", "rediffmail.com", "rediff.com",
+                                         "mail.zoho.com", "mail.zoho.in", "proton.me", "protonmail.com"]),
+    ("Job portals", PERSONAL, "Business & jobs", ["naukri.com", "naukimg.com", "indeed.com", "indeed.co.in",
+                                                  "foundit.in", "monsterindia.com", "shine.com", "apna.co",
+                                                  "internshala.com", "glassdoor.com", "glassdoor.co.in"]),
+    ("Online learning", NEUTRAL, "Learning", ["udemy.com", "udemycdn.com", "coursera.org", "byjus.com",
+                                              "unacademy.com", "khanacademy.org", "nptel.ac.in", "swayam.gov.in",
+                                              "duolingo.com", "physicswallah.com", "pw.live"]),
+    ("Travel booking", NEUTRAL, "Maps & travel", ["irctc.co.in", "makemytrip.com", "goibibo.com", "ixigo.com",
+                                                  "redbus.in", "cleartrip.com", "yatra.com", "easemytrip.com",
+                                                  "booking.com", "airbnb.com", "airindia.com", "goindigo.in",
+                                                  "uber.com", "olacabs.com", "rapido.bike"]),
+    # ---- system, security, cameras, ads
+    ("Apple / iCloud", NEUTRAL, "App stores", ["icloud.com", "apple.com", "mzstatic.com", "aaplimg.com",
+                                                         "cdn-apple.com", "apple-cloudkit.com", "itunes.com",
+                                                         "icloud-content.com"]),
+    ("Phone software updates (Samsung, Xiaomi...)", NEUTRAL, "Updates & drivers", [
+        "samsung.com", "samsungcloud.com", "samsungosp.com", "xiaomi.com", "miui.com", "mi.com",
+        "oppomobile.com", "heytapmobile.com", "coloros.com", "vivo.com.cn", "vivoglobal.com", "realme.com",
+        "oneplus.com", "oneplus.net", "motorola.com", "hihonor.com"]),
+    ("Dell drivers & support", NEUTRAL, "Updates & drivers", ["dell.com", "dellcdn.com", "dellsupportcenter.com",
+                                                              "downloads.dell.com", "dl.dell.com", "dell.co.in",
+                                                              "delltechnologies.com"]),
+    ("Lenovo drivers & support", NEUTRAL, "Updates & drivers", ["lenovo.com", "lenovomm.com", "lenovo.co.in",
+                                                                "lenovovantage.com", "lenovo.com.cn"]),
+    ("HP drivers & support", NEUTRAL, "Updates & drivers", ["hp.com", "hpsmart.com", "hpeprint.com",
+                                                            "hpconnected.com", "hpicorp.net", "hpcloud.hp.com",
+                                                            "hp.io"]),
+    ("Intel drivers", NEUTRAL, "Updates & drivers", ["intel.com", "intel.cn", "intel.in"]),
+    ("NVIDIA / AMD graphics drivers", NEUTRAL, "Updates & drivers", ["nvidia.com", "geforce.com", "nvidia.cn",
+                                                                     "amd.com", "amd.cn"]),
+    ("Other PC makers' drivers", NEUTRAL, "Updates & drivers", ["realtek.com", "asus.com", "asus.com.cn",
+                                                                "acer.com", "msi.com", "gigabyte.com",
+                                                                "asrock.com", "toshiba.com", "dynabook.com",
+                                                                "microsoftsurface.com", "logitech.com",
+                                                                "logi.com", "tp-link.com", "seagate.com",
+                                                                "westerndigital.com", "wdc.com", "sandisk.com",
+                                                                "kingston.com", "crucial.com"]),
+    ("Printer drivers & cloud", NEUTRAL, "Updates & drivers", ["canon.com", "canon.co.in", "epson.com",
+                                                               "epson.co.in", "epson.net", "brother.com",
+                                                               "brother.in", "brother.co.jp", "kyoceradocumentsolutions.com",
+                                                               "ricoh.com", "xerox.com", "konicaminolta.com",
+                                                               "sharp.co.jp", "pantum.com"]),
+    ("Chrome browser updates", NEUTRAL, "Updates & drivers", ["dl.google.com", "update.googleapis.com",
+                                                              "edgedl.me.gvt1.com", "redirector.gvt1.com",
+                                                              "tools.google.com"]),
+    ("Firefox / other browser updates", NEUTRAL, "Updates & drivers", ["mozilla.org", "mozilla.net",
+                                                                       "mozilla.com", "firefox.com", "opera.com",
+                                                                       "operacdn.com", "brave.com",
+                                                                       "bravesoftware.com"]),
+    ("Software downloads (other)", NEUTRAL, "Updates & drivers", ["java.com", "sourceforge.net", "filehippo.com",
+                                                                  "softonic.com", "uptodown.com", "ninite.com",
+                                                                  "7-zip.org", "videolan.org", "winrar.com",
+                                                                  "rarlab.com", "notepad-plus-plus.org",
+                                                                  "apkpure.com", "apkmirror.com"]),
+    ("Antivirus updates", NEUTRAL, "Security", ["quickheal.com", "quickheal.co.in", "k7computing.com",
+                                                "avast.com", "avcdn.net", "avg.com", "kaspersky.com",
+                                                "kaspersky-labs.com", "eset.com", "mcafee.com", "norton.com",
+                                                "symantec.com", "bitdefender.com", "bitdefender.net",
+                                                "sophos.com", "trendmicro.com", "malwarebytes.com",
+                                                "escanav.com", "seqrite.com", "npav.net"]),
+    ("CCTV cloud", NEUTRAL, "Cameras", ["hik-connect.com", "hikvision.com", "ezvizlife.com", "ezviz.com",
+                                        "hik-partner.com", "dahuasecurity.com", "imoulife.com", "easy4ip.com",
+                                        "cpplusworld.com", "cpplusworld.in", "uniview.com", "tplinkcloud.com",
+                                        "tapo.com", "qvis.co.in", "dlink.com", "mydlink.com", "yi-cam.com"]),
+    ("Ads & trackers", NEUTRAL, "Ads & trackers", [
+        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "google-analytics.com",
+        "googletagmanager.com", "app-measurement.com", "adnxs.com", "amazon-adsystem.com", "criteo.com",
+        "taboola.com", "outbrain.com", "adsrvr.org", "moatads.com", "scorecardresearch.com", "inmobi.com",
+        "applovin.com", "unityads.unity3d.com", "appsflyer.com", "adjust.com", "branch.io", "crashlytics.com",
+        "firebaselogging-pa.googleapis.com", "clevertap-prod.com", "moengage.com", "onesignal.com"]),
+    ("CDN (various)", NEUTRAL, "Search & system", ["akamai.net", "akamaihd.net", "akamaized.net",
+                                                   "akamaiedge.net", "edgekey.net", "edgesuite.net", "akamai.com",
+                                                   "cloudflare.com", "cloudflare.net", "cloudfront.net",
+                                                   "fastly.net", "fastlylb.net", "edgecastcdn.net", "cdn77.org",
+                                                   "jsdelivr.net", "bunnycdn.com", "b-cdn.net", "llnwd.net",
+                                                   "stackpathdns.com"]),
+    ("Amazon cloud (AWS)", NEUTRAL, "Search & system", ["amazonaws.com", "aws.amazon.com", "awsstatic.com"]),
+    ("Internet checks / time", NEUTRAL, "Search & system", ["msftconnecttest.com", "connectivitycheck.gstatic.com",
+                                                            "pool.ntp.org", "time.windows.com", "ntp.org",
+                                                            "captive.apple.com", "time.google.com"]),
+]
+
+# when only the address owner is known (no DNS name): honest, wider labels - never "Facebook" for all of Meta
+ORG_HINTS = [
+    (("meta platforms", "facebook"), "Meta (Facebook / Instagram / WhatsApp - name not known)", NEUTRAL),
+    (("google",), "Google (service not known)", NEUTRAL), (("microsoft",), "Microsoft (other)", NEUTRAL),
+    (("akamai", "cloudflare", "fastly", "edgecast", "limelight"), "CDN (various)", NEUTRAL),
+    (("amazon",), "Amazon cloud (AWS)", NEUTRAL), (("apple",), "Apple / iCloud", NEUTRAL),
+    (("netflix",), "Netflix", PERSONAL), (("bytedance", "tiktok"), "TikTok", PERSONAL),
+    (("telegram",), "Telegram", PERSONAL), (("valve",), "Steam", PERSONAL), (("zoom",), "Zoom", WORK),
+    (("hikvision",), "CCTV cloud", NEUTRAL), (("dahua",), "CCTV cloud", NEUTRAL),
+]
+
+APP_INFO = {}   # app -> (category, group)
+SUFFIX = {}     # domain ending -> app
+for _app, _cat, _grp, _doms in CATALOG:
+    APP_INFO[_app] = (_cat, _grp)
+    for _d in _doms:
+        SUFFIX.setdefault(_d.lower(), _app)
+for _app, _cat in [(a, c) for _, a, c in ORG_HINTS] + [(a, c) for a, c in PORT_RULES.values()]:
+    APP_INFO.setdefault(_app, (_cat, "Other"))
+
+
+# addresses whose service is in the middle of the name
+NAME_PATTERNS = [(re.compile(r"(^|\.)doc-[\w-]+-docs\.googleusercontent\.com$"), "Google Drive / Docs"),
+                 (re.compile(r"(^|\.)[\w-]+---sn-[\w-]+\.googlevideo\.com$"), "YouTube"),
+                 (re.compile(r"(^|\.)[\w-]+---sn-[\w-]+\.gvt1\.com$"), "Chrome browser updates"),
+                 (re.compile(r"(^|\.)web\.whatsapp\.com$"), "WhatsApp"),
+                 (re.compile(r"(^|\.)[\w-]*instagram[\w-]*\.([\w-]+\.)*fbcdn\.net$"), "Instagram"),
+                 (re.compile(r"(^|\.)whatsapp-cdn-shv[\w-]*\.fbcdn\.net$"), "WhatsApp")]
+
+
+# Small "front door" addresses (login, page, chat) that Google / Meta share between their apps. When the router's
+# DNS cache shows several apps for such an address and the device's own look-up is unknown, the traffic is
+# shown under this name instead of being given to one app. Video (googlevideo.com) and app-own addresses
+# (whatsapp.net, cdninstagram.com) are never shared, so the big traffic still goes to the right app.
+SHARED_FRONTENDS = {a: "Google (shared address)" for a in ("Google Drive / Docs", "Gmail", "Google Meet",
+                                                            "Google Calendar / Contacts", "Google Photos",
+                                                            "Google Search & other", "YouTube", "Google Play Store",
+                                                            "Google Maps", "Gemini (Google AI)")}
+SHARED_FRONTENDS.update({a: "Meta (shared address)" for a in ("Facebook", "Instagram", "WhatsApp", "Messenger",
+                                                               "Threads")})
+
+
+def app_of_name(name):
+    """App for a DNS name by the longest matching domain ending, or None."""
+    n = (name or "").strip(".").lower()
+    for rx, app in NAME_PATTERNS:
+        if rx.search(n):
+            return app
+    p = n.split(".")
+    for i in range(len(p) - 1):
+        app = SUFFIX.get(".".join(p[i:]))
+        if app:
+            return app
+    return None
+
+
+def group_of(app):
+    return APP_INFO.get(app, (NEUTRAL, "Other"))[1]
+
+
+def classify(name, org="", port=0, overrides=None, dept=""):
+    """(app, category). name: DNS name (or registered domain). overrides: {"app:<app>", "site:<site>",
+    "app:<app>@<dept>": category} chosen by the user - the department's own choice wins."""
+    app = app_of_name(name)
+    cat = APP_INFO[app][0] if app else None
+    if app is None:
+        low = (org or "").lower()
+        for words, nm, c in ORG_HINTS:
+            if any(w in low for w in words):
+                app, cat = nm, c
+                break
     if app is None and port in PORT_RULES:
         app, cat = PORT_RULES[port]
     if app is None:
-        app = site or (org[:40] if org else "Other / unknown")
+        app = site_of(name) or (org[:40] if org else "Other / unknown")
         cat = NEUTRAL
     ov = overrides or {}
-    cat = ov.get("site:" + site) or ov.get("app:" + app) or cat
+    site = site_of(name)
+    cat = (ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("site:" + site) or ov.get("app:" + app) or cat
     return app, cat
 
 
@@ -143,7 +480,8 @@ class UsageStore:
         self.path = path
         self.settings_path = settings_path or os.path.join(os.path.dirname(path), "usage-settings.json")
         self.lock = threading.Lock()
-        self.ip_name = collections.OrderedDict()   # internet IP -> DNS name (from router cache / DNS firewall)
+        self.ip_name = collections.OrderedDict()   # internet IP -> {DNS name: times seen} (router cache / DNS firewall)
+        self.dev_ip_name = collections.OrderedDict()  # (LAN IP, internet IP) -> name that device looked up
         self.devmap = {}                           # LAN IP -> (key, name)  key = MAC when known
         self.cur = collections.defaultdict(lambda: [0, 0, 0])   # (day, hour, dev, app, site, cat) -> up, down, flows
         self.visits = collections.Counter()        # (day, hour, dev, site) -> DNS look-ups
@@ -163,9 +501,10 @@ class UsageStore:
         except (OSError, ValueError):
             self.overrides = {}
 
-    def set_category(self, kind, value, cat):
-        """kind 'app' or 'site'; cat work / neutral / personal, or None to go back to the built-in rule."""
-        key = f"{kind}:{value}"
+    def set_category(self, kind, value, cat, dept=""):
+        """kind 'app' or 'site'; cat work / neutral / personal, or None to go back to the built-in rule.
+        dept: only for that department's devices (e.g. WhatsApp is work for Sales)."""
+        key = f"{kind}:{value}" + (f"@{dept}" if dept and kind == "app" else "")
         self.flush(force=True)  # traffic still in memory must follow the new choice too
         with self.lock:
             if cat:
@@ -182,13 +521,43 @@ class UsageStore:
         # the history follows the user's choice too
         with self._db() as db:
             col = "app" if kind == "app" else "site"
+            if dept and kind == "app":
+                new = cat or self.category_of(value)
+                sub = "dev IN (SELECT dev FROM devices WHERE dept=?)"
+                db.execute(f"UPDATE usage SET cat=? WHERE app=? AND {sub}", (new, value, dept))
+                db.execute(f"UPDATE active SET cat=? WHERE app=? AND {sub}", (new, value, dept))
+                return
             new = cat or self._rule_cat(kind, value)
-            db.execute(f"UPDATE usage SET cat=? WHERE {col}=?", (new, value))
+            depts = {k.split("@", 1)[1] for k in self.overrides if k.startswith(f"app:{value}@")} if kind == "app" else set()
+            keep = (" AND dev NOT IN (SELECT dev FROM devices WHERE dept IN (%s))" % ",".join("?" * len(depts))
+                    if depts else "")
+            db.execute(f"UPDATE usage SET cat=? WHERE {col}=?" + keep, (new, value, *depts))
             if kind == "app":
-                db.execute("UPDATE active SET cat=? WHERE app=?", (new, value))
+                db.execute("UPDATE active SET cat=? WHERE app=?" + keep, (new, value, *depts))
 
     def _rule_cat(self, kind, value):
-        return classify(value if kind == "site" else "", value if kind == "app" else "")[1]
+        if kind == "app":
+            return APP_INFO.get(value, (NEUTRAL, ""))[0]
+        return classify(value)[1]
+
+    def category_of(self, app, dept=""):
+        """The category in force for an app (department choice, then the user's choice, then the built-in one)."""
+        ov = self.overrides
+        return ((ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app)
+                or APP_INFO.get(app, (NEUTRAL, ""))[0])
+
+    def app_list(self):
+        """Every known app with its group, built-in category, the user's choice and per-department choices."""
+        out = []
+        depts = collections.defaultdict(dict)
+        for k, v in self.overrides.items():
+            if k.startswith("app:") and "@" in k:
+                a, d = k[4:].split("@", 1)
+                depts[a][d] = v
+        for app, cat, grp, doms in CATALOG:
+            out.append({"app": app, "group": grp, "builtin": cat, "chosen": self.overrides.get("app:" + app),
+                        "depts": dict(depts.get(app, {})), "domains": doms})
+        return out
 
     # ---- database
     def _db(self):
@@ -206,6 +575,13 @@ class UsageStore:
                        " PRIMARY KEY (day, hour, dev, site))")
             db.execute("CREATE TABLE IF NOT EXISTS devices (dev TEXT PRIMARY KEY, name TEXT, ip TEXT, dept TEXT,"
                        " last TEXT)")
+            # per-device views (Usage tab, a person's day) stay fast with months of history
+            for t in ("usage", "active", "visits"):
+                db.execute(f"CREATE INDEX IF NOT EXISTS {t}_dev_day ON {t} (dev, day)")
+            try:
+                db.execute("PRAGMA journal_mode=WAL")  # the UI reads while the monitor writes
+            except sqlite3.DatabaseError:
+                pass
 
     # ---- inputs
     def set_devices(self, devices, tags=None):
@@ -219,7 +595,7 @@ class UsageStore:
             key = mac or ip
             for x in (d.get("ips") or [ip]):
                 if x and d.get("online", True):
-                    m[x] = (key, name)
+                    m[x] = (key, name, t.get("dept", ""))
             if key:
                 rows.append((key, name, ip, t.get("dept", ""), time.strftime("%Y-%m-%d %H:%M")))
         with self.lock:
@@ -229,22 +605,59 @@ class UsageStore:
                 db.executemany("INSERT INTO devices VALUES (?,?,?,?,?) ON CONFLICT(dev) DO UPDATE SET "
                                "name=excluded.name, ip=excluded.ip, dept=excluded.dept, last=excluded.last", rows)
 
-    def learn_names(self, pairs):
-        """[(internet_ip, dns_name)] from the router's DNS cache or the website firewall."""
+    def learn_names(self, pairs, client=None):
+        """[(internet_ip, dns_name)] from the router's DNS cache (all devices) or the website firewall (client =
+        the device that asked). One address can serve several apps (Google and Meta share front ends), so every
+        name seen for an address is kept, and a device's own look-up wins for that device."""
         with self.lock:
             for ip, name in pairs:
-                if ip and name and not _private(ip):
-                    self.ip_name[ip] = name.lower().strip(".")
-                    self.ip_name.move_to_end(ip)
+                if not ip or not name or _private(ip):
+                    continue
+                name = name.lower().strip(".")
+                names = self.ip_name.get(ip)
+                if not isinstance(names, dict):
+                    names = {}
+                names[name] = names.get(name, 0) + 1
+                if len(names) > 12:
+                    del names[min(names, key=names.get)]
+                self.ip_name[ip] = names
+                self.ip_name.move_to_end(ip)
+                if client:
+                    self.dev_ip_name[(client, ip)] = name
+                    self.dev_ip_name.move_to_end((client, ip))
             while len(self.ip_name) > 200_000:
                 self.ip_name.popitem(last=False)
+            while len(self.dev_ip_name) > 300_000:
+                self.dev_ip_name.popitem(last=False)
+
+    def app_for(self, lan, remote):
+        """App name for the live monitor, when a DNS name is known for this address; otherwise None."""
+        with self.lock:
+            name, shared = self.name_for(lan, remote)
+        app = app_of_name(name) if name else None
+        if app and shared and app in SHARED_FRONTENDS:
+            return SHARED_FRONTENDS[app]
+        return app
+
+    def name_for(self, lan, remote):
+        """(DNS name, shared): the name this device looked up for this address, else the address's most
+        common name; shared = the address serves several apps and this device's own look-up is not known."""
+        own = self.dev_ip_name.get((lan, remote))
+        if own:
+            return own, False
+        names = self.ip_name.get(remote) or {}
+        if not names:
+            return "", False
+        best = max(names, key=names.get)
+        apps = {app_of_name(n) or site_of(n) for n in names}
+        return best, len(apps) > 1
 
     def dns_seen(self, client, name, ips=(), now=None):
         """One DNS look-up by a device (website firewall): counts a visit and learns the answer's addresses."""
         now = now or time.time()
         site = site_of(name)
         if ips:
-            self.learn_names([(ip, name) for ip in ips])
+            self.learn_names([(ip, name) for ip in ips], client)
         if not site or not _private(client):
             return
         tm = time.localtime(now)
@@ -260,13 +673,18 @@ class UsageStore:
         tm = time.localtime(now)
         day, hour = time.strftime("%Y-%m-%d", tm), tm.tm_hour
         with self.lock:
-            name = self.ip_name.get(remote, "")
-            dev = self.devmap.get(lan, (lan, lan))[0]
+            name, shared = self.name_for(lan, remote)
+            info = self.devmap.get(lan) or (lan, lan, "")
+            dev, dept = info[0], (info[2] if len(info) > 2 else "")
             ov = self.overrides
         site = site_of(name)
-        app, cat = classify(name or site, org, port, ov)
+        app, cat = classify(name, org, port, ov, dept)
         if app == name and site:
             app = site
+        if shared and app in SHARED_FRONTENDS:
+            # a page / login address shared by several Google or Meta apps: do not guess the app
+            app = SHARED_FRONTENDS[app]
+            cat = (ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app) or NEUTRAL
         with self.lock:
             r = self.cur[(day, hour, dev, app, site or (org[:40] if org else ""), cat)]
             r[0 if up else 1] += nbytes
@@ -327,12 +745,13 @@ class UsageStore:
             a.append(dev)
         names = self.names()
         cat = {r[0]: r[1] + r[2] for r in self._rows(f"SELECT cat, SUM(up), SUM(down) FROM usage WHERE {w} GROUP BY cat", a)}
-        apps = [{"app": r[0], "cat": r[1], "bytes": r[2], "devices": r[3]} for r in self._rows(
-            f"SELECT app, cat, SUM(up+down) b, COUNT(DISTINCT dev) FROM usage WHERE {w} GROUP BY app ORDER BY b DESC "
-            "LIMIT 40", a)]
-        mins = {r[0]: r[1] for r in self._rows(f"SELECT app, SUM(minutes) FROM active WHERE {w} GROUP BY app", a)}
+        apps = [{"app": r[0], "cat": r[1], "bytes": r[2], "devices": r[3], "group": group_of(r[0])} for r in self._rows(
+            f"SELECT app, cat, SUM(up+down) b, COUNT(DISTINCT dev) FROM usage WHERE {w} GROUP BY app, cat "
+            "ORDER BY b DESC LIMIT 60", a)]
+        mins = {(r[0], r[1]): r[2] for r in self._rows(
+            f"SELECT app, cat, SUM(minutes) FROM active WHERE {w} GROUP BY app, cat", a)}
         for x in apps:
-            x["minutes"] = mins.get(x["app"], 0)
+            x["minutes"] = mins.get((x["app"], x["cat"]), 0)
         sites = [{"site": r[0], "app": r[1], "cat": r[2], "bytes": r[3], "devices": r[4]} for r in self._rows(
             f"SELECT site, app, cat, SUM(up+down) b, COUNT(DISTINCT dev) FROM usage WHERE {w} AND site != '' "
             "GROUP BY site ORDER BY b DESC LIMIT 60", a)]
@@ -460,13 +879,17 @@ class UsageStore:
                             "action": "Give it a speed limit, or schedule its big jobs (backup, CCTV upload, "
                                       "updates) after office hours."})
         # updates / backups during office hours
-        for a in ("Windows Update", "Dropbox", "Apple / iCloud", "CCTV cloud"):
+        upd = [a for a in set().union(*[set(c) for c in app_by_hour.values()]) if group_of(a) == "Updates & drivers"]
+        for hour in range(24):  # all updates and driver downloads together
+            app_by_hour[hour]["Updates & drivers (all)"] = sum(app_by_hour[hour][a] for a in upd)
+        for a in ("Updates & drivers (all)", "Dropbox", "OneDrive / SharePoint", "Apple / iCloud", "CCTV cloud"):
             work_h = sum(app_by_hour[h][a] for h in range(10, 18))
             if work_h > 2e9 * max(1, n_days / 7):
                 out.append({"sev": "info", "title": f"{a}: {fmt_bytes(work_h)} during office hours",
                             "text": "Large downloads / uploads between 10:00 and 18:00 slow everybody else.",
-                            "action": "Schedule it for the night (Windows: Active hours / Delivery Optimization "
-                                      "limits; backups and CCTV cloud: night schedule)."})
+                            "action": "Schedule it for the night (Windows: Active hours and Delivery Optimization "
+                                      "limits; Dell / Lenovo / HP update tools: set to notify only; backups and CCTV "
+                                      "cloud: night schedule)."})
         if n_days < 7:
             out.append({"sev": "info", "title": f"Learning: {n_days} day(s) recorded",
                         "text": "Patterns and 'unusual' warnings get reliable after a week of data.", "action": ""})

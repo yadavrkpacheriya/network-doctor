@@ -17,8 +17,11 @@ import nd_update as U  # noqa: E402
 class FakePopen:
     calls = []
 
+    kws = []
+
     def __init__(self, cmd, **kw):
         FakePopen.calls.append(cmd)
+        FakePopen.kws.append(kw)
 
 
 class UpdateTests(unittest.TestCase):
@@ -77,6 +80,23 @@ class UpdateTests(unittest.TestCase):
                 self.assertIn('open "/Applications/Network Doctor.app"', f.read().splitlines())
         finally:
             U.mac_bundle = old
+
+    def test_restart_does_not_pass_pyinstaller_private_variables(self):
+        """3.11.0: the restarted exe stopped with 'invalid originating onefile parent process (PID not found)'."""
+        saved = dict(os.environ)
+        os.environ.update({"_PYI_APPLICATION_HOME_DIR": "x", "_PYI_PARENT_PROCESS_LEVEL": "1", "_MEIPASS2": "y"})
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                U.apply_exe(os.path.join(d, "new.exe"), ["--minimized"])
+                env = FakePopen.kws[-1]["env"]
+                self.assertFalse([k for k in env if k.startswith(("_PYI", "_MEIPASS"))])
+                self.assertEqual(env["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+                self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
+                with open(FakePopen.calls[-1][2]) as f:
+                    self.assertIn("set PYINSTALLER_RESET_ENVIRONMENT=1", f.read())
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
 
     def test_source_file_list_is_complete(self):
         """SOURCE_FILES.txt lets older copies fetch modules added later - it must list every module."""

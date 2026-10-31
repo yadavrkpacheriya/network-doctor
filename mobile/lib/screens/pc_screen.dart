@@ -8,6 +8,7 @@ import '../net/model.dart';
 import '../net/pc_link.dart';
 import '../net/probe.dart';
 import 'common.dart';
+import 'pc_more.dart';
 
 /// "Office PC": pair with the Network Doctor PC app and show its results.
 class PcScreen extends StatefulWidget {
@@ -288,8 +289,8 @@ class _PcDashboardState extends State<PcDashboard> {
   Widget build(BuildContext context) {
     final s = _s;
     return DefaultTabController(
-      length: 3,
-      child: Scaffold(
+      length: 6,
+      child: Builder(builder: (ctx) => Scaffold(
         appBar: AppBar(
           title: Text(widget.pc.name, overflow: TextOverflow.ellipsis),
           actions: [
@@ -311,7 +312,14 @@ class _PcDashboardState extends State<PcDashboard> {
               ],
             ),
           ],
-          bottom: const TabBar(tabs: [Tab(text: 'Problems'), Tab(text: 'Devices'), Tab(text: 'Monitor')]),
+          bottom: const TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [
+            Tab(text: 'Summary'),
+            Tab(text: 'Problems'),
+            Tab(text: 'Devices'),
+            Tab(text: 'Usage'),
+            Tab(text: 'Inventory'),
+            Tab(text: 'Monitor'),
+          ]),
         ),
         body: Column(children: [
           if (_err.isNotEmpty)
@@ -325,13 +333,16 @@ class _PcDashboardState extends State<PcDashboard> {
             child: s == null
                 ? Center(child: _err.isEmpty ? const CircularProgressIndicator() : const SizedBox.shrink())
                 : TabBarView(children: [
+                    SummaryTab(s: s, onRefresh: _load, goTo: (i) => DefaultTabController.of(ctx).animateTo(i)),
                     _ProblemsTab(s: s, onRefresh: _load),
                     _devicesTab(s),
+                    UsageTab(s: s, onRefresh: _load),
+                    InventoryTab(s: s, onRefresh: _load),
                     _MonitorTab(s: s, onRefresh: _load),
                   ]),
           ),
         ]),
-      ),
+      )),
     );
   }
 
@@ -494,7 +505,10 @@ class _MonitorTab extends StatelessWidget {
             child: ListTile(
               dense: true,
               title: Text('${(x['name'] ?? '').toString().isEmpty ? x['ip'] : x['name']}'),
-              subtitle: Text('${x['ip']}  ·  last 10 min ${fmtBytes(x['last10'] as num?)}'),
+              subtitle: Text('${x['ip']}  ·  last 10 min ${fmtBytes(x['last10'] as num?)}'
+                  '${'${x['site'] ?? ''}'.isEmpty ? '' : '\n${x['site']}'}'
+                  '${'${x['app'] ?? ''}'.isEmpty ? '' : '  ·  ${x['app']}'}'
+                  '${'${x['risk'] ?? ''}'.isEmpty ? '' : '\n⚠ ${x['risk']}'}'),
               trailing: Text('↓ ${fmtRate((x['down_bps'] as num?)?.toDouble())}\n↑ ${fmtRate((x['up_bps'] as num?)?.toDouble())}',
                   textAlign: TextAlign.right),
             ),

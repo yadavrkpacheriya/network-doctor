@@ -63,6 +63,9 @@ class FakeRouter:
                     send(["!re", "=version=7.15 (stable)"], ["!done"])
                 elif cmd == "/ip/dhcp-server/lease/print":
                     send(*[["!re"] + [f"={k}={v}" for k, v in x.items()] for x in self.leases], ["!done"])
+                elif cmd == "/ip/arp/print":
+                    send(*[["!re", f"=address={x['address']}", f"=mac-address={x['mac-address']}", "=interface=bridge"]
+                           for x in self.leases], ["!done"])
                 elif cmd == "/ip/dns/cache/all/print":
                     send(*[["!re", f"=name={n}", "=type=A", f"=data={ip}"] for ip, n in getattr(self, "dns", [])],
                          ["!done"])

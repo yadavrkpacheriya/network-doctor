@@ -29,12 +29,14 @@ import nd_core as core
 import nd_monitor as M
 import nd_update as U
 import nd_share as SH
+import nd_alerts as AL
 import nd_tabs
 import nd_tools as T
 import nd_net as NT
 import nd_toolstab
 import nd_routeros as RO
 import nd_usage as US
+import nd_home
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -56,7 +58,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.11.0"
+VERSION = "3.14.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -438,7 +440,8 @@ class App(tk.Tk):
         self.share = None
         if self.var_share.get() or self._settings().get("reports_enabled"):
             self.after(1200, self._ensure_share)
-        self.after(20000, lambda: self.check_updates(True))
+        self._self_inv_t = time.time() - 86400 + 45  # this PC's own inventory 45 s after start, then daily
+        self.after(20000, self._daily_update)  # checks now only if today's 15:00 check was missed
         self.after(3000, self._after_update_note)
         threading.Thread(target=self._watch_loop, daemon=True).start()
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
@@ -503,19 +506,24 @@ class App(tk.Tk):
 
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self._tab_home()
         self._tab_devices()
         self._tab_map()
         self._tab_monitor()
         self._tab_usage()
+        self._tab_slow()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
         self._tab_binding()
         self._tab_commands()
         self._tab_tools()
+        self._tab_inventory()
+        self._tab_alerts()
         self._tab_setup()
-        names = ["devices", "map", "monitor", "usage", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
+        names = ["home", "alerts", "devices", "inventory", "map", "monitor", "usage", "slow", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
         self.tabs = dict(zip(names, self.nb.tabs()))
+        self._refresh_alerts()
         self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
     def _tab_devices(self):
@@ -572,6 +580,17 @@ class App(tk.Tk):
         self.nb.add(f, text="  Network map  ")
         self.map = nd_tabs.MapTab(self, f)
 
+    def _tab_home(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Home  ")
+        self.M = M
+        self.home = nd_home.HomeTab(self, f)
+
+    def _tab_slow(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Slow website?  ")
+        self.slow = nd_tabs.SlowTab(self, f)
+
     def _tab_usage(self):
         f = ttk.Frame(self.nb)
         self.nb.add(f, text="  Usage  ")
@@ -592,6 +611,16 @@ class App(tk.Tk):
         self.nb.add(f, text="  Tools  ")
         self.tools = nd_toolstab.ToolsTab(self, f)
 
+    def _tab_alerts(self):
+        f = ttk.Frame(self.nb)
+        self.nb.insert(1, f, text="  Alerts  ")  # right after Home
+        self.alerts_tab = nd_tabs.AlertsTab(self, f)
+
+    def _tab_inventory(self):
+        f = ttk.Frame(self.nb, padding=(0, 6, 0, 0))
+        self.nb.insert(2, f, text="  Inventory  ")  # right after Devices
+        self.tools._build_inventory(f)
+
     def show_tab(self, name):
         if name in self.tabs:
             self.nb.select(self.tabs[name])
@@ -605,10 +634,18 @@ class App(tk.Tk):
                 self.binding.refresh()
             elif cur == self.tabs.get("usage"):
                 self.usage_tab.refresh()
+            elif cur == self.tabs.get("home"):
+                self.home.refresh()
+            elif cur == self.tabs.get("slow"):
+                self.slow.refresh()
             elif cur == self.tabs.get("commands"):
                 self.commands.refresh()
             elif cur == self.tabs.get("tools"):
                 self.tools.refresh_watch()
+            elif cur == self.tabs.get("alerts"):
+                self.alerts_tab.refresh()
+            elif cur == self.tabs.get("inventory"):
+                self.tools._inv_done(None, "")
         except Exception:
             pass
 
@@ -662,9 +699,9 @@ class App(tk.Tk):
         pw.add(a, weight=1)
         pw.add(b, weight=1)
         ttk.Label(a, text="Top bandwidth users (double-click to analyse)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self.tt = make_tree(a, ("ip", "down", "up", "ten", "app", "risk"),
-                            ("IP", "Download", "Upload", "Last 10 min", "Main app", "Risk"),
-                            (105, 85, 85, 90, 170, 160), first=("Device", 150))
+        self.tt = make_tree(a, ("ip", "down", "up", "ten", "app", "site", "risk"),
+                            ("IP", "Download", "Upload", "Last 10 min", "Main app", "Main website", "Risk"),
+                            (105, 80, 80, 85, 150, 170, 150), first=("Device", 150))
         self.tt.bind("<Double-1>", self._talker_open)
         ttk.Label(b, text="Events timeline (newest first)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.te = make_tree(b, ("sev", "src", "ev"), ("Level", "Source", "Event"), (70, 110, 520), first=("Time", 80))
@@ -818,6 +855,30 @@ class App(tk.Tk):
             (messagebox.showinfo if ok else messagebox.showerror)(APP, ("Router login works: " if ok else "") + text)
         threading.Thread(target=work, daemon=True).start()
 
+    def _router_fetch(self):
+        """For the scan (worker thread): the router's ARP table and DHCP leases, with the names devices gave."""
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            return None
+        try:
+            with c:
+                leases = c.leases()
+                arp = c.cmd("/ip/arp/print")
+        except RO.RosError as e:
+            return {"error": str(e)}
+        out_l = {}
+        for x in leases:
+            mac = core.norm_mac(x.get("mac-address", ""))
+            if mac:
+                out_l[mac] = {"host": (x.get("host-name") or "").strip()[:40], "ip": x.get("address", ""),
+                              "static": x.get("dynamic") != "true", "status": x.get("status", "")}
+        out_a = {}
+        for x in arp:
+            mac = core.norm_mac(x.get("mac-address", ""))
+            if mac and x.get("address") and x.get("invalid") != "true" and not core.is_bad_mac(mac):
+                out_a[x["address"]] = mac
+        return {"leases": out_l, "arp": out_a}
+
     def router_forget(self):
         self._settings().pop("router_api", None)
         self._save_settings()
@@ -849,12 +910,17 @@ class App(tk.Tk):
             self.q.put(("call", lambda: finish(err)))
 
         def finish(err):
-            self._health_log("Router", "warning" if err else "info", f"{what}: " + (err or "applied"))
+            m = re.search(r"line (\d+)", err or "")
+            lines = script.splitlines()
+            if m and 0 < int(m.group(1)) <= len(lines):  # show the line the router refused
+                err += f"\n\nLine {m.group(1)}:\n{lines[int(m.group(1)) - 1][:300]}"
+            self._health_log("Router", "warning" if err else "info", f"{what}: " + (err or "applied").splitlines()[0])
             if err:
                 self.var_status.set(f"{what}: the router reported a problem")
-                messagebox.showerror(APP, f"{what}\n\nThe router stopped with:\n{err}\n\nNothing after that line "
-                                          "was applied. Copy the commands and paste them in WinBox > New Terminal to "
-                                          "see which line fails.")
+                messagebox.showerror(APP, f"{what}\n\nThe router refused the commands:\n{err}\n\nA line the router "
+                                          "cannot read stops the whole script, so nothing was applied. Please report "
+                                          "this line; meanwhile copy the commands and paste them in WinBox > New "
+                                          "Terminal (there only that one line fails).")
             else:
                 self.var_status.set(f"{what}: applied on the router.")
                 messagebox.showinfo(APP, f"{what}: applied on the router.")
@@ -927,6 +993,7 @@ class App(tk.Tk):
         self.mon = M.Monitor(lan, self.gw, self.lip, self.threat, self.orgs)
         if self.usage:
             self.mon.traffic.sink = self.usage.add_flow
+            M.NAME_APP = self.usage.app_for
         self._feed_monitor()
         self.mon.start()
         self.ev_seen = 0
@@ -954,6 +1021,20 @@ class App(tk.Tk):
     def _tick(self):
         try:
             self._tick_once()
+        except Exception:
+            pass
+        try:
+            if self.nb.select() == self.tabs.get("home"):
+                self.home.refresh()
+            if time.time() - getattr(self, "_upd_tick_t", 0) > 60:  # daily 15:00 update check
+                self._upd_tick_t = time.time()
+                self._daily_update()
+            if time.time() - getattr(self, "_self_inv_t", 0) > 86400:
+                self._self_inventory()
+            if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
+                self._checklist_t = time.time()
+                self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
+                                         for ok, t, d, _, _ in self.home.checklist()]
         except Exception:
             pass
         try:
@@ -985,6 +1066,29 @@ class App(tk.Tk):
                     changed = True
         if changed:
             core.save_db(self.db)
+
+    def _self_inventory(self):
+        """This PC's own details for the inventory (Windows; PowerShell in the background, once a day)."""
+        if not core.IS_WIN or getattr(self, "_self_inv_running", False):
+            return
+        self._self_inv_running = True
+        self._self_inv_t = time.time()
+
+        def work():
+            try:
+                out = core.run(T.local_inventory_cmd(), 180)
+                hw = json.loads(out[out.find("{"):out.rfind("}") + 1]) if "{" in out else {}
+                mac = core.local_mac(self.lip) or ""
+                data = {"hostname": socket.gethostname(), "user": os.environ.get("USERNAME", ""),
+                        "os": hw.get("os_name", ""), "hw": hw, "adapters": [{"mac": mac}] if mac else [],
+                        "actions": ["details of the Network Doctor PC itself"]}
+                if hw:
+                    self.q.put(("call", lambda: self._apply_report(self.lip, data, quiet=True)))
+            except Exception:
+                pass
+            finally:
+                self._self_inv_running = False
+        threading.Thread(target=work, daemon=True).start()
 
     def _usage_devices(self):
         """Tells the usage history which MAC / name is behind each IP (after a scan or a tag change)."""
@@ -1116,21 +1220,25 @@ class App(tk.Tk):
             if not c or now - c[0] > 15:  # main app / risk summary refreshed every 15 s per device
                 rem, threats, risks = mon.traffic.remotes(ip)
                 rem.sort(key=lambda x: -(x[1][0] + x[1][1]))
-                app_c = Counter()
+                app_c, site_c = Counter(), Counter()
                 for n, ((remote, svc, proto, inbound), v) in enumerate(rem[:300]):
                     info = self.orgs.get(remote) if n < 5 else self.orgs.cache_peek(remote)
-                    app_c[M.classify(remote, svc, proto, info, inbound)[0]] += v[0] + v[1]
+                    app_c[M.classify(remote, svc, proto, info, inbound, ip)[0]] += v[0] + v[1]
+                    site_c[self._site_name(ip, remote, info, svc, inbound)] += v[0] + v[1]
                 main = app_c.most_common(1)[0][0] if app_c else ""
+                site_c.pop("", None)
+                main_site = site_c.most_common(1)[0][0] if site_c else ""
                 bad = [k for k, v in threats.items() if v[1] != "tor" and not v[2]]
                 risk = ("MALWARE: " + bad[0]) if bad else (sorted(risks)[0] if risks else "")
-                c = cache[ip] = (now, main, risk, bool(bad), bool(risks))
-            _, main, risk, bad, risky = c
+                c = cache[ip] = (now, main, risk, bool(bad), bool(risks), main_site)
+            _, main, risk, bad, risky, main_site = c
             u10, d10 = mon.traffic.window_total(ip, 600)
             d = names.get(ip)
             tag = ("critical",) if bad else ("warning",) if risky else ("hot",) if r["down_bps"] + r["up_bps"] > 1.25e6 else ()
             iid = "t" + ip
             keep.add(iid)
-            vals = (ip, M.fmt_rate(r["down_bps"]), M.fmt_rate(r["up_bps"]), M.fmt_bytes(u10 + d10), main, risk)
+            vals = (ip, M.fmt_rate(r["down_bps"]), M.fmt_rate(r["up_bps"]), M.fmt_bytes(u10 + d10), main, main_site,
+                    risk)
             text = d["name"] if d and d["name"] else "-"
             if tv.exists(iid):
                 tv.item(iid, text=text, values=vals, tags=tag)
@@ -1141,6 +1249,27 @@ class App(tk.Tk):
             if iid not in keep:
                 tv.delete(iid)
         self._app_cache = cache
+
+    def _site_name(self, lan, remote, info, port, inbound):
+        """The website a device talks to: its DNS name when known, else the server's reverse name / owner."""
+        if inbound:
+            return ""
+        name = ""
+        if self.usage:
+            try:
+                name, _ = self.usage.name_for(lan, remote)
+            except Exception:
+                name = ""
+        site = US.site_of(name) if name else ""
+        if not site:
+            ptr = (info or {}).get("ptr", "")
+            site = US.site_of(ptr) if ptr else ""
+        if not site and port in M.P2P_PORTS:
+            site = "peer-to-peer (torrent)"
+        if not site:
+            org = (info or {}).get("org", "")
+            site = f"{remote} ({org[:24]})" if org else ""
+        return site
 
     def _talker_open(self, _):
         sel = self.tt.selection()
@@ -1189,7 +1318,8 @@ class App(tk.Tk):
         self.btn_scan.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
-                "router_snmp": self._settings().get("router_snmp") or None}
+                "router_snmp": self._settings().get("router_snmp") or None,
+                "router_fetch": self._router_fetch if RO.from_settings(self._settings(), self.gw) else None}
         threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()
 
     def stop_scan(self):
@@ -1544,6 +1674,8 @@ class App(tk.Tk):
                             "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
                             "Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'}; "
                             "$n=@($r).Count; if($n){$r | Remove-NetFirewallRule}; $n"], 30).strip()
+        self._settings()["fw_ok"] = time.time()
+        self._save_settings()
         if not quiet:
             extra = (f"\n\nAlso removed {removed} Windows rule(s) that were BLOCKING Network Doctor (created when "
                      "Windows asked to allow the app and Cancel was clicked)." if removed.isdigit() and int(removed) else "")
@@ -1629,6 +1761,8 @@ class App(tk.Tk):
             else:
                 exe = sys.executable.replace("python.exe", "pythonw.exe") if sys.executable.endswith("python.exe") else sys.executable
                 params = f'"{os.path.abspath(__file__)}"'
+            os.environ.clear()  # the new copy must not inherit this one-file exe's private variables
+            os.environ.update(U.clean_env())
             if ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, core.HERE, 1) > 32:
                 self._close()
         except Exception as e:
@@ -1651,6 +1785,7 @@ class App(tk.Tk):
         self.alert_mute_until = 0
         self.alert_win = None
         self.alert_lines = []
+        self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
         self.quick_summary = "not run yet"
 
     @staticmethod
@@ -1778,6 +1913,9 @@ class App(tk.Tk):
             if covered and k not in found:
                 del self.alerts_active[k]
                 self._log_event("info", f"Resolved: {a['title']}", source)
+                if self.alert_log.resolve(a["title"]):
+                    self.alert_log.save()
+                    self._refresh_alerts()
 
     def _event_alert(self, e):
         if e["src"] == "Auto check" or e["sev"] not in ("critical", "warning") or e["kind"] not in self.ALERT_KINDS:
@@ -1789,14 +1927,38 @@ class App(tk.Tk):
             return
         self.alert_cool[key] = now
         self._health_log("Live monitor", e["sev"], f"{e['src']}: {e['text']}")
+        self._record_alert(e["sev"], e["text"], "Live monitor")
         if self.var_alerts.get() and now >= self.alert_mute_until:
             self._popup(e["sev"], e["text"])
 
     def _raise_alert(self, sev, title, items, source):
         text = title + (" - " + "; ".join(items) if items else "")
         self._log_event(sev, text, source)
+        self._record_alert(sev, text, source)
         if self.var_alerts.get() and time.time() >= self.alert_mute_until:
             self._popup(sev, text)
+
+    def _record_alert(self, sev, text, source):
+        """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""
+        try:
+            self.alert_log.add(sev, text, source, self.lip, self.gw)
+            self.alert_log.save()
+            self._refresh_alerts()
+        except Exception:
+            pass
+
+    def _refresh_alerts(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.q.put(("call", self._refresh_alerts))
+            return
+        tab = getattr(self, "alerts_tab", None)
+        if tab:
+            tab.refresh()
+        try:
+            n = len(self.alert_log.recent(3000, only_open=True))
+            self.nb.tab(self.tabs["alerts"], text=f"  Alerts ({n})  " if n else "  Alerts  ")
+        except Exception:
+            pass
 
     def _log_event(self, sev, text, source):
         if self.mon:
@@ -1837,7 +1999,7 @@ class App(tk.Tk):
         if w is None or not w.winfo_exists():
             w = self.alert_win = tk.Toplevel(self)
             w.title("Network Doctor - alert")
-            w.geometry("680x320")
+            w.geometry("760x400")
             try:
                 w.attributes("-topmost", True)
             except Exception:
@@ -1857,9 +2019,22 @@ class App(tk.Tk):
                 self.alert_mute_until = time.time() + 3600
                 self.var_status.set("Alerts muted for 1 hour (they are still written to the health log).")
                 w.destroy()
-            ttk.Button(bar, text="Show root cause", command=lambda: show("rca")).pack(side="left")
-            ttk.Button(bar, text="Network map", command=lambda: show("map")).pack(side="left", padx=6)
-            ttk.Button(bar, text="Live monitor", command=lambda: show("monitor")).pack(side="left")
+            def trouble():
+                show("alerts")
+                self.alerts_tab.open_latest()
+            ttk.Button(bar, text="Troubleshoot", style="Big.TButton", command=trouble).pack(side="left")
+            ttk.Button(bar, text="All alerts / export", command=lambda: show("alerts")).pack(side="left", padx=6)
+            ttk.Button(bar, text="Root cause", command=lambda: show("rca")).pack(side="left")
+            if "torrent" in text.lower():
+                def torrent():
+                    w.destroy()
+                    self.show_tab("tools")
+                    self.tools.show("guard")
+                    for k, v in self.tools.g.items():
+                        v.set(k == "torrent")
+                    self.tools._guard_make()
+                ttk.Button(bar, text="Block torrents...", style="Big.TButton", command=torrent).pack(side="left",
+                                                                                                    padx=6)
             ttk.Button(bar, text="Mute 1 hour", command=mute).pack(side="right")
             ttk.Button(bar, text="Close", command=w.destroy).pack(side="right", padx=6)
             self.alert_txt = text_box(w)
@@ -1868,9 +2043,12 @@ class App(tk.Tk):
         t.delete("1.0", "end")
         t.insert("end", "New network problems\n", "h1")
         for ts, sv, tx in reversed(self.alert_lines):
+            r = AL.explain(tx, sv, self.lip, self.gw)
             t.insert("end", f"{ts}  ", "mute")
-            t.insert("end", ("PROBLEM  " if sv == "critical" else "WARNING  "), "crit" if sv == "critical" else "warn")
+            t.insert("end", r["prio_text"].upper() + "  ", "crit" if r["prio"] <= 2 else "warn")
             t.insert("end", tx + "\n")
+            fx = r["fix"].replace("(the button below)", "(Troubleshoot)").replace("(button below)", "(Troubleshoot)")
+            t.insert("end", "      Fix: " + fx + "\n", "mute")
         t.configure(state="disabled")
         try:
             w.deiconify()
@@ -2064,6 +2242,7 @@ class App(tk.Tk):
         txt = "New device(s) on the network: " + "; ".join(i.split("  (")[0] for i in items[:4]) + (
             f" and {len(items) - 4} more" if len(items) > 4 else "")
         self._health_log("Full scan", "info", txt)
+        self._record_alert("warning", txt, "Full scan")
         if self.mon:
             self.mon.event("info", "Auto check", txt, "auto")
         if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
@@ -2110,7 +2289,7 @@ class App(tk.Tk):
             self.share.pairing_enabled = on
         self._share_label()
 
-    def _apply_report(self, client, data):
+    def _apply_report(self, client, data, quiet=False):
         """A PC fix script reported: tag every adapter MAC of that PC with its computer name."""
         host = str(data.get("hostname") or "")[:40]
         user = str(data.get("user") or "")[:60]
@@ -2143,7 +2322,8 @@ class App(tk.Tk):
                 "hw": T.clean_hw(data.get("hw"))}
         core.save_db(self.db)
         acts = "; ".join(str(x) for x in (data.get("actions") or [])[:4])
-        self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
+        if not quiet:
+            self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
         rx = T.REPORT_TITLES
         self.issues = [i for i in self.issues if not rx.search(i["title"])] + T.report_issues(self.db)
         self.fill_problems()
@@ -2217,9 +2397,27 @@ class App(tk.Tk):
                          "active_alerts": [dict(v) for v in list(self.alerts_active.values())]},
                 "watch": [{"name": v.get("name"), "ip": v.get("ip"), "down": bool(v.get("down_since")),
                            "rtt": v.get("rtt"), "downs": v.get("downs", 0)} for v in list(self.watch_state.values())]}
+        snap["checklist"] = list(getattr(self, "_checklist_cache", []))
+        snap["alerts"] = [{"t": x["t"], "last": x["last"], "prio": x["prio"], "prio_text": AL.PRIO[x["prio"]],
+                           "text": x["text"], "fix": x["fix"], "status": x.get("status", ""), "count": x.get("count", 1),
+                           "steps": AL.explain(x["text"], x["sev"])["steps"]}
+                          for x in self.alert_log.recent(60)]
+        snap["usage"] = self._usage_snapshot()
+        try:
+            leases = [{"mac-address": m, "address": v.get("ip", ""), "host-name": v.get("host", "")}
+                      for m, v in ((self.raw or {}).get("leases") or {}).items()]
+            keep = ("name", "ip", "mac", "vendor", "category", "host", "dept", "location", "status", "first_seen",
+                    "os", "model", "serial", "cpu", "ram_gb", "disk_gb", "disk_free_gb", "user", "online",
+                    "maker", "ram_detail", "disks", "gpu", "monitors", "keyboards", "mice", "printers", "antivirus",
+                    "firewall", "driver_problems", "last_update", "bios", "software_count", "flag_text")
+            snap["inventory"] = [{k: r.get(k, "") for k in keep}
+                                 for r in T.inventory_rows(list(self.devices), self.db, leases)][:600]
+        except Exception:
+            snap["inventory"] = []
         if mon:
             names = {d["ip"]: d.get("name", "") for d in devs}
             talk = sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:15]
+            cache = dict(getattr(self, "_app_cache", {}))  # main app / website per device (Live monitor)
             snap["monitor"] = {
                 "status": mon.feed_status(), "running": mon.running,
                 "samples": [[round(t), b, m] for t, b, m in mon.samples_copy(now - 600)][::2],
@@ -2228,8 +2426,28 @@ class App(tk.Tk):
                 "links_down": {k: [t for t, st in v if st == "down" and t > now - 3600]
                                for k, v in mon.links_copy().items()},
                 "talkers": [{"ip": ip, "name": names.get(ip, ""), "down_bps": r["down_bps"], "up_bps": r["up_bps"],
-                             "last10": sum(mon.traffic.window_total(ip, 600))} for ip, r in talk]}
+                             "last10": sum(mon.traffic.window_total(ip, 600)),
+                             "app": (cache.get(ip) or ("", ""))[1], "site": (cache.get(ip) or ("",) * 6)[5],
+                             "risk": (cache.get(ip) or ("",) * 3)[2]} for ip, r in talk]}
         return snap
+
+    def _usage_snapshot(self):
+        """Usage for the phone app (today and 7 days, advisor), refreshed at most once a minute."""
+        c = getattr(self, "_usage_snap_cache", None)
+        if c and time.time() - c[0] < 60:
+            return c[1]
+        out = None
+        if self.usage:
+            try:
+                def cut(sm):
+                    return {"start": sm["start"], "end": sm["end"], "cats": sm["cats"], "apps": sm["apps"][:25],
+                            "sites": sm["sites"][:25], "devices": sm["devices"][:60]}
+                out = {"today": cut(self.usage.summary(1)), "week": cut(self.usage.summary(7)),
+                       "insights": self.usage.insights(), "labels": US.CAT_LABEL}
+            except Exception:
+                out = None
+        self._usage_snap_cache = (time.time(), out)
+        return out
 
     # ---------------------------------------------------------------- online updates (GitHub Releases)
     def _settings(self):
@@ -2250,7 +2468,13 @@ class App(tk.Tk):
             pass
 
     UPDATE_MODES = {"Install automatically (recommended)": "auto", "Ask me first": "ask", "Never check": "off"}
-    UPDATE_EVERY = 6 * 3600  # seconds between automatic checks
+    UPDATE_EVERY = 6 * 3600  # (old) seconds between automatic checks - now once a day at 15:00, see _daily_update
+
+    def _daily_update(self):
+        """Automatic update check every day at 15:00 (and at start-up when the PC was off at 15:00)."""
+        if self._update_mode(True) != "off" and U.daily_due(self._settings().get("last_check", 0)) \
+                and not getattr(self, "_checking", False) and time.time() - getattr(self, "_upd_fail_t", 0) > 1800:
+            self.check_updates(True)
 
     def _update_mode(self, code=False):
         st = self._settings()
@@ -2260,11 +2484,9 @@ class App(tk.Tk):
         return m if code else next(k for k, v in self.UPDATE_MODES.items() if v == m)
 
     def check_updates(self, auto=False, force=False):  # noqa: ARG002 (force kept for callers)
-        """auto=True: the scheduled check (start-up + every 6 hours). auto=False: the user pressed a button."""
-        if auto:
-            if self._update_mode(True) == "off":
-                self.after(self.UPDATE_EVERY * 1000, lambda: self.check_updates(True))
-                return
+        """auto=True: the scheduled check (daily at 15:00). auto=False: the user pressed a button."""
+        if auto and self._update_mode(True) == "off":
+            return
         if getattr(self, "_checking", False):
             return
         self._checking = True
@@ -2281,10 +2503,11 @@ class App(tk.Tk):
     def _on_update_info(self, info, err, auto):
         self._checking = False
         st = self._settings()
-        st["last_check"] = time.time()
-        self._save_settings()
-        if auto and not getattr(self, "_upd_next", None):
-            self._upd_next = self.after(self.UPDATE_EVERY * 1000, self._scheduled_check)
+        if err and auto:
+            self._upd_fail_t = time.time()  # try again in 30 minutes (no internet at 15:00)
+        else:
+            st["last_check"] = time.time()
+            self._save_settings()
         if err:
             self.var_upd.set(f"Update check failed: {err}")
             if not auto:

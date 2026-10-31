@@ -1,3 +1,81 @@
+## Network Doctor 3.14.0
+
+**Alerts with priority, fixes and one-click Troubleshoot; Inventory tab with full PC details, torrent blocking, real website names, commands for other brands, and updates every day at 15:00.**
+
+- **New tab: Alerts** (right after Home) - no more screenshots of the alert window.
+  - Every warning and problem is kept with its time, **priority** (P1 fix now, P2 fix today, P3 this week, P4 information), the device and the **fix**. The same alert within 15 minutes is counted instead of repeated.
+  - **Troubleshoot** (also on the alert pop-up): explains the alert, fixes it with one click where commands can (on the router after asking, or on this PC), and gives numbered steps with tick boxes for what needs hands on a cable, a switch or a device. Re-check and Mark fixed buttons.
+  - Examples: "conflict by ARP response" reserves that IP for the device on the router; a torrent alert blocks torrents; a DVR reachable from the internet closes its port forward and UPnP; a loop turns on loop protection; a rogue DHCP server is blocked.
+  - Alerts close by themselves when a later check finds the problem gone.
+  - **Export** to Excel (CSV) or a report (HTML) with the fixes and steps; Copy puts the selected alerts and fixes on the clipboard.
+  - The alert pop-up now shows the priority and the fix under each line.
+  - The phone app shows the open alerts with priority, fix and steps.
+- **New tab: Inventory** (right after Devices).
+  - Every device and PC: IP, MAC, maker, host name, user, department, status.
+  - For each PC: RAM (and the RAM sticks), SSD / HDD, CPU, graphics, monitors, keyboard, mouse, printers, antivirus (on / off, up to date), Windows Firewall, driver problems, last Windows update, BIOS and the installed programs.
+  - **Needs attention** column and filters: driver problems, 4 GB RAM or less, HDD without SSD, disk almost full, antivirus off or out of date, no Windows update for 60+ days.
+  - Click a PC to see all its details. Buttons: **Driver download page** (Dell / Lenovo / HP ... using the serial no.), Copy serial no., Copy details, Driver commands.
+  - The Network Doctor PC adds its own details by itself (once a day). Other PCs: **Get PC details (script) > Inventory only (changes nothing)**, run it once on each PC.
+- **PC names for Windows PCs** that hide them (for example a PC asking for a user name and password when you open its shared folders). The scan reads the computer name, domain and Windows version from the file-sharing service, without logging in.
+- **Torrents.**
+  - When a torrent download is found, the alert has a **Block torrents...** button.
+  - Network guard has a new option: block torrent traffic and torrent websites on the MikroTik (rules placed above FastTrack so they really work; Undo removes everything).
+  - The website firewall has a "Torrent sites" category.
+- **Main website column** in the Live monitor (and on the phone): youtube.com, web.whatsapp.com, sheets.google.com ... instead of "Google services" or "UDP 20115", so you can judge work or not.
+- **Commands for other brands** (Commands tab, choose the brand / type at the top, or search):
+  - Switches and routers: Cisco IOS, TP-Link JetStream / Omada, D-Link, HP / Aruba, Ubiquiti UniFi / EdgeRouter, Netgear, Huawei.
+  - Firewalls: FortiGate, Sophos, pfSense / OPNsense, Seqrite UTM.
+  - Find a MAC's port, port speed and errors, loop protection, VLANs, DHCP snooping (stops rogue DHCP), and syslog / SNMP / NetFlow to Network Doctor.
+  - Antivirus: Windows Defender (status, update, scan, threats), Quick Heal / Seqrite, K7, ESET and others.
+  - Windows Firewall: on / off, allow a port, allow ping, file sharing, block rules, reset.
+  - Drivers and updates: devices with driver problems, winget update of all programs, Dell Command Update, Lenovo System Update, HP Support Assistant, Windows Update repair, system file repair.
+  - Printers: list, clear a stuck queue, add a printer by IP.
+- **Automatic updates every day at 15:00.** The PC app checks at 15:00 (or at start-up if the PC was off at 15:00) and installs by itself (Setup > New versions). If there is no internet at 15:00 it tries again every 30 minutes.
+- **Phone app 1.4.0.**
+  - Checks for an update every day at 15:00 and shows an Update button. Android asks you to tap Install.
+  - Inventory shows the new PC details and a "Needs attention" filter.
+  - Top bandwidth users show the main website and app.
+  - Open alerts with priority, fix and steps on the Summary page.
+- **Faster and light on the network.**
+  - Usage history has extra indexes, so the Usage tab stays fast with months of data.
+  - Monitoring only reads what the router already sends (NetFlow / syslog / its DNS cache every 3 minutes); nothing is added to the internet line.
+  - The speed test and the "busy line" test in Slow website? run only when you press them.
+
+## Network Doctor 3.13.0
+
+**New Home screen, "Slow website?" check, phone names, and a phone app with usage and inventory.**
+
+- **Home screen (first tab).**
+  - Your network at a glance: devices online, problems, internet used today, router connection.
+  - Big buttons for the everyday jobs.
+  - A setup checklist with a Fix button on every line that is not green yet.
+- **New tab: Slow website?** Someone says Google Sheets (or Gmail, a portal...) is slow:
+  1. Choose their device and the website, then press **Find the cause**.
+  2. In about a minute Network Doctor tests their Wi-Fi / cable, the office network, the router (and its CPU), the internet line, DNS, packet size (MTU), the website itself against a reference site, whether the line is full and who fills it, what their PC is downloading, and their PC's RAM / disk.
+  3. Optionally it also measures the delay while the line is busy.
+  4. You get the causes, most likely first, each with the measurements, the fix steps and - where it can - a **Fix this on the router** button (fast public DNS, MSS clamp, limit the biggest user, fair queue). A command to compare the same timings on the user's own PC is included.
+- **Phone and device names.** With the router login, the scan reads the router's DHCP list and ARP table, so phones show their names (Galaxy-S23, Redmi-Note-12, iPhone...) and devices that sleep are still listed. Health checks show how many devices got a name.
+- **Updates & drivers in the app list.** Windows Update, Office and Defender updates, Dell / Lenovo / HP / Intel / NVIDIA / AMD / Realtek / Asus / Acer drivers, printer drivers, Chrome / Edge / Firefox updates and more - 146 apps, 871 website addresses in all. The advisor warns when updates run in office hours.
+- **Phone app 1.3.0.**
+  - Office PC now has Summary, Problems, Devices, **Usage** (apps, websites, productivity per person, advice), **Inventory** and Monitor.
+  - **Check for updates** in About, plus a once-a-day automatic check with an Update button.
+- Privacy policy updated (usage history, router login, phone update check).
+
+## Network Doctor 3.12.0
+
+**Apps told apart: WhatsApp, Instagram, Facebook, YouTube, Google Drive, Gmail and 126 more.**
+
+- **New app catalogue: 133 apps, 776 website addresses.** Each address goes to its own app - WhatsApp (whatsapp.net), Instagram (cdninstagram.com), Facebook, Messenger, YouTube (googlevideo.com), Google Drive, Gmail, Google Meet, Teams, Outlook, OneDrive, Indian OTT, games, shopping, GST / income tax / GeM portals, banks, Tally, Zoho, AI tools and more. Before, everything on Meta's servers showed as "Facebook".
+- **Usage > App list**: every app with its group (Social media, Messaging, Video, Office...), its category and its website addresses. Search, change the category, export to Excel.
+- **Category per department.** Example: WhatsApp *Productive* for Sales, *Neutral* for everyone else. Choose the department in "for" before pressing Productive / Neutral / Unproductive.
+- **Honest when unsure.** Google and Meta use some addresses for several apps (login and page servers). When the router cannot say which app a device used there, the traffic shows as "Google (shared address)" / "Meta (shared address)" instead of a guess. The big traffic (video, WhatsApp media, Instagram pictures) uses app-own addresses and is always named correctly. For exact per-user app names on every address, send all DNS through this PC: Tools > Network guard > "All DNS through this PC" with the website firewall running.
+- The Live monitor's "Main app" column uses the same catalogue.
+
+### Also in this version (first prepared as 3.11.1)
+
+- **Fixed: "Security validation failure: invalid originating onefile parent process (PID not found)" after an update.** The update itself was installed, but the restarted app stopped with this message; it had to be started by hand. The new copy is now started with a clean environment. The same applies to "Restart as Administrator".
+- **Fixed: "Apply router settings now" failed on RouterOS 6 with "expected end of command (line 10 column 118)".** A fallback for very old RouterOS used a word that 6.43+ and 7 do not know, and the router refuses a whole script when one word is unknown. If the router ever refuses a script again, the message shows the exact line.
+
 ## Network Doctor 3.11.0
 
 **Usage and productivity, inventory, network guard, and direct router control.**

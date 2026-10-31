@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.11.0"
+VERSION = "3.14.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -810,6 +810,11 @@ def _has(t, words):
     return any(w in t for w in words)
 
 
+PHONE_NAMES = (r"(android|iphone|ipad|galaxy|redmi|oppo|vivo|realme|oneplus|poco|pixel|moto[ -g]|motorola|nokia|"
+               r"infinix|tecno|itel|iqoo|nord|xiaomi|samsung|\bsm-[a-z]\d|huawei|honor|narzo|lava|nothing-phone|"
+               r"\bmi-|\bmi \d|apple-watch|watch)")
+
+
 def categorize(d, gw):
     p = set(d["ports"])
     v = (d["vendor"] or "").lower()
@@ -820,7 +825,7 @@ def categorize(d, gw):
                       " ".join(up.get("st", []))]).lower()
     web = " ".join([d["http"].get("title", ""), d["http"].get("server", ""), d["http"].get("realm", ""),
                     d["http"].get("blob", "")[:3000]]).lower()
-    nb = bool(d["names"].get("netbios"))
+    nb = bool(d["names"].get("netbios") or d["names"].get("smb"))
     if d["ip"] == gw:
         return CAT_ROUTER, "default gateway of this network"
     if d.get("self"):
@@ -853,7 +858,7 @@ def categorize(d, gw):
         return CAT_NET, "UPnP router (" + (up.get("modelName") or up.get("manufacturer") or "gateway") + ")"
     if p & {8291, 8728, 7547} or (_has(v, V_NET) and not d["random"]):
         return CAT_NET, "router management port" if p & {8291, 8728, 7547} else "network-equipment brand"
-    if 62078 in p or _has(v, V_PHONE) or re.search(r"(android|iphone|ipad|galaxy|redmi|oppo|vivo|realme|oneplus|poco)", name):
+    if 62078 in p or _has(v, V_PHONE) or re.search(PHONE_NAMES, name):
         return CAT_PHONE, "Apple device port" if 62078 in p else "phone brand / name"
     if 1883 in p or _has(v, V_IOT) or _has(uptxt, ["mediarenderer", "tv", "dial"]):
         return CAT_IOT, "smart TV / IoT (" + (up.get("modelName") or up.get("manufacturer") or d["vendor"] or "UPnP") + ")"
@@ -1040,8 +1045,20 @@ def scan(subnet, opts, progress, stop):
     # The router knows every device that talked in the last minutes, on every network it routes - including
     # phones that sleep and cameras on another range. Read its ARP table over SNMP when it allows it.
     if gw:
-        progress(35, "Asking the router which devices it knows (SNMP)...")
-        ra, who = router_arp_table(gw, opts.get("router_snmp"))
+        progress(35, "Asking the router which devices it knows...")
+        ra, who = {}, ""
+        fetch = opts.get("router_fetch")  # router login (API): ARP table + DHCP leases with device names
+        if fetch:
+            try:
+                got = fetch() or {}
+            except Exception as e:
+                got = {"error": str(e)}
+            if got.get("error"):
+                tests["router_api_err"] = str(got["error"])[:200]
+            ra, who = got.get("arp") or {}, "router login (API)" if got.get("arp") else ""
+            raw["leases"] = got.get("leases") or {}
+        if not ra:
+            ra, who = router_arp_table(gw, opts.get("router_snmp"))
         if ra:
             hostset = set(hosts)
             tests["router_arp"] = {"community": who, "entries": len(ra)}
@@ -1104,6 +1121,16 @@ def scan(subnet, opts, progress, stop):
         for ip, r in zip(alive, ex.map(netbios_query, alive)):
             if r:
                 raw["nbns"][ip] = r
+    chk()
+    # Windows PCs that ignore NetBIOS still tell their name in the first step of a file-sharing login (SMB)
+    smb_ips = [ip for ip in alive if 445 in raw["ports"].get(ip, []) and ip not in raw["nbns"] and ip != lip]
+    if smb_ips:
+        import nd_smbinfo
+        progress(72, f"Reading computer names from file sharing ({len(smb_ips)})...")
+        with ThreadPoolExecutor(32) as ex:
+            for ip, r in zip(smb_ips, ex.map(nd_smbinfo.smb_info, smb_ips)):
+                if r:
+                    raw.setdefault("smb", {})[ip] = r
     chk()
     progress(74, "UPnP discovery (routers, cameras, TVs)...")
     raw["upnp"] = ssdp_discover(lip)
@@ -1208,6 +1235,20 @@ def build_devices(raw, oui, db):
     for ip, n in raw["dns"].items():
         for d in by_ip.get(ip, []):
             d["names"]["dns"] = n
+    for ip, r in (raw.get("smb") or {}).items():
+        for d in by_ip.get(ip, []):
+            d["names"]["smb"] = r.get("name", "")
+            if r.get("domain") and not d.get("workgroup"):
+                d["workgroup"] = r["domain"]
+            if r.get("os"):
+                d["os"] = r["os"]
+                d["notes"].append(r["os"])
+    for mac, ls in (raw.get("leases") or {}).items():  # names devices give the router (phones, TVs, laptops)
+        d = devs.get(mac)
+        if d is None and ls.get("ip") in by_ip and len(by_ip[ls["ip"]]) == 1 and not by_ip[ls["ip"]][0]["mac"]:
+            d = by_ip[ls["ip"]][0]
+        if d is not None and ls.get("host"):
+            d["names"]["dhcp"] = ls["host"]
 
     out = []
     for d in devs.values():
@@ -1219,7 +1260,7 @@ def build_devices(raw, oui, db):
             d["names"]["label"] = db["labels"][mac]
         up = d["upnp"] or {}
         nm = d["names"]
-        d["name"] = (nm.get("label") or nm.get("netbios") or up.get("friendlyName") or
+        d["name"] = (nm.get("label") or nm.get("netbios") or nm.get("smb") or nm.get("dhcp") or up.get("friendlyName") or
                      nm.get("dns", "").split(".")[0] or "")
         if d["random"]:
             d["notes"].append("Randomized MAC")
@@ -1314,7 +1355,7 @@ def analyse(raw, devices, db):
     # ---- duplicate names
     groups = defaultdict(list)
     for d in online:
-        n = (d["names"].get("netbios") or "").strip().lower()
+        n = (d["names"].get("netbios") or d["names"].get("smb") or "").strip().lower()
         if n and d["mac"]:
             groups[n].append(d)
     dupn = 0
@@ -1454,12 +1495,18 @@ def analyse(raw, devices, db):
             f"'{raw['meta'].get('subnet', '')}, {other[0]}'), and scan again.", other[:10])
     ra = t.get("router_arp")
     if ra:
-        checks.append(("Router device list (SNMP)", "pass", f"{ra['entries']} entries read with community "
-                       f"'{ra['community']}'"))
+        via = ra["community"] if "API" in ra["community"] else f"SNMP community '{ra['community']}'"
+        checks.append(("Router device list", "pass", f"{ra['entries']} entries read through {via}"))
     elif not raw["meta"].get("quick"):
-        checks.append(("Router device list (SNMP)", "skip", "the router did not answer SNMP - sleeping phones and "
-                       "other networks may be missed. Setup > Copy router commands turns it on (read-only, only "
-                       "for this PC)"))
+        err = t.get("router_api_err")
+        checks.append(("Router device list", "skip", (f"router login failed ({err}) - " if err else "") +
+                       "the router's device list could not be read - sleeping phones, phone names and other networks "
+                       "may be missed. Save the router login in Setup (or Setup > Copy router commands turns on SNMP)"))
+    leases = raw.get("leases") or {}
+    if leases:
+        named = sum(1 for x in leases.values() if x.get("host"))
+        checks.append(("Device names from the router", "pass", f"{named} of {len(leases)} DHCP leases carry a "
+                       "device name (phones, TVs, laptops)"))
 
     # ---- info
     rnd = [d for d in online if d["random"]]
@@ -1500,7 +1547,8 @@ def _update_db(db, raw, devices):
         h["ip"] = d["ip"]
         h["category"] = d["category"]
         h["vendor"] = d["vendor"]
-        n = d["names"].get("netbios") or (d.get("upnp") or {}).get("friendlyName") or ""
+        n = (d["names"].get("netbios") or d["names"].get("smb") or (d.get("upnp") or {}).get("friendlyName") or
+             d["names"].get("dhcp") or "")
         if n and (not h["names"] or h["names"][-1] != n):
             h["names"] = (h["names"] + [n])[-5:]
         if d["ip"] not in h["ips"]:

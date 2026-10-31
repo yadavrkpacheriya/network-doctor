@@ -43,10 +43,6 @@ TOOLS = [
      "(or this PC's website firewall), and blocks phones / laptops that hide behind a randomized MAC - so each "
      "device keeps one identity and one history. Applied on a MikroTik directly (router login in Setup) or as "
      "commands to paste."),
-    ("inventory", "Inventory (all devices and PCs)",
-     "Every device ever seen with IP, MAC, maker, host name, type, department, location, first / last seen - plus "
-     "Windows details (model, serial, CPU, RAM, disk, Windows version, user) from the PC script. Edit tags in the "
-     "list, export to Excel."),
     ("ports", "Port scanner",
      "Which services a device offers (open TCP ports), with what each one is and the risky ones marked."),
     ("dns", "DNS lookup / DNS server test",
@@ -105,6 +101,9 @@ class ToolsTab:
         if key is None:
             sel = self.lb.curselection()
             key = TOOLS[sel[0]][0] if sel else "watch"
+        elif key == "inventory":  # its own tab now
+            self.app.show_tab("inventory")
+            return
         else:
             idx = [t[0] for t in TOOLS].index(key)
             self.lb.selection_clear(0, "end")
@@ -1159,7 +1158,8 @@ class ToolsTab:
     def _build_guard(self, f):
         row = ttk.Frame(f)
         row.pack(fill="x")
-        self.g = {k: tk.BooleanVar(value=v) for k, v in (("dhcp", True), ("dns", True), ("random", False))}
+        self.g = {k: tk.BooleanVar(value=v) for k, v in (("dhcp", True), ("dns", True), ("random", False),
+                                                         ("torrent", False))}
         ttk.Checkbutton(row, text="Only the router gives out IPs (drop other DHCP servers)",
                         variable=self.g["dhcp"]).pack(side="left")
         ttk.Checkbutton(row, text="All DNS through", variable=self.g["dns"]).pack(side="left", padx=(12, 2))
@@ -1167,6 +1167,8 @@ class ToolsTab:
         ttk.Radiobutton(row, text="the router", value="router", variable=self.var_g_dns).pack(side="left")
         ttk.Radiobutton(row, text="this PC (website firewall)", value="pc", variable=self.var_g_dns).pack(side="left")
         ttk.Checkbutton(row, text="Block randomized MACs", variable=self.g["random"]).pack(side="left", padx=12)
+        ttk.Checkbutton(row, text="Block torrents (BitTorrent apps + torrent sites)",
+                        variable=self.g["torrent"]).pack(side="left")
         row2 = ttk.Frame(f)
         row2.pack(fill="x", pady=(6, 2))
         ttk.Label(row2, text="Devices acting as a second router (from the last scan) - ticked ones are blocked from "
@@ -1263,34 +1265,118 @@ class ToolsTab:
 
     # ------------------------------------------------------------------ inventory
     def _build_inventory(self, f):
+        """The Inventory tab: every device and PC, hardware, peripherals, antivirus, drivers."""
+        ttk.Label(f, text="Inventory - every device and PC on the network", font=("Segoe UI", 13, "bold")).pack(
+            anchor="w")
+        ttk.Label(f, text="Devices come from the scan, the history and the router. PCs add RAM, SSD / HDD, CPU, "
+                          "graphics, monitors, keyboard, mouse, printers, antivirus, firewall, driver problems, "
+                          "Windows update and installed programs when the PC details script runs on them once "
+                          "(this PC adds its own details by itself). Nothing is changed on the PCs.",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(0, 6))
         row = ttk.Frame(f)
         row.pack(fill="x")
         ttk.Label(row, text="Search:").pack(side="left")
         self.var_inv_q = tk.StringVar()
-        e = ttk.Entry(row, textvariable=self.var_inv_q, width=26)
+        e = ttk.Entry(row, textvariable=self.var_inv_q, width=24)
         e.pack(side="left", padx=4)
         e.bind("<KeyRelease>", lambda ev: self._inv_fill())
         self.var_inv_show = tk.StringVar(value="All devices")
-        cb = ttk.Combobox(row, textvariable=self.var_inv_show, state="readonly", width=22,
+        cb = ttk.Combobox(row, textvariable=self.var_inv_show, state="readonly", width=28,
                           values=["All devices", "Online now", "PCs with details", "PCs without details",
-                                  "Not tagged", "Randomized MAC"])
+                                  "Not tagged", "Randomized MAC"] + list(T.INV_FILTERS))
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda ev: self._inv_fill())
         ttk.Button(row, text="Refresh (+ router host names)", command=self._inv_refresh).pack(side="left", padx=4)
         ttk.Button(row, text="Tag selected...", command=self._inv_tag).pack(side="left", padx=4)
-        ttk.Button(row, text="PC details script...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
+        ttk.Button(row, text="Get PC details (script)...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
             side="left", padx=4)
         ttk.Button(row, text="Export to Excel (CSV)", style="Big.TButton", command=self._inv_export).pack(side="right")
         self.var_inv_sum = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.var_inv_sum, foreground="#5b21b6").pack(anchor="w", pady=(4, 2))
-        fr = ttk.Frame(f)
-        fr.pack(fill="both", expand=True)
+        pw = ttk.PanedWindow(f, orient="vertical")
+        pw.pack(fill="both", expand=True)
+        fr = ttk.Frame(pw)
+        det = ttk.Frame(pw)
+        pw.add(fr, weight=3)
+        pw.add(det, weight=2)
         cols = T.INV_COLS[1:]
         self.inv_tv = nd_tabs.UI["make_tree"](fr, tuple(c[0] for c in cols), tuple(c[1] for c in cols),
                                              tuple(c[2] for c in cols), first=(T.INV_COLS[0][1], T.INV_COLS[0][2]))
+        self.inv_tv.tag_configure("warn", foreground="#b42318")
         self.inv_tv.bind("<Double-1>", lambda e: self._inv_tag())
-        self.inv_rows, self.inv_leases, self.inv_items = [], None, {}
+        self.inv_tv.bind("<<TreeviewSelect>>", lambda e: self._inv_detail())
+        bar = ttk.Frame(det)
+        bar.pack(fill="x", pady=(4, 2))
+        self.var_inv_dev = tk.StringVar(value="Select a device to see all its details")
+        ttk.Label(bar, textvariable=self.var_inv_dev, font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Button(bar, text="Copy details", command=self._inv_copy).pack(side="right", padx=3)
+        ttk.Button(bar, text="Copy serial no.", command=lambda: self._inv_copy("serial")).pack(side="right", padx=3)
+        ttk.Button(bar, text="Driver download page", command=self._inv_drivers).pack(side="right", padx=3)
+        ttk.Button(bar, text="Driver commands", command=lambda: (self.app.show_tab("commands"),
+                                                                  self.app.commands.select_group("Drivers & updates")
+                                                                  if hasattr(self.app.commands, "select_group")
+                                                                  else None)).pack(side="right", padx=3)
+        self.inv_text = tk.Text(det, height=12, wrap="word", font=("Consolas", 10), relief="flat",
+                                highlightthickness=1, highlightbackground="#d0d5dd")
+        self.inv_text.pack(fill="both", expand=True)
+        self.inv_text.configure(state="disabled")
+        self.inv_rows, self.inv_leases, self.inv_items, self.inv_sel = [], None, {}, None
         self._inv_refresh(router=False)
+
+    def _inv_detail(self):
+        sel = [self.inv_items[i] for i in self.inv_tv.selection() if i in self.inv_items]
+        if not sel:
+            return
+        r = self.inv_sel = sel[0]
+        self.var_inv_dev.set(f"{r.get('name') or '-'}   {r.get('ip', '')}   {r.get('mac', '')}")
+        lines = []
+        if r.get("flags"):
+            lines.append("NEEDS ATTENTION: " + ", ".join(r["flags"]))
+            lines.append("")
+        for k, h in (("vendor", "Maker"), ("category", "Type"), ("host", "Host name"), ("status", "Status"),
+                     ("dept", "Department"), ("location", "Location"), ("user", "User"), ("os", "Windows")):
+            if r.get(k):
+                lines.append(f"{h:<22}{r[k]}")
+        for k, h in T.HW_FIELDS:
+            v = r.get(k)
+            if not v or k == "software" or (k == "maker" and v == r.get("vendor")):
+                continue
+            v = str(v).replace(" | ", "\n" + " " * 22).replace("|", "\n" + " " * 22)
+            lines.append(f"{h:<22}{v}")
+        if r.get("report_time"):
+            lines.append(f"{'Details from':<22}{r['report_time']}")
+        if r.get("software"):
+            lines.append("")
+            lines.append("Installed programs:")
+            lines.extend("  " + x.strip() for x in str(r["software"]).split("|") if x.strip())
+        if not r.get("model") and "omputer" in str(r.get("category", "")):
+            lines.append("")
+            lines.append("No hardware details yet: run 'Get PC details (script)...' once on this PC "
+                         "(choose 'Inventory only' - it changes nothing).")
+        t = self.inv_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        t.insert("1.0", "\n".join(lines))
+        t.configure(state="disabled")
+
+    def _inv_copy(self, what=None):
+        r = self.inv_sel
+        if not r:
+            return
+        txt = str(r.get("serial", "")) if what == "serial" else self.inv_text.get("1.0", "end").strip()
+        self.app.clipboard_clear()
+        self.app.clipboard_append(txt)
+        self.app.var_status.set("Copied" + (f" serial {txt}" if what == "serial" else " the device details"))
+
+    def _inv_drivers(self):
+        r = self.inv_sel
+        if not r:
+            messagebox.showinfo("Drivers", "Select a PC first.")
+            return
+        url = T.driver_page(r.get("maker") or r.get("vendor", ""), r.get("serial", ""), r.get("model", ""))
+        if r.get("serial"):
+            self._inv_copy("serial")
+        webbrowser.open(url)
 
     def _inv_refresh(self, router=True):
         c = self.app.router_client(ask=False) if router else None
@@ -1330,15 +1416,17 @@ class ToolsTab:
                 continue
             if (show == "Online now" and not r["online"] or show == "PCs with details" and not r["model"] or
                     show == "PCs without details" and (r["model"] or "omputer" not in r["category"]) or
-                    show == "Not tagged" and (r["dept"] or r["location"]) or show == "Randomized MAC" and not r["random"]):
+                    show == "Not tagged" and (r["dept"] or r["location"]) or show == "Randomized MAC" and not r["random"]
+                    or show in T.INV_FILTERS and not T.INV_FILTERS[show](r)):
                 continue
             iid = tv.insert("", "end", text=r["name"] or "-", values=tuple(r.get(c[0], "") for c in T.INV_COLS[1:]),
-                            tags=() if r["online"] else ("off",))
+                            tags=("warn",) if r.get("flags") else () if r["online"] else ("off",))
             self.inv_items[iid] = r
             n += 1
         pcs = sum(1 for r in self.inv_rows if r["model"])
+        att = sum(1 for r in self.inv_rows if r.get("flags"))
         self.var_inv_sum.set(f"{n} shown of {len(self.inv_rows)} devices  |  online {sum(r['online'] for r in self.inv_rows)}"
-                             f"  |  PCs with hardware details {pcs}  |  "
+                             f"  |  PCs with hardware details {pcs}  |  needing attention {att}  |  "
                              + ("router host names included" if self.inv_leases else
                                 "tip: a router login in Setup adds the host name of every device"))
 

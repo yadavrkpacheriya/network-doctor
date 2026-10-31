@@ -61,7 +61,7 @@ jobs:
       - name: Check that the code loads
         if: steps.ver.outputs.exists == 'false'
         run: |
-          python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
+          python -c "import nd_core, nd_monitor, nd_update, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, nd_home, nd_slow, nd_smbinfo, nd_alerts, NetworkDoctor; print('modules OK', NetworkDoctor.VERSION)"
           python -m unittest discover -s tests -v
 
       - name: Build NetworkDoctor.exe
@@ -71,7 +71,7 @@ jobs:
           $extra = @()
           if (Test-Path nd_share.py) { $extra += @("--hidden-import", "nd_share") }
           python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor `
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage @extra `
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts @extra `
             --collect-all scapy NetworkDoctor.py
           if (-not (Test-Path dist\NetworkDoctor.exe)) { Write-Error "exe was not produced"; exit 1 }
 
@@ -117,14 +117,14 @@ jobs:
 
       - name: Check that the code loads
         run: |
-          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage; print('modules OK', nd_core.IS_MAC)"
+          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, nd_home, nd_slow, nd_smbinfo, nd_alerts; print('modules OK', nd_core.IS_MAC)"
           python -m unittest discover -s tests -v
 
       - name: Build Network Doctor.app
         run: |
           python -m PyInstaller --noconfirm --windowed --name NetworkDoctor \
             --osx-bundle-identifier io.github.yadavrkpacheriya.networkdoctor \
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts \
             NetworkDoctor.py
           APP=dist/NetworkDoctor.app
           PL=$APP/Contents/Info.plist
@@ -167,13 +167,13 @@ jobs:
 
       - name: Check that the code loads
         run: |
-          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage; print('modules OK')"
+          python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, nd_home, nd_slow, nd_smbinfo, nd_alerts; print('modules OK')"
           python -m unittest discover -s tests -v
 
       - name: Build NetworkDoctor-Linux
         run: |
           python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
-            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts \
             NetworkDoctor.py
           mv dist/NetworkDoctor dist/NetworkDoctor-Linux
           chmod +x dist/NetworkDoctor-Linux

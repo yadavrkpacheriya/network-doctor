@@ -7,6 +7,7 @@ PC fix script. The main window sets UI["make_tree"] / UI["text_box"] before crea
 import os
 import re
 import subprocess
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
@@ -705,7 +706,7 @@ class FixScriptDialog(tk.Toplevel):
         ttk.Checkbutton(f, text=f"Lock the router's MAC {self.gw_mac or '(scan first)'} - stops NetCut / ARP spoofing "
                                 "(use the Undo script if the router is ever replaced)",
                         variable=self.v["lock_gw"]).pack(anchor="w")
-        ttk.Checkbutton(f, text=f"Report the PC's name, user, MAC and hardware (model, serial, CPU, RAM, disk, Windows) "
+        ttk.Checkbutton(f, text=f"Report the PC's name, user, MAC and hardware (model, serial, CPU, RAM, SSD, printers, mouse, keyboard, antivirus, drivers) "
                                 f"to this Network Doctor ({app.lip}) - fills the Inventory and tags it on the map", variable=self.v["report"]).pack(anchor="w")
         ttk.Label(f, text="\nFor an unattended login script choose 'switch to automatic' or 'leave it' (nobody is "
                           "there to answer). Run from \\\\server\\share or a local copy - not a mapped drive letter, "
@@ -715,6 +716,15 @@ class FixScriptDialog(tk.Toplevel):
         bar.pack(fill="x", pady=(10, 0))
         ttk.Button(bar, text="Create scripts", style="Big.TButton", command=self.create).pack(side="right")
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right", padx=6)
+        ttk.Button(bar, text="Inventory only (changes nothing)", command=self.inventory_only).pack(side="left")
+
+    def inventory_only(self):
+        """Only read the PC details (RAM, SSD, printers, antivirus...) and report them; no network changes."""
+        for k in ("random_off", "renew", "lock_gw"):
+            self.v[k].set(False)
+        self.v["report"].set(True)
+        self.var_dhcp.set("no")
+        self.create()
 
     def create(self):
         app = self.app
@@ -752,8 +762,16 @@ class CommandsTab:
         self.cb = ttk.Combobox(top, textvariable=self.var_dev, width=46, state="readonly")
         self.cb.pack(side="left", padx=4)
         self.cb.bind("<<ComboboxSelected>>", lambda e: self.pick_dev())
-        ttk.Label(top, text="  {ip} {mac} {name} {port} in a command are filled from this device",
-                  foreground="#667085").pack(side="left")
+        ttk.Label(top, text="Brand / type:").pack(side="left", padx=(10, 0))
+        self.var_grp = tk.StringVar(value="All")
+        self.cb_grp = ttk.Combobox(top, textvariable=self.var_grp, width=34, state="readonly")
+        self.cb_grp.pack(side="left", padx=4)
+        self.cb_grp.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Find:").pack(side="left", padx=(6, 0))
+        self.var_cq = tk.StringVar()
+        ent = ttk.Entry(top, textvariable=self.var_cq, width=16)
+        ent.pack(side="left", padx=4)
+        ent.bind("<KeyRelease>", lambda e: self.refresh())
         ttk.Button(top, text="Delete my command", command=self.delete).pack(side="right")
         ttk.Button(top, text="Add my own command...", command=self.add).pack(side="right", padx=6)
         ttk.Button(top, text="PC fix script...", command=lambda: FixScriptDialog(app)).pack(side="right")
@@ -794,13 +812,25 @@ class CommandsTab:
         tv.delete(*tv.get_children())
         self.items = {}
         groups = {}
-        for c in self.all_commands():
+        allc = self.all_commands()
+        names = list(dict.fromkeys(c[0] for c in allc))
+        self.cb_grp.configure(values=["All"] + names)
+        want, q = self.var_grp.get(), self.var_cq.get().strip().lower()
+        for c in allc:
             cat = c[0]
+            if want not in ("All", "") and cat != want:
+                continue
+            if q and q not in " ".join(c).lower():
+                continue
             if cat not in groups:
                 groups[cat] = tv.insert("", "end", text=cat, open=True, tags=("cat",))
-            iid = tv.insert(groups[cat], "end", text=c[2], values=(c[1], c[3]))
+            iid = tv.insert(groups[cat], "end", text=c[2], values=(c[1], c[3].replace("\n", "  ;  ")))
             self.items[iid] = c
         self.show()
+
+    def select_group(self, name):
+        self.var_grp.set(name)
+        self.refresh()
 
     def pick_dev(self):
         self.app.selected_device = self.devmap.get(self.var_dev.get())
@@ -809,7 +839,7 @@ class CommandsTab:
     def values(self):
         app = self.app
         gwd = next((d for d in app.devices if d.get("ip") == app.gw and d.get("mac")), None)
-        return T.command_values(app.selected_device, app.gw, gwd["mac"] if gwd else "")
+        return T.command_values(app.selected_device, app.gw, gwd["mac"] if gwd else "", app.lip)
 
     def current(self):
         sel = self.tv.selection()
@@ -823,9 +853,12 @@ class CommandsTab:
         self.var_cmd.set(text)
         where = {"This PC": "Runs on this PC (Run button) - or copy it to another PC.",
                  "Router": "Run on router (router login in Setup) - or paste it in WinBox > New Terminal.",
-                 "Each PC": "Run on the PC concerned."}.get(c[1], "")
+                 "Each PC": "Run on the PC concerned."}.get(
+            c[1], "Paste it in that device's console (SSH / Telnet / serial) or follow it on its web page. "
+                  "Check the model's manual: commands differ a little between firmware versions.")
         self.var_use.set(f"{c[2]}\n{c[4]}\n{where}" + (f"\nStill to fill: {', '.join(missing)} (asked when you run it)"
-                                                       if missing else ""))
+                                                       if missing else "")
+                         + (f"\n\nPaste these lines one after the other:\n{text}" if "\n" in text else ""))
         can = c[1] == "This PC" and ((c[0] == "Mac") == core.IS_MAC or c[0] == "My commands")
         self.btn_run.configure(state="normal" if can else "disabled")
         self.btn_router.configure(state="normal" if c[1] == "Router" else "disabled")
@@ -940,8 +973,13 @@ class UsageTab:
         for c in (US.WORK, US.NEUTRAL, US.PERSONAL):
             ttk.Button(cat, text=US.CAT_LABEL[c], command=lambda c=c: self.set_cat(c)).pack(side="left", padx=3)
         ttk.Button(cat, text="Built-in rule", command=lambda: self.set_cat(None)).pack(side="left", padx=3)
-        ttk.Label(cat, text="  (your choice is remembered and applied to the history too)", foreground="#667085").pack(
-            side="left")
+        ttk.Label(cat, text="  for").pack(side="left")
+        self.var_for = tk.StringVar(value="Everyone")
+        self.cb_for = ttk.Combobox(cat, textvariable=self.var_for, state="readonly", width=18)
+        self.cb_for.pack(side="left", padx=4)
+        ttk.Button(cat, text="App list (all apps and their websites)...", command=lambda: AppListDialog(self)).pack(
+            side="left", padx=8)
+        ttk.Label(cat, text="(remembered, and applied to the history too)", foreground="#667085").pack(side="left")
         pw = ttk.PanedWindow(parent, orient="vertical")
         pw.pack(fill="both", expand=True)
         up, down = ttk.PanedWindow(pw, orient="horizontal"), ttk.PanedWindow(pw, orient="horizontal")
@@ -952,9 +990,9 @@ class UsageTab:
         up.add(b, weight=1)
         down.add(c, weight=1)
         down.add(d, weight=1)
-        self.tv_apps = UI["make_tree"](a, ("cat", "bytes", "mins", "devs"), ("Category", "Traffic", "Active time",
-                                                                              "Devices"), (100, 90, 85, 60),
-                                       first=("App", 190))
+        self.tv_apps = UI["make_tree"](a, ("group", "cat", "bytes", "mins", "devs"),
+                                       ("Group", "Category", "Traffic", "Active time", "Devices"),
+                                       (120, 95, 85, 80, 55), first=("App", 190))
         self.tv_devs = UI["make_tree"](b, ("dept", "bytes", "work", "personal", "score", "top"),
                                        ("Dept", "Traffic", "Productive", "Unproductive", "Productivity",
                                         "Top unproductive"), (90, 80, 85, 90, 80, 150), first=("Device / user", 170))
@@ -977,6 +1015,7 @@ class UsageTab:
         for k, v in sorted(names.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower()):
             self.devkeys[f"{v.get('name') or k}  {v.get('ip', '')}"] = k
         self.cb_dev.configure(values=list(self.devkeys))
+        self.cb_for.configure(values=["Everyone"] + self.departments())
         dev = self.devkeys.get(self.var_dev.get())
         s = store.summary(days, dev)
         self.last = s
@@ -993,8 +1032,9 @@ class UsageTab:
             tv.delete(*tv.get_children())
         self.rows_apps, self.rows_sites = {}, {}
         for x in s["apps"]:
-            iid = self.tv_apps.insert("", "end", text=x["app"], values=(lab[x["cat"]], fb(x["bytes"]), self._m(x["minutes"]),
-                                                                         x["devices"]), tags=(x["cat"],))
+            iid = self.tv_apps.insert("", "end", text=x["app"], values=(x.get("group", ""), lab[x["cat"]], fb(x["bytes"]),
+                                                                         self._m(x["minutes"]), x["devices"]),
+                                      tags=(x["cat"],))
             self.rows_apps[iid] = x
         for x in s["devices"]:
             self.tv_devs.insert("", "end", text=x["name"], iid="dev:" + x["dev"],
@@ -1035,15 +1075,26 @@ class UsageTab:
             self.var_dev.set(next((k for k, v in self.devkeys.items() if v == key), "All devices"))
             self.refresh()
 
+    def departments(self):
+        depts = {t.get("dept") for t in T.tags_of(self.app.db).values() if t.get("dept")}
+        if self.app.usage:
+            depts |= {v.get("dept") for v in self.app.usage.names().values() if v.get("dept")}
+        return sorted(depts)
+
+    def dept_choice(self):
+        v = self.var_for.get()
+        return "" if v in ("", "Everyone") else v
+
     def set_cat(self, cat):
         sa = [self.rows_apps[i] for i in self.tv_apps.selection() if i in self.rows_apps]
         ss = [self.rows_sites[i] for i in self.tv_sites.selection() if i in self.rows_sites]
         if not sa and not ss:
             messagebox.showinfo(APP, "Select an app or a website in the lists first.")
             return
+        dept = self.dept_choice()
         for x in sa:
-            self.app.usage.set_category("app", x["app"], cat)
-        for x in ss:
+            self.app.usage.set_category("app", x["app"], cat, dept)
+        for x in ss:  # a website's choice is for everyone; per department, choose its app
             self.app.usage.set_category("site", x["site"], cat)
         self.refresh()
 
@@ -1090,3 +1141,600 @@ class UsageTab:
             for x in s["sites"]:
                 w.writerow([x["site"], x["app"], lab[x["cat"]], round(x["bytes"] / 1048576, 1), x["visits"]])
         self.app.var_status.set(f"Usage saved: {p}")
+
+
+class AppListDialog(tk.Toplevel):
+    """Every app Network Doctor knows, the websites that belong to it, and its category (per department too)."""
+
+    def __init__(self, tab):
+        super().__init__(tab.app)
+        self.tab, self.store = tab, tab.app.usage
+        self.US = tab.US
+        self.title("App list - which websites belong to which app")
+        self.geometry("1150x640")
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill="x")
+        ttk.Label(top, text="Search:").pack(side="left")
+        self.var_q = tk.StringVar()
+        e = ttk.Entry(top, textvariable=self.var_q, width=24)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self.fill())
+        ttk.Label(top, text="   Selected app is:").pack(side="left")
+        for c in (self.US.WORK, self.US.NEUTRAL, self.US.PERSONAL):
+            ttk.Button(top, text=self.US.CAT_LABEL[c], command=lambda c=c: self.set(c)).pack(side="left", padx=2)
+        ttk.Button(top, text="Built-in", command=lambda: self.set(None)).pack(side="left", padx=2)
+        ttk.Label(top, text=" for").pack(side="left")
+        self.var_for = tk.StringVar(value=tab.var_for.get() or "Everyone")
+        ttk.Combobox(top, textvariable=self.var_for, state="readonly", width=18,
+                     values=["Everyone"] + tab.departments()).pack(side="left", padx=4)
+        ttk.Button(top, text="Export (Excel CSV)", command=self.export).pack(side="right")
+        ttk.Label(self, text="An app is recognised by the end of the website name it uses (m.facebook.com ends in "
+                             "facebook.com). Facebook, Instagram, WhatsApp and Messenger are separate apps even though "
+                             "they run on the same company's servers. 'For' a department: e.g. WhatsApp Productive for "
+                             "Sales, Neutral for everyone else.", wraplength=1100, foreground="#667085",
+                  padding=(8, 0)).pack(anchor="w")
+        fr = ttk.Frame(self, padding=8)
+        fr.pack(fill="both", expand=True)
+        self.tv = UI["make_tree"](fr, ("group", "cat", "builtin", "depts", "domains"),
+                                  ("Group", "Category now", "Built-in", "Per department", "Websites (endings)"),
+                                  (150, 105, 95, 190, 560), first=("App", 210))
+        self.fill()
+
+    def fill(self):
+        q = self.var_q.get().strip().lower()
+        lab = self.US.CAT_LABEL
+        tv = self.tv
+        tv.delete(*tv.get_children())
+        self.rows = {}
+        for x in sorted(self.store.app_list(), key=lambda r: (r["group"], r["app"].lower())):
+            if q and q not in (x["app"] + " " + x["group"] + " " + " ".join(x["domains"])).lower():
+                continue
+            now = x["chosen"] or x["builtin"]
+            iid = tv.insert("", "end", text=x["app"], tags=(now,),
+                            values=(x["group"], lab[now] + (" *" if x["chosen"] else ""), lab[x["builtin"]],
+                                    ", ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
+                                    ", ".join(x["domains"])))
+            self.rows[iid] = x
+        tv.tag_configure("personal", foreground="#c2410c")
+        tv.tag_configure("work", foreground="#1d4ed8")
+
+    def set(self, cat):
+        sel = [self.rows[i] for i in self.tv.selection() if i in self.rows]
+        if not sel:
+            messagebox.showinfo(APP, "Select one or more apps (Ctrl / Shift + click).", parent=self)
+            return
+        v = self.var_for.get()
+        dept = "" if v in ("", "Everyone") else v
+        for x in sel:
+            self.store.set_category("app", x["app"], cat, dept)
+        self.fill()
+        self.tab.refresh()
+
+    def export(self):
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        p = filedialog.asksaveasfilename(parent=self, initialdir=core.REPORT_DIR, initialfile="app-list.csv",
+                                         defaultextension=".csv", filetypes=[("Excel CSV", "*.csv")])
+        if not p:
+            return
+        import csv
+        lab = self.US.CAT_LABEL
+        with open(p, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["App", "Group", "Category now", "Built-in", "Per department", "Websites (endings)"])
+            for x in sorted(self.store.app_list(), key=lambda r: (r["group"], r["app"].lower())):
+                w.writerow([x["app"], x["group"], lab[x["chosen"] or x["builtin"]], lab[x["builtin"]],
+                            "; ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
+                            " ".join(x["domains"])])
+        self.tab.app.var_status.set(f"App list saved: {p}")
+
+
+# ==========================================================================
+# slow website for one person: measure every link, name the cause, fix it
+# ==========================================================================
+class SlowTab:
+    def __init__(self, app, parent):
+        import nd_slow as S
+        self.S, self.app = S, app
+        self.stop = None
+        self.result = None
+        intro = ("Someone says a website is slow (Google Sheets, Gmail, a portal)? Choose that person's device, the "
+                 "website, and press Find the cause. Network Doctor tests every link - their Wi-Fi / cable, the office "
+                 "network, the router, the internet line, DNS, the website itself, whether the line is full and who "
+                 "fills it - and tells you the cause and the fix (about 1 minute).")
+        ttk.Label(parent, text=intro, wraplength=1250, foreground="#344054", padding=(0, 6)).pack(anchor="w")
+        r1 = ttk.Frame(parent)
+        r1.pack(fill="x", pady=2)
+        ttk.Label(r1, text="User / device:").pack(side="left")
+        self.var_dev = tk.StringVar()
+        self.cb_dev = ttk.Combobox(r1, textvariable=self.var_dev, width=44)
+        self.cb_dev.pack(side="left", padx=4)
+        ttk.Label(r1, text="  Website:").pack(side="left")
+        self.var_url = tk.StringVar(value=S.COMMON_SITES[0][1])
+        ttk.Entry(r1, textvariable=self.var_url, width=42).pack(side="left", padx=4)
+        ttk.Label(r1, text="  Internet plan:").pack(side="left")
+        self.var_mbps = tk.StringVar(value=str(app._settings().get("line_mbps") or ""))
+        ttk.Entry(r1, textvariable=self.var_mbps, width=6).pack(side="left", padx=2)
+        ttk.Label(r1, text="Mbps").pack(side="left")
+        r2 = ttk.Frame(parent)
+        r2.pack(fill="x", pady=2)
+        ttk.Label(r2, text="Quick:").pack(side="left")
+        for label, url in S.COMMON_SITES:
+            ttk.Button(r2, text=label, command=lambda u=url: self.var_url.set(u)).pack(side="left", padx=2)
+        self.var_load = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r2, text="Also test delay while the line is busy (uses the internet for 10 s)",
+                        variable=self.var_load).pack(side="left", padx=10)
+        r3 = ttk.Frame(parent)
+        r3.pack(fill="x", pady=(4, 2))
+        self.btn = ttk.Button(r3, text="Find the cause", style="Big.TButton", command=self.start)
+        self.btn.pack(side="left")
+        ttk.Button(r3, text="Stop", command=lambda: self.stop and self.stop.set()).pack(side="left", padx=6)
+        self.var_prog = tk.StringVar(value="")
+        ttk.Label(r3, textvariable=self.var_prog, foreground="#5b21b6").pack(side="left", padx=8)
+        self.btn_fix = ttk.Button(r3, text="Fix this on the router", command=self.fix, state="disabled")
+        self.btn_fix.pack(side="right")
+        ttk.Button(r3, text="Copy report", command=self.copy).pack(side="right", padx=6)
+        pw = ttk.PanedWindow(parent, orient="horizontal")
+        pw.pack(fill="both", expand=True, pady=(6, 0))
+        a, b = ttk.Frame(pw), ttk.Frame(pw)
+        pw.add(a, weight=2)
+        pw.add(b, weight=3)
+        self.tv = UI["make_tree"](a, ("conf",), ("Likely?",), (80,), first=("Cause (most likely first)", 380))
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self.show())
+        for sev, col in (("critical", "#b42318"), ("warning", "#b54708"), ("ok", "#1f7a3d"), ("info", "#667085")):
+            self.tv.tag_configure(sev, foreground=col)
+        self.txt = UI["text_box"](b)
+        self.items = {}
+        self.findings = []
+
+    def refresh(self):
+        devs = sorted([d for d in self.app.devices if d.get("online")],
+                      key=lambda d: ((d.get("name") or "~").lower(), core.ip_key(d.get("ip", ""))))
+        self.devmap = {f"{d.get('name') or '-'}  {d.get('ip', '')}": d for d in devs}
+        self.cb_dev.configure(values=list(self.devmap))
+
+    def _device(self):
+        v = self.var_dev.get().strip()
+        if v in getattr(self, "devmap", {}):
+            return self.devmap[v]
+        low = v.lower()
+        for d in self.app.devices:  # typed: an IP or part of a name
+            if v and (d.get("ip") == v or low in (d.get("name") or "").lower()):
+                return d
+        return None
+
+    def start(self):
+        url = self.S.norm_url(self.var_url.get())
+        if not url:
+            messagebox.showinfo(APP, "Type the website, for example docs.google.com")
+            return
+        dev = self._device()
+        if self.var_dev.get().strip() and not dev:
+            messagebox.showinfo(APP, "That device is not in the last scan. Choose it from the list (Scan first), or "
+                                     "leave it empty to test only the office network and the website.")
+            return
+        try:
+            mbps = float(self.var_mbps.get()) if self.var_mbps.get().strip() else None
+        except ValueError:
+            mbps = None
+        st = self.app._settings()
+        if mbps:
+            st["line_mbps"] = mbps
+            self.app._save_settings()
+        self.stop = threading.Event()
+        self.btn.configure(state="disabled")
+        self.btn_fix.configure(state="disabled")
+        self.tv.delete(*self.tv.get_children())
+        self.txt.configure(state="normal")
+        self.txt.delete("1.0", "end")
+        self.txt.configure(state="disabled")
+        ctx = {"gw": self.app.gw, "lip": self.app.lip, "mon": self.app.mon, "usage": self.app.usage,
+               "db": self.app.db, "raw": self.app.raw, "issues": list(self.app.issues),
+               "devices": list(self.app.devices), "router": self.app.router_client(ask=False), "line_mbps": mbps}
+        loaded = self.var_load.get()
+        q = self.app.q
+
+        def prog(pct, text):
+            q.put(("call", lambda: self.var_prog.set(f"{pct}%  {text}")))
+
+        def work():
+            try:
+                m = self.S.measure(url, dev, ctx, prog, self.stop, loaded)
+                m["gw"] = self.app.gw
+                f = self.S.judge(m)
+            except Exception as e:
+                m, f = {"url": url}, [{"sev": "critical", "title": f"The check failed: {type(e).__name__}: {e}",
+                                       "conf": "", "evidence": [], "fixes": [], "action": None, "score": 0}]
+            q.put(("call", lambda: self.done(m, f, mbps)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, m, findings, mbps):
+        self.btn.configure(state="normal")
+        self.result, self.findings, self.mbps = m, findings, mbps
+        self.var_prog.set(f"Finished {time.strftime('%H:%M:%S')} - {len(findings)} finding(s)")
+        self.tv.delete(*self.tv.get_children())
+        self.items = {}
+        for f in findings:
+            iid = self.tv.insert("", "end", text=f["title"], values=(f["conf"],), tags=(f["sev"],))
+            self.items[iid] = f
+        kids = self.tv.get_children()
+        if kids:
+            self.tv.selection_set(kids[0])
+        self.show()
+        dev = m.get("device") or {}
+        self.app._health_log("Slow website", "info", f"{m.get('host')} for {dev.get('name') or 'office'}: "
+                                                     + (findings[0]["title"] if findings else "no finding"))
+
+    def show(self):
+        sel = self.tv.selection()
+        f = self.items.get(sel[0]) if sel else None
+        t = self.txt
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        if f:
+            t.insert("end", f["title"] + "\n", "h")
+            if f.get("conf"):
+                t.insert("end", f"How likely: {f['conf']}\n\n")
+            if f["evidence"]:
+                t.insert("end", "What was measured\n", "h")
+                for e in f["evidence"]:
+                    t.insert("end", f"  - {e}\n")
+            if f["fixes"]:
+                t.insert("end", "\nHow to fix it\n", "h")
+                for x in f["fixes"]:
+                    t.insert("end", f"  -> {x}\n", "ok")
+            a = f.get("action") or ""
+            scr = self.S.fix_script(a, self.mbps, self._lan()) if a and not a.startswith("open:") else ""
+            if scr:
+                t.insert("end", "\nRouter commands for this fix (or press 'Fix this on the router'):\n", "h")
+                t.insert("end", scr)
+                if a.startswith("limit:"):
+                    t.insert("end", "(If the limit seems ignored: Commands > Turn off FastTrack.)\n")
+        m = self.result or {}
+        if m:
+            t.insert("end", "\nAll measurements\n", "h")
+            for line in self._numbers(m):
+                t.insert("end", f"  {line}\n")
+            t.insert("end", "\nCompare on the user's own PC (Command Prompt), then compare with the numbers above:\n", "h")
+            t.insert("end", self.S.compare_command(m.get("url", "")) + "\n")
+        t.configure(state="disabled")
+        a = (f or {}).get("action") or ""
+        self.btn_fix.configure(state="normal" if a else "disabled",
+                               text="Open the right tool" if a.startswith("open:") else "Fix this on the router")
+
+    def _lan(self):
+        try:
+            import ipaddress
+            return str(ipaddress.ip_network(self.app.net, strict=False))
+        except Exception:
+            return ""
+
+    def _numbers(self, m):
+        out = []
+        for key, label in (("dev_ping", "user's device"), ("gw_ping", "router"), ("inet_ping", "internet 1.1.1.1")):
+            p = m.get(key)
+            if p:
+                out.append(f"ping {label}: " + (f"loss {p['loss']:.0f}%, avg {p['avg']:.0f} ms, max {p['max']:.0f} ms, "
+                                                f"jitter {p['jitter']:.0f} ms" if p.get("recv") else "no answer"))
+        for d in m.get("dns") or []:
+            out.append(f"DNS {d.get('label')} {d.get('server')}: " + (d["error"] if d.get("error") else
+                                                                      f"{d.get('ms', 0):.0f} ms (repeat "
+                                                                      f"{d.get('cached_ms') or 0:.0f} ms)"))
+        for x in m.get("site_summary") or []:
+            out.append(x)
+        if m.get("mtu"):
+            out.append(f"largest packet (MTU): {m['mtu']}")
+        ln = m.get("line") or {}
+        if ln.get("have_flows"):
+            out.append(f"line now: {ln['down_bps'] / 1e6:.1f} Mbps in use" +
+                       (f" of {ln['capacity_mbps']:.0f}" if ln.get("capacity_mbps") else ""))
+        if m.get("router_cpu") is not None:
+            out.append(f"router CPU: {m['router_cpu']}%")
+        if (m.get("loaded") or {}).get("busy"):
+            out.append(f"delay idle {m['loaded']['idle']:.0f} ms, while busy {m['loaded']['busy']:.0f} ms")
+        return out
+
+    def fix(self):
+        sel = self.tv.selection()
+        f = self.items.get(sel[0]) if sel else None
+        a = (f or {}).get("action") or ""
+        if a.startswith("open:"):
+            where = a[5:]
+            if where in ("website", "guard", "wifi"):
+                self.app.show_tab("tools")
+                self.app.tools.show(where)
+            else:
+                self.app.show_tab(where)
+            return
+        if a == "queue_fair" and not self.mbps:
+            messagebox.showinfo(APP, "Type your internet plan speed (Mbps) first, then run the check again.")
+            return
+        scr = self.S.fix_script(a, self.mbps, self._lan())
+        if scr:
+            self.app.router_apply(scr, f"Slow website fix: {f['title']}")
+
+    def copy(self):
+        m, fs = self.result, self.findings
+        if not m:
+            return
+        dev = (m.get("device") or {}).get("name") or "office"
+        lines = [f"Slow website check: {m.get('url')} for {dev}  ({time.strftime('%d %b %Y %H:%M')})", ""]
+        for f in fs:
+            lines.append(f"[{f['sev'].upper()}] {f['title']} ({f['conf']})")
+            lines += [f"   measured: {e}" for e in f["evidence"]] + [f"   fix: {x}" for x in f["fixes"]]
+        lines += ["", "Measurements:"] + [f"   {x}" for x in self._numbers(m)]
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(lines))
+        self.app.var_status.set("Report copied.")
+
+
+# ---------------------------------------------------------------- alerts: history, priority, fixes, troubleshoot
+import nd_alerts as AL  # noqa: E402
+
+PRIO_COLORS = {1: "#b42318", 2: "#c4320a", 3: "#1d4ed8", 4: "#667085"}
+
+
+class AlertsTab:
+    """Every alert with time, priority, device and fix; Troubleshoot fixes it or walks you through it."""
+
+    def __init__(self, app, parent):
+        self.app = app
+        top = ttk.Frame(parent, padding=(0, 6))
+        top.pack(fill="x")
+        ttk.Label(top, text="Show:").pack(side="left")
+        self.var_show = tk.StringVar(value="Open alerts")
+        cb = ttk.Combobox(top, textvariable=self.var_show, state="readonly", width=16,
+                          values=["Open alerts", "All alerts", "Fixed"])
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Priority:").pack(side="left", padx=(8, 0))
+        self.var_prio = tk.StringVar(value="All")
+        cb = ttk.Combobox(top, textvariable=self.var_prio, state="readonly", width=20,
+                          values=["All"] + list(AL.PRIO.values()))
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Find:").pack(side="left", padx=(8, 0))
+        self.var_q = tk.StringVar()
+        e = ttk.Entry(top, textvariable=self.var_q, width=18)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self.refresh())
+        ttk.Button(top, text="Export to Excel (CSV)", command=lambda: self.export("csv")).pack(side="right")
+        ttk.Button(top, text="Export report (HTML)", command=lambda: self.export("html")).pack(side="right", padx=6)
+        self.var_sum = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self.var_sum, foreground="#5b21b6").pack(anchor="w")
+        act = ttk.Frame(parent, padding=(0, 6, 0, 0))
+        act.pack(fill="x", side="bottom")
+        ttk.Button(act, text="Troubleshoot", style="Big.TButton", command=self.troubleshoot).pack(side="left")
+        ttk.Button(act, text="Mark fixed", command=lambda: self.mark("fixed")).pack(side="left", padx=6)
+        ttk.Button(act, text="Re-open", command=lambda: self.mark("open")).pack(side="left")
+        ttk.Button(act, text="Copy", command=self.copy).pack(side="left", padx=6)
+        ttk.Label(act, text="Double-click an alert to troubleshoot it", foreground="#667085").pack(side="left", padx=8)
+        cols = ("prio", "device", "alert", "fix", "times", "status")
+        heads = ("Priority", "Device", "Alert", "Fix", "Times", "Status")
+        widths = (120, 170, 430, 420, 55, 110)
+        self.tv = UI["make_tree"](parent, cols, heads, widths, first=("Time", 140), selectmode="extended")
+        for p, c in PRIO_COLORS.items():
+            self.tv.tag_configure(f"p{p}", foreground=c)
+        self.tv.tag_configure("fixed", foreground="#12b76a")
+        self.tv.bind("<Double-1>", lambda e: self.troubleshoot())
+        self.rows = {}
+
+    def names(self):
+        return {d.get("ip"): (d.get("tag") or {}).get("name") or d.get("name") or "" for d in self.app.devices}
+
+    def items(self):
+        show, prio, q = self.var_show.get(), self.var_prio.get(), self.var_q.get().strip().lower()
+        out = []
+        for x in self.app.alert_log.recent(3000):
+            if show == "Open alerts" and x.get("status") != "open" or show == "Fixed" and x.get("status") != "fixed":
+                continue
+            if prio != "All" and AL.PRIO[x["prio"]] != prio:
+                continue
+            if q and q not in (x["text"] + x["fix"] + x.get("ip", "")).lower():
+                continue
+            out.append(x)
+        return out
+
+    def refresh(self):
+        tv = self.tv
+        sel = set(tv.selection())
+        tv.delete(*tv.get_children())
+        self.rows = {}
+        names = self.names()
+        xs = self.items()
+        xs.sort(key=lambda x: (x.get("status") != "open", x["prio"], -x["last"]))
+        for x in xs[:1500]:
+            dev = (names.get(x.get("ip")) or "-") + (f"  {x['ip']}" if x.get("ip") else "")
+            iid = tv.insert("", "end", iid=x["id"], text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
+                            values=(AL.PRIO[x["prio"]], dev, x["text"], x["fix"], x.get("count", 1),
+                                    x.get("status", "")),
+                            tags=("fixed",) if x.get("status") == "fixed" else (f"p{x['prio']}",))
+            self.rows[iid] = x
+        for i in sel:
+            if tv.exists(i):
+                tv.selection_add(i)
+        allx = self.app.alert_log.recent(3000)
+        op = [x for x in allx if x.get("status") == "open"]
+        self.var_sum.set(f"{len(op)} open  |  P1 fix now: {sum(x['prio'] == 1 for x in op)}  |  "
+                         f"P2 today: {sum(x['prio'] == 2 for x in op)}  |  {len(allx)} alerts kept  |  "
+                         "the same alert within 15 minutes is counted, not repeated")
+
+    def selected(self):
+        return [self.rows[i] for i in self.tv.selection() if i in self.rows]
+
+    def mark(self, status):
+        sel = self.selected()
+        if sel:
+            self.app.alert_log.set_status({x["id"] for x in sel}, status)
+            self.app.alert_log.save()
+            self.refresh()
+
+    def copy(self):
+        sel = self.selected() or self.items()[:30]
+        lines = [f"{time.strftime('%d-%b %H:%M', time.localtime(x['t']))}  {AL.PRIO[x['prio']]}  {x['text']}"
+                 f"\n    Fix: {x['fix']}" for x in sel]
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(lines))
+        self.app.var_status.set(f"Copied {len(sel)} alert(s) with their fixes.")
+
+    def export(self, kind):
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        ext = ".csv" if kind == "csv" else ".html"
+        p = filedialog.asksaveasfilename(initialdir=core.REPORT_DIR, defaultextension=ext,
+                                         initialfile=time.strftime(f"network-alerts-%Y%m%d-%H%M{ext}"),
+                                         filetypes=[("Excel CSV", "*.csv")] if kind == "csv" else [("Web page",
+                                                                                                    "*.html")])
+        if not p:
+            return
+        xs = self.selected() if len(self.selected()) > 1 else self.items()
+        (AL.export_csv if kind == "csv" else AL.export_html)(p, xs, self.names())
+        self.app.var_status.set(f"{len(xs)} alerts saved: {p}")
+        if kind == "html":
+            try:
+                import webbrowser
+                webbrowser.open("file:///" + p.replace("\\", "/"))
+            except Exception:
+                pass
+        else:
+            self.app.open_folder(os.path.dirname(p))
+
+    def troubleshoot(self, alert=None):
+        x = alert or (self.selected() or [None])[0]
+        if not x:
+            messagebox.showinfo(APP, "Select an alert first.")
+            return
+        TroubleshootWindow(self.app, x)
+
+    def open_latest(self):
+        xs = self.app.alert_log.recent(1, only_open=True)
+        if xs:
+            self.troubleshoot(xs[0])
+
+
+class TroubleshootWindow(tk.Toplevel):
+    """One alert: what it means, automatic fixes (router / this PC), numbered steps with tick boxes, re-check."""
+
+    def __init__(self, app, alert):
+        super().__init__(app)
+        self.app, self.alert = app, alert
+        r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw)
+        self.title("Troubleshoot - " + r["title"][:60])
+        self.geometry("820x640")
+        self.transient(app)
+        f = ttk.Frame(self, padding=14)
+        f.pack(fill="both", expand=True)
+        head = ttk.Frame(f)
+        head.pack(fill="x")
+        tk.Label(head, text=f" {r['prio_text']} ", bg=PRIO_COLORS[r["prio"]], fg="white",
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(head, text="  " + time.strftime("%d-%b-%Y %H:%M:%S", time.localtime(alert["t"]))
+                  + (f"   ({alert.get('count', 1)} times, last "
+                     f"{time.strftime('%H:%M', time.localtime(alert['last']))})" if alert.get("count", 1) > 1 else ""),
+                  foreground="#667085").pack(side="left")
+        ttk.Label(f, text=r["title"], font=("Segoe UI", 13, "bold"), wraplength=780, justify="left").pack(
+            anchor="w", pady=(8, 2))
+        ttk.Label(f, text=alert["text"], foreground="#667085", wraplength=780, justify="left").pack(anchor="w")
+        ttk.Label(f, text=r["why"], wraplength=780, justify="left").pack(anchor="w", pady=(8, 0))
+        ttk.Label(f, text="Fix: " + r["fix"], font=("Segoe UI", 10, "bold"), wraplength=780, justify="left").pack(
+            anchor="w", pady=(6, 6))
+        if r["auto"] or r.get("app"):
+            box = ttk.LabelFrame(f, text="Fix it automatically", padding=8)
+            box.pack(fill="x", pady=(0, 6))
+            for a in r["auto"]:
+                where = {"router": "on the router", "router_read": "reads the router", "pc": "on this PC"}.get(
+                    a["where"], "")
+                ttk.Button(box, text=f"{a['label']}  ({where})", style="Big.TButton",
+                           command=lambda a=a: self.run(a)).pack(anchor="w", pady=2)
+            if r.get("app"):
+                ttk.Button(box, text=r["app"][0], command=lambda: self.go(r["app"][1])).pack(anchor="w", pady=2)
+            ttk.Label(box, text="Router fixes need the router login (Setup) and ask before changing anything. "
+                                "Without a login, 'Show commands' gives them to paste in WinBox > New Terminal.",
+                      foreground="#667085", wraplength=760, justify="left").pack(anchor="w")
+            if any(a["where"] == "router" for a in r["auto"]):
+                ttk.Button(box, text="Show commands", command=self.show_cmds).pack(anchor="w", pady=(4, 0))
+        sb = ttk.LabelFrame(f, text="Step by step (tick each step when done)", padding=8)
+        sb.pack(fill="both", expand=True)
+        self.ticks = []
+        for i, s in enumerate(r["steps"], 1):
+            v = tk.BooleanVar(value=False)
+            ttk.Checkbutton(sb, text=f"{i}.  {s}", variable=v).pack(anchor="w", pady=2)
+            self.ticks.append(v)
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(8, 0))
+        self.var_res = tk.StringVar(value="")
+        ttk.Button(bar, text="Close", command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="Mark fixed", command=self.fixed).pack(side="right", padx=6)
+        ttk.Button(bar, text="Re-check now", command=self.recheck).pack(side="right")
+        ttk.Button(bar, text="Copy steps", command=self.copy).pack(side="left")
+        ttk.Label(bar, textvariable=self.var_res, foreground="#027a48").pack(side="left", padx=8)
+
+    def script(self, a):
+        cmd = a["cmd"]
+        if cmd in ("@torrent_guard", "@dhcp_guard"):
+            key = "torrent" if cmd == "@torrent_guard" else "dhcp"
+            cmd = T.guard_commands({key: True}, [], self.app.lip, "bridge")[0]
+        return cmd
+
+    def run(self, a):
+        if a["where"] == "pc":
+            if not core.IS_WIN:
+                messagebox.showinfo(APP, f"Run this on a Windows PC:\n\n{a['cmd']}")
+                return
+            try:
+                subprocess.Popen(f"cmd /k {a['cmd']}", creationflags=0x00000010)
+                self.var_res.set("Started in a new window on this PC.")
+            except Exception as e:
+                messagebox.showerror(APP, str(e))
+            return
+        if a["where"] == "router_read":
+            self.app.router_cli(a["cmd"], a["label"])
+            return
+
+        def done(err):
+            if not err:
+                self.var_res.set(f"Done: {a['label']}. Re-check in a few minutes.")
+                self.app.alert_log.set_status({self.alert["id"]}, "fixed", "automatic fix: " + a["label"])
+                self.app.alert_log.save()
+                self.app.alerts_tab.refresh()
+        if not self.app.router_apply(self.script(a), a["label"], done):
+            self.show_cmds()
+
+    def show_cmds(self):
+        txt = "\n\n".join(f"# {a['label']}\n{self.script(a)}" for a in self.r["auto"] if a["where"] == "router")
+        w = tk.Toplevel(self)
+        w.title("Commands - paste in WinBox > New Terminal")
+        w.geometry("760x420")
+        t = UI["text_box"](w)
+        t.configure(state="normal")
+        t.insert("1.0", txt)
+        ttk.Button(w, text="Copy", command=lambda: (self.app.clipboard_clear(), self.app.clipboard_append(txt))).pack(
+            anchor="e", padx=8, pady=6)
+
+    def go(self, where):
+        self.destroy()
+        self.app.deiconify()
+        if where == "rca":
+            self.app.show_tab("rca")
+            self.app.run_rca()
+        else:
+            self.app.show_tab(where)
+
+    def recheck(self):
+        self.var_res.set("Checking the network again... (results in Problems and here)")
+        try:
+            self.app.start_quick(manual=True)
+        except TypeError:
+            self.app.start_quick()
+
+    def fixed(self):
+        self.app.alert_log.set_status({self.alert["id"]}, "fixed")
+        self.app.alert_log.save()
+        self.app.alerts_tab.refresh()
+        self.destroy()
+
+    def copy(self):
+        r = self.r
+        txt = (f"{r['prio_text']}: {r['title']}\n{self.alert['text']}\n\n{r['why']}\n\nFix: {r['fix']}\n"
+               + "\n".join(f"{i}. {s}" for i, s in enumerate(r["steps"], 1)))
+        self.app.clipboard_clear()
+        self.app.clipboard_append(txt)
+        self.var_res.set("Copied.")

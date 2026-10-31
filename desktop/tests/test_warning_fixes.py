@@ -160,6 +160,9 @@ class RouterCommands(unittest.TestCase):
         # rules are removed before their action, otherwise RouterOS refuses to remove the action
         self.assertLess(c.index("logging remove [find where action"), c.index("logging action remove"))
         self.assertNotIn("{lip}", c)
+        # RouterOS refuses a whole script when one word is unknown: 'address=IP:port' does not exist on 6.43+ / 7
+        self.assertNotIn("address=192.168.0.10:", c)
+        self.assertNotIn(" address=", c.split("# 2)")[0].replace("dst-address=", ""))
         self.assertEqual(c.count("{"), c.count("}"))
 
 
