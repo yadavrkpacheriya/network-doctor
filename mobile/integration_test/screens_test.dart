@@ -28,6 +28,8 @@ void main() {
     const sections = ['Home', 'Alerts', 'Devices', 'Internet & Usage', 'Security', 'Fix & Commands'];
     for (final sec in sections) {
       final tab = find.descendant(of: find.byType(TabBar), matching: find.textContaining(sec));
+      await tester.ensureVisible(tab.first);
+      await tester.pumpAndSettle();
       await tester.tap(tab.first);
       await tester.pumpAndSettle(const Duration(seconds: 1));
       final chips = find.byType(ChoiceChip);
@@ -43,7 +45,10 @@ void main() {
       }
     }
     // an alert's Troubleshoot page
-    await tester.tap(find.descendant(of: find.byType(TabBar), matching: find.textContaining('Alerts')).first);
+    final alertsTab = find.descendant(of: find.byType(TabBar), matching: find.textContaining('Alerts')).first;
+    await tester.ensureVisible(alertsTab);
+    await tester.pumpAndSettle();
+    await tester.tap(alertsTab);
     await tester.pumpAndSettle(const Duration(seconds: 1));
     await tester.tap(find.byType(ChoiceChip).first);
     await tester.pumpAndSettle();

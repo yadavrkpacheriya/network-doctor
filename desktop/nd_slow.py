@@ -240,7 +240,7 @@ def judge(m):
                       f"The name {host} cannot be looked up", "High", errs[:2],
                       (["Check the website address.", "If other sites work: DNS problem - see the DNS finding."]
                        if dns_dead else
-                       [f"Check that {host} is not blocked in Tools > Website firewall or on the router.",
+                       [f"Check that {host} is not blocked in Security > Website firewall or on the router.",
                         "If only this site fails, it may be down: check its status page from a phone on mobile data."]),
                       "open:website", 100))
 
@@ -262,7 +262,7 @@ def judge(m):
                           [f"{d['server']}: {d['error']}", f"public DNS 1.1.1.1 answers in {pub_ms:.0f} ms"],
                           ["Let the router use fast public DNS servers (button below), then on the user's PC: "
                            "ipconfig /flushdns.",
-                           "If the PC's DNS is not the router: a second router or a typed-in DNS - Tools > Network "
+                           "If the PC's DNS is not the router: a second router or a typed-in DNS - Security > Network "
                            "guard."], "dns_public", 90))
         elif fresh is not None and (fresh > 300 or (cached or 0) > 60):
             out.append(_f("warning", f"Slow DNS: the {d['label']} needs {fresh:.0f} ms per new name", "High"
@@ -276,7 +276,7 @@ def judge(m):
         srv = next((d["server"] for d in dns if d.get("label") == "this PC's DNS"), "?")
         out.append(_f("warning", f"This PC uses DNS {srv}, not the office router", "Medium",
                       [f"DNS server {srv}, router {m.get('gw') or 'gateway'}"],
-                      ["A second router or a typed-in DNS answers look-ups. Tools > Network guard > 'All DNS through "
+                      ["A second router or a typed-in DNS answers look-ups. Security > Network guard > 'All DNS through "
                        "the router', and set PCs to automatic DNS."], "open:guard", 60))
 
     # ---- the user's own connection (Wi-Fi / cable)
@@ -290,10 +290,10 @@ def judge(m):
                           f"{who}'s own connection is weak ({'Wi-Fi' if wifi else 'cable / switch port'})", "High",
                           evid,
                           (["Move the PC / laptop closer to the Wi-Fi access point, or use a cable.",
-                            "Use the 5 GHz Wi-Fi (Tools > Wi-Fi analyzer shows crowded channels).",
+                            "Use the 5 GHz Wi-Fi (Fix & Commands > Wi-Fi analyzer shows crowded channels).",
                             "Add an access point if many people share one."] if wifi else
                            ["Replace the patch cable and try another switch port.",
-                            "Tools > This PC's network adapters on that PC: speed 100 Mbps or errors = bad cable."]),
+                            "Fix & Commands > Network adapters on that PC: speed 100 Mbps or errors = bad cable."]),
                           "open:wifi", 85))
     elif dev and dev.get("ip") and not dev.get("self") and dp is not None:
         out.append(_f("info", f"{who} does not answer ping", "Low",
@@ -350,7 +350,7 @@ def judge(m):
                       f"The internet line is full: {used:.0f} of {cap:.0f} Mbps in use", "High",
                       [f"{n} ({ip}): {b / 1e6:.1f} Mbps" for n, ip, b in top[:4]],
                       [f"Limit the biggest user ({top[0][0]}) - button below." if top else "Limit the biggest users.",
-                       "Block video / updates during working hours (Tools > Website firewall), or get a faster line."],
+                       "Block video / updates during working hours (Security > Website firewall), or get a faster line."],
                       f"limit:{top[0][1]}" if top else None, 92))
     elif line.get("have_flows") and not cap and line.get("top"):
         n, ip, b = line["top"][0]
@@ -428,7 +428,7 @@ def judge(m):
                       [f"Run the comparison command below on {who}'s PC: if it is slow there but not here, the cause "
                        "is that PC (Wi-Fi, browser, antivirus scanning web pages, proxy / VPN).",
                        "On that PC: ipconfig /flushdns, clear the browser cache, try an Incognito window, disable "
-                       "extensions, update the browser.", "Check that PC's RAM / disk in Tools > Inventory."],
+                       "extensions, update the browser.", "Check that PC's RAM / disk in Devices > Inventory."],
                       None, 1))
     out.sort(key=lambda f: -f["score"])
     return out

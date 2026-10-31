@@ -905,7 +905,7 @@ class UsageStore:
                             "text": "Every day the line is fullest at these hours. Regularly at the top then: "
                                     + "; ".join(parts) + ".",
                             "action": (f"{', '.join(personal)} fill the line at the busiest time: block them in "
-                                       "working hours (Tools > Website firewall) or limit their speed, so work apps "
+                                       "working hours (Security > Website firewall) or limit their speed, so work apps "
                                        "stay fast." if personal else
                                        "Mostly work traffic at the busy hours - if it feels slow then, the internet "
                                        "line itself is too small.")})
@@ -920,7 +920,7 @@ class UsageStore:
             out.append({"sev": "warning" if share_p >= 30 else "info",
                         "title": f"{share_p:.0f}% of all internet traffic is not work",
                         "text": "Largest: " + ", ".join(f"{a} {fmt_bytes(b)}" for a, b in top_p.most_common(4)) + ".",
-                        "action": "Block or limit these categories in working hours (Tools > Website firewall: "
+                        "action": "Block or limit these categories in working hours (Security > Website firewall: "
                                   "Video, Social media, Games), or mark them Productive if the office needs them."})
         # devices far above their own normal
         last = days_seen[-1] if days_seen else today.isoformat()

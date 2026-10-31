@@ -542,7 +542,7 @@ class _PcToolsTabState extends State<PcToolsTab> {
               child: const Text('Apply'),
             ),
           ),
-        const Text('Undo: Tools > Network guard on the PC.'),
+        const Text('Undo: Security > Network guard on the PC.'),
       ]),
       section('router', 'Router commands', Icons.terminal, [
         TextField(

@@ -95,7 +95,7 @@ def recipe(text, sev="warning", lip="", gw=""):
                     "files, and port 51413 / 6881 traffic is what ISPs and copyright notices look for.",
                     "Block torrents on the router (button below) and remove the torrent program from that PC.",
                     ["Press 'Block torrents on the router': torrent traffic and torrent websites are blocked for "
-                     "every device (Undo is in Tools > Network guard).",
+                     "every device (Undo is in Security > Network guard).",
                      f"Go to the PC at {ip or 'the IP in the alert'} (Inventory shows its name and user).",
                      "Control Panel > Programs > uninstall uTorrent / BitTorrent / qBittorrent / Transmission / "
                      "BitComet; also close it in the taskbar tray.",
@@ -292,7 +292,7 @@ def recipe(text, sev="warning", lip="", gw=""):
                      "Unknown device? Block it (Devices > right-click > Commands > Block a device).",
                      "Phones: Wi-Fi > office network > Privacy / MAC address type > 'Phone MAC' (Android) or turn "
                      "off 'Private Wi-Fi Address' (iPhone).",
-                     "To force it: Tools > Network guard > block randomized MACs."],
+                     "To force it: Security > Network guard > block randomized MACs."],
                     app=("Open Inventory", "inventory"))
 
     prio = SEV_PRIO.get(sev, 3)

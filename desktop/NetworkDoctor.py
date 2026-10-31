@@ -480,11 +480,11 @@ class App(tk.Tk):
         if core.IS_WIN and not core.is_admin():
             ttk.Button(top, text="Restart as Administrator (full tests)", command=self.elevate).pack(side="right")
         elif core.is_admin():
-            ttk.Label(top, text="Administrator: full tests on", foreground="#1f7a3d").pack(side="right")
+            ttk.Label(top, text="Admin: full tests", foreground="#1f7a3d").pack(side="right")
         else:
             ttk.Label(top, text="Standard tests (IP-conflict rounds need administrator)",
                       foreground="#8a4b00").pack(side="right")
-        self.btn_update = ttk.Button(top, text=f"Updates (v{VERSION})", command=self.update_now)
+        self.btn_update = ttk.Button(top, text=f"Update  v{VERSION}", command=self.update_now)
         self.btn_update.pack(side="right", padx=6)
         self.var_mon = tk.StringVar(value="Live monitor: off")
         ttk.Label(top, textvariable=self.var_mon, foreground="#5b21b6").pack(side="right", padx=12)
@@ -1613,7 +1613,7 @@ class App(tk.Tk):
                 T.set_tag(self.db, mac, watch="1")
                 core.save_db(self.db)
                 self.watch_now()
-                self.var_status.set(f"{d['name'] or ip} is now watched (Tools > Critical devices).")
+                self.var_status.set(f"{d['name'] or ip} is now watched (Security > Critical devices).")
             elif what in ("cip", "cmac", "call"):
                 txt = ip if what == "cip" else mac if what == "cmac" else \
                     f"{d['name']}\t{', '.join(sorted(d['ips'], key=core.ip_key))}\t{mac}\t{d['vendor']}\t{d['category']}"
@@ -2761,7 +2761,7 @@ class App(tk.Tk):
             return
         if not info:
             self.var_upd.set(f"Version {VERSION} - up to date (checked {time.strftime('%d-%b %H:%M')})")
-            self.btn_update.configure(text=f"Updates (v{VERSION})")
+            self.btn_update.configure(text=f"Update  v{VERSION}")
             if not auto:
                 messagebox.showinfo(APP, f"You have the latest version ({VERSION}).")
             return
@@ -2876,7 +2876,7 @@ class App(tk.Tk):
             except Exception:
                 pass
             self.btn_update.configure(text="Update now" if getattr(self, "update_info", None) else
-                                      f"Updates (v{VERSION})")
+                                      f"Update  v{VERSION}")
             self.var_upd.set("Update failed: " + msg[1][:120])
             self._health_log("Update", "warning", "update failed: " + msg[1][:200])
             if not self._upd_silent:

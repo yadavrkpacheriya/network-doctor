@@ -935,7 +935,7 @@ class ToolsTab:
         ttk.Separator(row, orient="vertical").pack(side="left", fill="y", padx=10)
         self.var_lantarget, _ = self._combo(row, "Other PC:", [], 28)
         self._run_btn(row, "lan", "Test speed", self._lan)
-        ttk.Label(f, text="How: open Network Doctor on the other PC, Tools > LAN speed test, tick 'Receiver ON'. Then "
+        ttk.Label(f, text="How: open Network Doctor on the other PC, Fix & Commands > LAN speed test, tick 'Receiver ON'. Then "
                           "press Test speed here. Test across the switch you suspect.", foreground="#667085").pack(
             anchor="w", pady=(4, 0))
         self._out_box(f, "lan")
@@ -1204,7 +1204,7 @@ class ToolsTab:
         opts = {k: v.get() for k, v in self.g.items()}
         opts["dns_target"] = self.var_g_dns.get()
         if opts["dns"] and opts["dns_target"] == "pc" and not getattr(self, "dnsf", None):
-            messagebox.showwarning("Network guard", "DNS to this PC needs the Website firewall running here (Tools > "
+            messagebox.showwarning("Network guard", "DNS to this PC needs the Website firewall running here (Security > "
                                                     "Website firewall > Start), or every device loses internet names. "
                                                     "Choose 'the router' or start the firewall first.")
             return False
@@ -1595,7 +1595,7 @@ class ToolsTab:
                  "The router feeds go to this IP - reserve it in the IP-MAC binding tab (this PC is always included).")
         w = T.watched(app.db)
         item(bool(w), f"Critical devices watched: {len(w)}",
-             "Tools > Critical devices: watch the router, server, ERP PC, DVR and switches.")
+             "Security > Critical devices: watch the router, server, ERP PC, DVR and switches.")
         tags = T.tags_of(app.db)
         on = [d for d in app.devices if d.get("online") and d.get("mac")]
         tagged = [d for d in on if tags.get(d["mac"], {}).get("dept") or tags.get(d["mac"], {}).get("parent")]

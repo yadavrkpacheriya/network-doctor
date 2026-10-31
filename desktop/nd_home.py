@@ -92,6 +92,9 @@ class HomeTab:
             t.pack(anchor="w")
             s = tk.Label(f, text=sub, font=(FONT, 9), bg=CARD, fg=MUTE, anchor="w", justify="left", wraplength=250)
             s.pack(anchor="w")
+            t.configure(wraplength=250)
+            f.bind("<Configure>", lambda e, t=t, s=s: (t.configure(wraplength=max(120, e.width - 26)),
+                                                      s.configure(wraplength=max(120, e.width - 26))), add="+")
             for w in (f, t, s):
                 w.bind("<Button-1>", lambda e, fn=fn: fn())
                 w.bind("<Enter>", lambda e, f=f, c=colr: f.configure(highlightbackground=c))
