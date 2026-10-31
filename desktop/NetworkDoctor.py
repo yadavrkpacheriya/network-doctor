@@ -56,7 +56,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.11.0"
+VERSION = "3.11.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1629,6 +1629,8 @@ class App(tk.Tk):
             else:
                 exe = sys.executable.replace("python.exe", "pythonw.exe") if sys.executable.endswith("python.exe") else sys.executable
                 params = f'"{os.path.abspath(__file__)}"'
+            os.environ.clear()  # the new copy must not inherit this one-file exe's private variables
+            os.environ.update(U.clean_env())
             if ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, core.HERE, 1) > 32:
                 self._close()
         except Exception as e:

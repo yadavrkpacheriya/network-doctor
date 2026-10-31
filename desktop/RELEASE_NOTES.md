@@ -1,3 +1,7 @@
+## Network Doctor 3.11.1
+
+- **Fixed: "Security validation failure: invalid originating onefile parent process (PID not found)" after an update.** The update itself was installed, but the restarted app stopped with this message; it had to be started by hand. The new copy is now started with a clean environment. The same applies to "Restart as Administrator".
+
 ## Network Doctor 3.11.0
 
 **Usage and productivity, inventory, network guard, and direct router control.**

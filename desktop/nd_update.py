@@ -165,7 +165,17 @@ open "{bundle}"{(" --args " + " ".join(args)) if args else ""}
 rm -rf "{work}" "{zip_path}"
 """)
     os.chmod(script, 0o755)
-    subprocess.Popen(["/bin/sh", script], start_new_session=True, close_fds=True)
+    subprocess.Popen(["/bin/sh", script], start_new_session=True, close_fds=True, env=clean_env())
+
+
+def clean_env():
+    """Environment for starting a NEW copy of Network Doctor. A PyInstaller one-file exe passes private _PYI_* /
+    _MEIPASS* variables to the copy it unpacks; a fresh start that inherits them takes itself for that copy, looks
+    for its parent process - which has already closed - and stops with "Security validation failure: invalid
+    originating onefile parent process (PID not found)". Remove them and tell PyInstaller to start fresh."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("_PYI", "_MEIPASS"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 def apply_update(path, args=()):
@@ -188,7 +198,7 @@ def apply_linux(new_path, args=()):
     except OSError as e:
         _rm(new_path)
         raise UpdateError(f"Could not replace {exe} ({e}). Move Network Doctor to a folder you can write to.")
-    subprocess.Popen([exe, *args], start_new_session=True, close_fds=True)
+    subprocess.Popen([exe, *args], start_new_session=True, close_fds=True, env=clean_env())
 
 
 def apply_exe(new_path, args=()):
@@ -205,6 +215,7 @@ if %n% lss 40 goto wait
 echo Network Doctor could not replace "{exe}" - it may still be open. > "%TEMP%\\NetworkDoctor_update_failed.txt"
 goto end
 :done
+set PYINSTALLER_RESET_ENVIRONMENT=1
 start "" "{exe}" {" ".join(args)}
 :end
 del "%~f0"
@@ -212,7 +223,7 @@ del "%~f0"
     with open(bat, "w", encoding="ascii", errors="replace") as f:
         f.write(script)
     flags = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
-    subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True)
+    subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True, env=clean_env())
 
 
 def update_sources(info, folder):
@@ -252,7 +263,8 @@ def update_sources(info, folder):
 
 
 def restart_sources(folder, args=()):
-    subprocess.Popen([sys.executable, os.path.join(folder, "NetworkDoctor.py"), *args], cwd=folder, close_fds=True)
+    subprocess.Popen([sys.executable, os.path.join(folder, "NetworkDoctor.py"), *args], cwd=folder, close_fds=True,
+                     env=clean_env())
 
 
 def cleanup_leftovers():
