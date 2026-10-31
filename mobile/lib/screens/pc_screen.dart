@@ -30,6 +30,12 @@ class _PcScreenState extends State<PcScreen> with AutomaticKeepAliveClientMixin 
   @override
   void initState() {
     super.initState();
+    if (PcLink.demo) {
+      _pcs = [PcLink.demoPc()];
+      _pc = _pcs.first;
+      _loaded = true;
+      return;
+    }
     PcLink.load().then((l) => setState(() {
           _pcs = l;
           _pc = l.isNotEmpty ? l.first : null;
@@ -287,78 +293,126 @@ class _PcDashboardState extends State<PcDashboard> {
     }
   }
 
+  static const sectionColors = [
+    Color(0xFF334155), // Home
+    Color(0xFFC2410C), // Alerts
+    Color(0xFF1D4ED8), // Devices
+    Color(0xFF047857), // Internet & Usage
+    Color(0xFF7C3AED), // Security
+    Color(0xFFB45309), // Fix & Commands
+  ];
+
+  List<PcSection> _sections(Map<String, dynamic> s, BuildContext ctx) {
+    final open = ((s['alerts'] as List?) ?? const []).where((a) => (a as Map)['status'] == 'open').length;
+    return [
+      PcSection('Home', Icons.home, sectionColors[0], [
+        ('Overview', () => SummaryTab(s: s, onRefresh: _load, goTo: (i) => _goOld(ctx, i))),
+      ]),
+      PcSection(open > 0 ? 'Alerts ($open)' : 'Alerts', Icons.notifications_active, sectionColors[1], [
+        ('Alerts', () => AlertsTab(s: s, onRefresh: _load)),
+        ('Problems & root cause', () => _ProblemsTab(s: s, onRefresh: _load)),
+        ('Health checks', () => HealthTab(s: s, onRefresh: _load)),
+      ]),
+      PcSection('Devices', Icons.devices, sectionColors[2], [
+        ('All devices', () => _devicesTab(s)),
+        ('Inventory', () => InventoryTab(s: s, onRefresh: _load)),
+        ('Network map', () => MapTab(s: s, onRefresh: _load)),
+      ]),
+      PcSection('Internet & Usage', Icons.insights, sectionColors[3], [
+        ('Live monitor', () => _MonitorTab(s: s, onRefresh: _load)),
+        ('Usage', () => UsageTab(s: s, onRefresh: _load)),
+        ('Slow website?', () => PcToolsTab(s: s, only: const ['slow'])),
+        ('Ping / traceroute', () => PcToolsTab(s: s, only: const ['ping'])),
+      ]),
+      PcSection('Security', Icons.shield, sectionColors[4], [
+        ('Network guard', () => PcToolsTab(s: s, only: const ['guard'])),
+      ]),
+      PcSection('Fix & Commands', Icons.build, sectionColors[5], [
+        ('Router commands', () => PcToolsTab(s: s, only: const ['router'])),
+        ('Command library', () => PcToolsTab(s: s, only: const ['library'])),
+      ]),
+    ];
+  }
+
+  /// Summary cards point at: 1 problems, 2 devices, 3 usage, 5 monitor.
+  void _goOld(BuildContext ctx, int old) {
+    final c = DefaultTabController.of(ctx);
+    c.animateTo(switch (old) { 1 => 1, 2 => 2, 3 => 3, 5 => 3, _ => 0 });
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _s;
     return DefaultTabController(
-      length: 10,
-      child: Builder(builder: (ctx) => Scaffold(
-        appBar: AppBar(
-          title: Text(widget.pc.name, overflow: TextOverflow.ellipsis),
-          actions: [
-            IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh)),
-            IconButton(tooltip: 'Scan on the PC', onPressed: _scan, icon: const Icon(Icons.radar)),
-            PopupMenuButton<String>(
-              onSelected: (v) async {
-                if (v == 'add') widget.onAddPc();
-                if (v == 'unpair') await widget.onUnpair();
-                if (v.startsWith('pc:')) {
-                  widget.onSwitch(widget.others.firstWhere((p) => p.host == v.substring(3)));
-                }
-              },
-              itemBuilder: (_) => [
-                for (final p in widget.others.where((p) => p.host != widget.pc.host))
-                  PopupMenuItem(value: 'pc:${p.host}', child: Text('Switch to ${p.name}')),
-                const PopupMenuItem(value: 'add', child: Text('Pair another PC')),
-                const PopupMenuItem(value: 'unpair', child: Text('Remove this PC')),
-              ],
-            ),
-          ],
-          bottom: const TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [
-            Tab(text: 'Summary'),
-            Tab(text: 'Alerts'),
-            Tab(text: 'Problems'),
-            Tab(text: 'Devices'),
-            Tab(text: 'Map'),
-            Tab(text: 'Usage'),
-            Tab(text: 'Inventory'),
-            Tab(text: 'Monitor'),
-            Tab(text: 'Health'),
-            Tab(text: 'Tools & commands'),
-          ]),
-        ),
-        body: Column(children: [
-          if (_err.isNotEmpty)
-            MaterialBanner(
-              content: Text(_err),
-              leading: const Icon(Icons.wifi_off),
-              actions: [TextButton(onPressed: _load, child: const Text('Retry'))],
-            ),
-          if (s != null && s['scanning'] == true) const LinearProgressIndicator(),
-          Expanded(
-            child: s == null
-                ? Center(child: _err.isEmpty ? const CircularProgressIndicator() : const SizedBox.shrink())
-                : TabBarView(children: [
-                    SummaryTab(s: s, onRefresh: _load, goTo: (i) => DefaultTabController.of(ctx).animateTo(_tabFor(i))),
-                    AlertsTab(s: s, onRefresh: _load),
-                    _ProblemsTab(s: s, onRefresh: _load),
-                    _devicesTab(s),
-                    MapTab(s: s, onRefresh: _load),
-                    UsageTab(s: s, onRefresh: _load),
-                    InventoryTab(s: s, onRefresh: _load),
-                    _MonitorTab(s: s, onRefresh: _load),
-                    HealthTab(s: s, onRefresh: _load),
-                    PcToolsTab(s: s),
-                  ]),
-          ),
-        ]),
-      )),
+      length: 6,
+      child: Builder(builder: (ctx) {
+        final ctl = DefaultTabController.of(ctx);
+        return AnimatedBuilder(
+          animation: ctl,
+          builder: (ctx, _) {
+            final col = sectionColors[ctl.index];
+            final secs = s == null ? null : _sections(s, ctx);
+            return Scaffold(
+              appBar: AppBar(
+                backgroundColor: col,
+                foregroundColor: Colors.white,
+                title: Text(widget.pc.name, overflow: TextOverflow.ellipsis),
+                actions: [
+                  IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh)),
+                  IconButton(tooltip: 'Scan on the PC', onPressed: _scan, icon: const Icon(Icons.radar)),
+                  PopupMenuButton<String>(
+                    onSelected: (v) async {
+                      if (v == 'add') widget.onAddPc();
+                      if (v == 'unpair') await widget.onUnpair();
+                      if (v.startsWith('pc:')) {
+                        widget.onSwitch(widget.others.firstWhere((p) => p.host == v.substring(3)));
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      for (final p in widget.others.where((p) => p.host != widget.pc.host))
+                        PopupMenuItem(value: 'pc:${p.host}', child: Text('Switch to ${p.name}')),
+                      const PopupMenuItem(value: 'add', child: Text('Pair another PC')),
+                      const PopupMenuItem(value: 'unpair', child: Text('Remove this PC')),
+                    ],
+                  ),
+                ],
+                bottom: TabBar(
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  indicatorColor: Colors.white,
+                  indicatorWeight: 3,
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.white70,
+                  tabs: [
+                    for (var i = 0; i < 6; i++)
+                      Tab(
+                        icon: Icon(secs?[i].icon ?? Icons.circle, size: 20),
+                        text: secs?[i].title ??
+                            const ['Home', 'Alerts', 'Devices', 'Internet & Usage', 'Security', 'Fix & Commands'][i],
+                      ),
+                  ],
+                ),
+              ),
+              body: Column(children: [
+                if (_err.isNotEmpty)
+                  MaterialBanner(
+                    content: Text(_err),
+                    leading: const Icon(Icons.wifi_off),
+                    actions: [TextButton(onPressed: _load, child: const Text('Retry'))],
+                  ),
+                if (s != null && s['scanning'] == true) LinearProgressIndicator(color: col),
+                Expanded(
+                  child: secs == null
+                      ? Center(child: _err.isEmpty ? const CircularProgressIndicator() : const SizedBox.shrink())
+                      : TabBarView(children: [for (final sec in secs) SectionView(section: sec)]),
+                ),
+              ]),
+            );
+          },
+        );
+      }),
     );
   }
-
-  /// Summary cards were written for the old tab order (0 summary, 1 problems, 2 devices, 3 usage, 4 inventory,
-  /// 5 monitor).
-  int _tabFor(int old) => const [0, 2, 3, 5, 6, 7][old.clamp(0, 5)];
 
   Widget _devicesTab(Map<String, dynamic> s) {
     final devs = ((s['devices'] as List?) ?? const [])

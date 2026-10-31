@@ -1,0 +1,104 @@
+name: UI - live screen test (Windows + Android)
+
+# Starts the real apps and opens every screen:
+#  * Windows: the built NetworkDoctor.exe runs its --selftest (every section and page, the phone link),
+#  * Android: the phone app runs on an emulator with a recorded demo office PC,
+# and saves a screenshot of every screen to the "ci-screens" branch (folder = the commit) for review.
+
+on:
+  pull_request:
+    paths: ["desktop/**", "mobile/**", ".github/workflows/ui-screens.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the exe
+        shell: bash
+        run: |
+          pip install pyinstaller
+          python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
+            --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts \
+            NetworkDoctor.py
+      - name: Run the exe self-test (every page + phone link)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\NetworkDoctor.exe -ArgumentList '--selftest', "$PWD\screens" -PassThru
+          if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Error "self-test did not finish" }
+          Get-Content screens\selftest.txt
+          if ($p.ExitCode -ne 0) { Write-Error "self-test reported errors" }
+      - name: Save screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screens
+          path: desktop/screens
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Enable KVM (fast emulator)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - run: flutter pub get
+      - name: Open every screen on an Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          working-directory: mobile
+          script: flutter drive --driver=test_driver/integration_test.dart --target=integration_test/screens_test.dart --dart-define=ND_DEMO=true
+      - name: Save screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-screens
+          path: mobile/build/screens
+
+  publish:
+    needs: [windows, android]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: shots
+      - name: Put the screenshots on the ci-screens branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          git clone --depth 1 --branch ci-screens "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" repo 2>/dev/null || {
+            git init repo; cd repo; git checkout -b ci-screens; git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"; cd ..; }
+          mkdir -p "repo/$sha"
+          cp -r shots/* "repo/$sha/" || true
+          cd repo
+          git config user.name "Network Doctor CI"; git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -m "screens for $sha" && git push origin ci-screens || echo "nothing to save"

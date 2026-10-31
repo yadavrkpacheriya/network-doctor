@@ -58,7 +58,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.16.0"
+VERSION = "3.17.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -480,11 +480,11 @@ class App(tk.Tk):
         if core.IS_WIN and not core.is_admin():
             ttk.Button(top, text="Restart as Administrator (full tests)", command=self.elevate).pack(side="right")
         elif core.is_admin():
-            ttk.Label(top, text="Administrator: full tests on", foreground="#1f7a3d").pack(side="right")
+            ttk.Label(top, text="Admin: full tests", foreground="#1f7a3d").pack(side="right")
         else:
             ttk.Label(top, text="Standard tests (IP-conflict rounds need administrator)",
                       foreground="#8a4b00").pack(side="right")
-        self.btn_update = ttk.Button(top, text=f"Updates (v{VERSION})", command=self.update_now)
+        self.btn_update = ttk.Button(top, text=f"Update  v{VERSION}", command=self.update_now)
         self.btn_update.pack(side="right", padx=6)
         self.var_mon = tk.StringVar(value="Live monitor: off")
         ttk.Label(top, textvariable=self.var_mon, foreground="#5b21b6").pack(side="right", padx=12)
@@ -504,8 +504,7 @@ class App(tk.Tk):
         ttk.Button(bot, text="Export devices (Excel CSV)", command=self.exp_csv).pack(side="left", padx=6)
         ttk.Button(bot, text="Forget offline devices", command=self.forget_offline).pack(side="left")
 
-        self.nb = ttk.Notebook(self)
-        self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self.nav = nd_tabs.SectionNav(self, on_change=self._tab_changed)
         self._tab_home()
         self._tab_devices()
         self._tab_map()
@@ -521,14 +520,11 @@ class App(tk.Tk):
         self._tab_inventory()
         self._tab_alerts()
         self._tab_setup()
-        names = ["home", "alerts", "devices", "inventory", "map", "monitor", "usage", "slow", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
-        self.tabs = dict(zip(names, self.nb.tabs()))
+        self.nav.select("home")
         self._refresh_alerts()
-        self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
     def _tab_devices(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Devices  ")
+        f = self.nav.page("devices")
         sf = ttk.Frame(f, padding=(0, 6))
         sf.pack(fill="x")
         sf2 = ttk.Frame(f)
@@ -576,76 +572,67 @@ class App(tk.Tk):
         self.row_dev = {}
 
     def _tab_map(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Network map  ")
+        f = self.nav.page("map")
         self.map = nd_tabs.MapTab(self, f)
 
     def _tab_home(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Home  ")
+        f = self.nav.page("home")
         self.M = M
         self.home = nd_home.HomeTab(self, f)
 
     def _tab_slow(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Slow website?  ")
+        f = self.nav.page("slow")
         self.slow = nd_tabs.SlowTab(self, f)
 
     def _tab_usage(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Usage  ")
+        f = self.nav.page("usage")
         self.usage_tab = nd_tabs.UsageTab(self, f)
 
     def _tab_binding(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  IP-MAC binding  ")
+        f = self.nav.page("binding")
         self.binding = nd_tabs.BindingTab(self, f)
 
     def _tab_commands(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Commands  ")
+        f = self.nav.page("commands")
         self.commands = nd_tabs.CommandsTab(self, f)
 
     def _tab_tools(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Tools  ")
+        f = None  # each tool is its own page in the section it belongs to
         self.tools = nd_toolstab.ToolsTab(self, f)
 
     def _tab_alerts(self):
-        f = ttk.Frame(self.nb)
-        self.nb.insert(1, f, text="  Alerts  ")  # right after Home
+        f = self.nav.page("alerts")
         self.alerts_tab = nd_tabs.AlertsTab(self, f)
 
     def _tab_inventory(self):
-        f = ttk.Frame(self.nb, padding=(0, 6, 0, 0))
-        self.nb.insert(2, f, text="  Inventory  ")  # right after Devices
+        f = self.nav.page("inventory")
         self.tools._build_inventory(f)
 
     def show_tab(self, name):
-        if name in self.tabs:
-            self.nb.select(self.tabs[name])
+        """Opens a page by its key ('devices', 'usage', 't_guard'...); 'tools' opens the Security section."""
+        self.nav.select({"tools": "t_guard"}.get(name, name))
 
     def _tab_changed(self, _=None):
-        cur = self.nb.select()
+        cur = self.nav.current()
         try:
-            if cur == self.tabs.get("map"):
+            if cur == "map":
                 self.map.redraw()
-            elif cur == self.tabs.get("binding"):
+            elif cur == "binding":
                 self.binding.refresh()
-            elif cur == self.tabs.get("usage"):
+            elif cur == "usage":
                 self.usage_tab.refresh()
-            elif cur == self.tabs.get("home"):
+            elif cur == "home":
                 self.home.refresh()
-            elif cur == self.tabs.get("slow"):
+            elif cur == "slow":
                 self.slow.refresh()
-            elif cur == self.tabs.get("commands"):
+            elif cur == "commands":
                 self.commands.refresh()
-            elif cur == self.tabs.get("tools"):
-                self.tools.refresh_watch()
-            elif cur == self.tabs.get("alerts"):
+            elif cur == "alerts":
                 self.alerts_tab.refresh()
-            elif cur == self.tabs.get("inventory"):
+            elif cur == "inventory":
                 self.tools._inv_done(None, "")
+            elif cur and cur.startswith("t_"):
+                self.tools.show(cur[2:])
         except Exception:
             pass
 
@@ -675,8 +662,7 @@ class App(tk.Tk):
             pass
 
     def _tab_monitor(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Live monitor  ")
+        f = self.nav.page("monitor")
         top = ttk.Frame(f, padding=(0, 6))
         top.pack(fill="x")
         self.btn_mon = ttk.Button(top, text="Stop monitor", command=self.toggle_monitor)
@@ -707,8 +693,7 @@ class App(tk.Tk):
         self.te = make_tree(b, ("sev", "src", "ev"), ("Level", "Source", "Event"), (70, 110, 520), first=("Time", 80))
 
     def _tab_rca(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Root cause  ")
+        f = self.nav.page("rca")
         top = ttk.Frame(f, padding=(0, 6))
         top.pack(fill="x")
         ttk.Button(top, text="Run root cause analysis", style="Big.TButton", command=self.run_rca).pack(side="left")
@@ -718,8 +703,7 @@ class App(tk.Tk):
         self.trca = text_box(f)
 
     def _tab_problems(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Problems  ")
+        f = self.nav.page("problems")
         pw = ttk.PanedWindow(f, orient="vertical")
         pw.pack(fill="both", expand=True)
         a, b = ttk.Frame(pw), ttk.Frame(pw)
@@ -731,13 +715,11 @@ class App(tk.Tk):
         self.row_issue = {}
 
     def _tab_checks(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Health checks  ")
+        f = self.nav.page("checks")
         self.tc = make_tree(f, ("res", "det"), ("Result", "Details"), (100, 800), first=("Check", 300))
 
     def _tab_setup(self):
-        f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  Setup  ")
+        f = self.nav.page("setup")
         top = ttk.Frame(f, padding=(0, 6))
         top.pack(fill="x")
         ttk.Button(top, text="Copy router commands", command=self.copy_setup).pack(side="left")
@@ -1024,7 +1006,7 @@ class App(tk.Tk):
         except Exception:
             pass
         try:
-            if self.nb.select() == self.tabs.get("home"):
+            if self.nav.current() == "home":
                 self.home.refresh()
             if time.time() - getattr(self, "_upd_tick_t", 0) > 60:  # daily 15:00 update check
                 self._upd_tick_t = time.time()
@@ -1631,7 +1613,7 @@ class App(tk.Tk):
                 T.set_tag(self.db, mac, watch="1")
                 core.save_db(self.db)
                 self.watch_now()
-                self.var_status.set(f"{d['name'] or ip} is now watched (Tools > Critical devices).")
+                self.var_status.set(f"{d['name'] or ip} is now watched (Security > Critical devices).")
             elif what in ("cip", "cmac", "call"):
                 txt = ip if what == "cip" else mac if what == "cmac" else \
                     f"{d['name']}\t{', '.join(sorted(d['ips'], key=core.ip_key))}\t{mac}\t{d['vendor']}\t{d['category']}"
@@ -1989,7 +1971,7 @@ class App(tk.Tk):
             tab.refresh()
         try:
             n = len(self.alert_log.recent(3000, only_open=True))
-            self.nb.tab(self.tabs["alerts"], text=f"  Alerts ({n})  " if n else "  Alerts  ")
+            self.nav.set_label("alerts", f"Alerts ({n})" if n else "Alerts")
         except Exception:
             pass
 
@@ -2256,9 +2238,9 @@ class App(tk.Tk):
                     self._raise_alert("critical", title, [hint], "Device watch")
         self._auto_label()
         try:
-            if self.nb.select() == self.tabs.get("tools"):
+            if self.nav.current() == "t_watch":
                 self.tools.refresh_watch()
-            if self.nb.select() == self.tabs.get("map") and any(v.get("down_since") for v in self.watch_state.values()):
+            if self.nav.current() == "map" and any(v.get("down_since") for v in self.watch_state.values()):
                 self.map.redraw()
         except Exception:
             pass
@@ -2779,7 +2761,7 @@ class App(tk.Tk):
             return
         if not info:
             self.var_upd.set(f"Version {VERSION} - up to date (checked {time.strftime('%d-%b %H:%M')})")
-            self.btn_update.configure(text=f"Updates (v{VERSION})")
+            self.btn_update.configure(text=f"Update  v{VERSION}")
             if not auto:
                 messagebox.showinfo(APP, f"You have the latest version ({VERSION}).")
             return
@@ -2894,7 +2876,7 @@ class App(tk.Tk):
             except Exception:
                 pass
             self.btn_update.configure(text="Update now" if getattr(self, "update_info", None) else
-                                      f"Updates (v{VERSION})")
+                                      f"Update  v{VERSION}")
             self.var_upd.set("Update failed: " + msg[1][:120])
             self._health_log("Update", "warning", "update failed: " + msg[1][:200])
             if not self._upd_silent:
@@ -3007,6 +2989,86 @@ class App(tk.Tk):
         self.destroy()
 
 
+def selftest(app, out_dir):
+    """--selftest <folder>: opens every section and page, saves a screenshot of each (Windows), checks the phone
+    link answers, writes selftest.txt and closes. Used by the automatic Windows test before a release."""
+    import traceback
+    os.makedirs(out_dir, exist_ok=True)
+    errors, lines = [], []
+    app.report_callback_exception = lambda e, v, tb: errors.append("".join(traceback.format_exception(e, v, tb)))
+
+    def pump(sec):
+        end = time.time() + sec
+        while time.time() < end:
+            app.update()
+            time.sleep(0.05)
+
+    def shot(name):
+        if not core.IS_WIN:
+            return
+        path = os.path.join(os.path.abspath(out_dir), name + ".png")
+        ps = ("Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+              "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+              "$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height; "
+              "$g=[System.Drawing.Graphics]::FromImage($i); $g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size); "
+              f"$i.Save('{path}')")
+        core.run(["powershell", "-NoProfile", "-Command", ps], 30)
+
+    app.alert_mute_until = time.time() + 3600
+    app.deiconify()
+    try:
+        app.state("zoomed")
+    except Exception:
+        pass
+    pump(3)
+    n = 0
+    for sec in nd_tabs.SECTIONS:
+        for page, title in sec[4]:
+            n += 1
+            before = len(errors)
+            try:
+                app.nav.select(page)
+            except Exception:
+                errors.append(traceback.format_exc())
+            pump(1.5)
+            for w in [w for w in app.winfo_children() if isinstance(w, tk.Toplevel)]:
+                w.destroy()
+            shot(f"{n:02d}-{sec[1].replace(' & ', '-').replace(' ', '-')}-{title.replace(' ', '-').replace('/', '-').replace('?', '')}")
+            lines.append(f"{'FAIL' if len(errors) > before else 'ok  '}  {sec[1]} > {title}")
+    # the phone link answers (state + an action)
+    try:
+        import urllib.request
+        app.var_share.set(True)
+        app.toggle_share()
+        pump(2)
+        if app.share and app.share.httpd:
+            tok = "selftest-token"
+            app.share.store["phones"][tok] = {"name": "selftest"}
+            base = f"http://127.0.0.1:{SH.HTTP_PORT}"
+            r = urllib.request.urlopen(urllib.request.Request(base + "/api/state", headers={"X-ND-Token": tok}), timeout=20)
+            st = json.loads(r.read())
+            lines.append(f"ok    phone link /api/state: {len(json.dumps(st)) // 1024} kB, keys {len(st)}")
+            req = urllib.request.Request(base + "/api/action", data=json.dumps({"action": "ping", "args": {"ip": "127.0.0.1"}}).encode(),
+                                         headers={"X-ND-Token": tok, "Content-Type": "application/json"}, method="POST")
+            res = json.loads(urllib.request.urlopen(req, timeout=20).read())
+            lines.append(f"{'ok  ' if res.get('ok') else 'FAIL'}  phone link /api/action ping: {res.get('message')}")
+            app.share.store["phones"].pop(tok, None)
+        else:
+            lines.append(f"FAIL  phone link did not start: {getattr(app.share, 'error', '')}")
+    except Exception:
+        errors.append(traceback.format_exc())
+        lines.append("FAIL  phone link")
+    with open(os.path.join(out_dir, "selftest.txt"), "w", encoding="utf-8") as f:
+        f.write(f"Network Doctor {VERSION} self-test, {n} pages\n" + "\n".join(lines) + "\n\nERRORS: " + str(len(errors)) + "\n")
+        f.write("\n---\n".join(errors))
+    print("\n".join(lines), "\nERRORS:", len(errors), flush=True)
+    os._exit(1 if errors else 0)
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    _app = App()
+    if "--selftest" in sys.argv:
+        _app.after(4000, lambda: selftest(_app, sys.argv[sys.argv.index("--selftest") + 1]
+                                          if len(sys.argv) > sys.argv.index("--selftest") + 1 else "selftest"))
+    _app.mainloop()
     os._exit(0)  # do not wait for background lookups / pings still running

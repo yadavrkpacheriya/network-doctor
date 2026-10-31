@@ -1101,7 +1101,7 @@ COMMANDS = [
     ("Windows", "This PC", "Routing table", "route print -4",
      "Two 0.0.0.0 routes (cable + Wi-Fi, or a VPN) = traffic may go out the wrong way."),
     ("Windows", "This PC", "MTU of each adapter", "netsh interface ipv4 show subinterfaces",
-     "Normal 1500. Use Tools > MTU finder to test the whole path."),
+     "Normal 1500. Use Fix & Commands > MTU finder to test the whole path."),
     ("Windows", "This PC", "Look up a name (DNS)", "nslookup {host}",
      "Which DNS server answers and which IP it gives. 'Non-existent domain' / timeout = DNS problem."),
     ("Windows", "This PC", "Shared folders of a PC / NAS", "net view \\\\{ip}", "Lists what a PC or NAS shares."),
@@ -1170,10 +1170,10 @@ COMMANDS = [
     ("MikroTik router", "Router", "Remove a speed limit", '/queue simple remove [find name="ND limit {ip}"]', ""),
     ("MikroTik router", "Router", "Fix websites that hang (MSS clamp)",
      '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn action=change-mss new-mss=clamp-to-pmtu '
-     'passthrough=yes comment="ND: MSS clamp"', "For PPPoE / VPN lines with MTU below 1500 (Tools > MTU finder)."),
+     'passthrough=yes comment="ND: MSS clamp"', "For PPPoE / VPN lines with MTU below 1500 (Fix & Commands > MTU finder)."),
     ("MikroTik router", "Router", "Use fast public DNS on the router",
      "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes",
-     "After Tools > DNS server test. Make sure the firewall drops DNS (port 53) coming from the internet side."),
+     "After Internet & Usage > DNS server test. Make sure the firewall drops DNS (port 53) coming from the internet side."),
     ("MikroTik router", "Router", "DHCP leases (all devices)", "/ip dhcp-server lease print",
      "Every address the router gave out; 'D' = dynamic, no D = reserved (bound)."),
     ("MikroTik router", "Router", "Is the DHCP pool full?", "/ip pool used print count-only",
@@ -1462,7 +1462,7 @@ VENDOR_COMMANDS = [
      "Web admin: Logs & Reports > Settings > Syslog server {lip} port 514.", ""),
     # ---- generic
     ("Any switch / router", "Each device", "Find a device's switch port without a login",
-     "Network Doctor > Tools > Switch port finder (SNMP community netdoctor), or unplug-and-watch with 'ping -t {ip}'.",
+     "Network Doctor > Devices > Switches (SNMP) (SNMP community netdoctor), or unplug-and-watch with 'ping -t {ip}'.",
      "Works with any SNMP switch (Cisco, TP-Link, D-Link, HP, Netgear, Huawei)."),
 ]
 for _c in VENDOR_COMMANDS:

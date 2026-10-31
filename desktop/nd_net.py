@@ -1235,8 +1235,8 @@ def lan_advice(mbps):
         return "Below gigabit - a Wi-Fi hop, a busy switch or a slow PC disk/CPU on one end."
     if 70 <= mbps < 100:
         return ("About 100 Mbit/s - somewhere on the path a link runs at 100 Mbps: a damaged cable (only 4 of 8 wires "
-                "working), an old switch, or a port set to 100 Mbps. Check the adapter speed on both PCs (Tools > "
-                "This PC's adapters) and the switch port lights.")
+                "working), an old switch, or a port set to 100 Mbps. Check the adapter speed on both PCs (Fix & Commands > "
+                "Network adapters) and the switch port lights.")
     return ("Very slow for a cable network - a bad cable / port (errors), a loop or storm, or Wi-Fi with a weak signal. "
             "Run it again with both PCs on cable, then check the adapters and the Live monitor.")
 

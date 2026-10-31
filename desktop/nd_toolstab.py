@@ -72,54 +72,37 @@ TOOLS = [
 
 
 class ToolsTab:
-    def __init__(self, app, parent):
+    def __init__(self, app, parent=None):
+        """Every tool is its own page in the section it belongs to (app.nav pages 't_<key>'), built the first
+        time it is opened."""
         self.app = app
         self.q = queue.Queue()
         self.frames, self.texts, self.status, self.stops, self.btns = {}, {}, {}, {}, {}
         self.lan_server = None
         self.live = set()
-        pw = ttk.PanedWindow(parent, orient="horizontal")
-        pw.pack(fill="both", expand=True, pady=(6, 0))
-        left = ttk.Frame(pw)
-        self.body = ttk.Frame(pw)
-        pw.add(left, weight=0)
-        pw.add(self.body, weight=1)
-        self.lb = tk.Listbox(left, width=34, activestyle="none", font=("Segoe UI", 10), exportselection=False,
-                             relief="flat", highlightthickness=1, highlightbackground="#d0d5dd",
-                             selectbackground="#1d4ed8", selectforeground="white")
-        self.lb.pack(fill="both", expand=True)
-        for _, name, _ in TOOLS:
-            self.lb.insert("end", "  " + name)
-        self.lb.bind("<<ListboxSelect>>", lambda e: self.show())
         self.current = None
-        self.lb.selection_set(0)
-        self.show()
         app.after(150, self._poll)
 
     # ------------------------------------------------------------------ plumbing
     def show(self, key=None):
-        if key is None:
-            sel = self.lb.curselection()
-            key = TOOLS[sel[0]][0] if sel else "watch"
-        elif key == "inventory":  # its own tab now
-            self.app.show_tab("inventory")
+        key = key or "watch"
+        if key == "inventory":  # its own page
+            self.app.nav.select("inventory")
             return
-        else:
-            idx = [t[0] for t in TOOLS].index(key)
-            self.lb.selection_clear(0, "end")
-            self.lb.selection_set(idx)
-        if self.current == key:
+        if key not in {t[0] for t in TOOLS}:
             return
-        if self.current:
-            self.frames[self.current].pack_forget()
+        if self.app.nav.current() != "t_" + key:
+            self.app.nav.select("t_" + key)  # comes back here through the page-change handler
+            return
         if key not in self.frames:
-            f = ttk.Frame(self.body, padding=(10, 0, 0, 0))
+            page = self.app.nav.page("t_" + key)
+            f = ttk.Frame(page, padding=(4, 4, 0, 0))
+            f.pack(fill="both", expand=True)
             self.frames[key] = f
             name, desc = next((n, d) for k, n, d in TOOLS if k == key)
             ttk.Label(f, text=name, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-            ttk.Label(f, text=desc, foreground="#667085", wraplength=900, justify="left").pack(anchor="w", pady=(0, 6))
+            ttk.Label(f, text=desc, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(0, 6))
             getattr(self, "_build_" + key)(f)
-        self.frames[key].pack(fill="both", expand=True)
         self.current = key
         if key == "watch":
             self.refresh_watch()
@@ -952,7 +935,7 @@ class ToolsTab:
         ttk.Separator(row, orient="vertical").pack(side="left", fill="y", padx=10)
         self.var_lantarget, _ = self._combo(row, "Other PC:", [], 28)
         self._run_btn(row, "lan", "Test speed", self._lan)
-        ttk.Label(f, text="How: open Network Doctor on the other PC, Tools > LAN speed test, tick 'Receiver ON'. Then "
+        ttk.Label(f, text="How: open Network Doctor on the other PC, Fix & Commands > LAN speed test, tick 'Receiver ON'. Then "
                           "press Test speed here. Test across the switch you suspect.", foreground="#667085").pack(
             anchor="w", pady=(4, 0))
         self._out_box(f, "lan")
@@ -1221,7 +1204,7 @@ class ToolsTab:
         opts = {k: v.get() for k, v in self.g.items()}
         opts["dns_target"] = self.var_g_dns.get()
         if opts["dns"] and opts["dns_target"] == "pc" and not getattr(self, "dnsf", None):
-            messagebox.showwarning("Network guard", "DNS to this PC needs the Website firewall running here (Tools > "
+            messagebox.showwarning("Network guard", "DNS to this PC needs the Website firewall running here (Security > "
                                                     "Website firewall > Start), or every device loses internet names. "
                                                     "Choose 'the router' or start the firewall first.")
             return False
@@ -1612,7 +1595,7 @@ class ToolsTab:
                  "The router feeds go to this IP - reserve it in the IP-MAC binding tab (this PC is always included).")
         w = T.watched(app.db)
         item(bool(w), f"Critical devices watched: {len(w)}",
-             "Tools > Critical devices: watch the router, server, ERP PC, DVR and switches.")
+             "Security > Critical devices: watch the router, server, ERP PC, DVR and switches.")
         tags = T.tags_of(app.db)
         on = [d for d in app.devices if d.get("online") and d.get("mac")]
         tagged = [d for d in on if tags.get(d["mac"], {}).get("dept") or tags.get(d["mac"], {}).get("parent")]

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,6 +44,10 @@ class FoundPc {
 
 class PcLink {
   static const _key = 'paired_pcs';
+
+  /// Demo / automatic screen test: --dart-define=ND_DEMO=true shows a recorded office PC (no network needed).
+  static const demo = bool.fromEnvironment('ND_DEMO');
+  static PairedPc demoPc() => PairedPc(name: 'OFFICE-PC (demo)', host: 'demo', port: pcPort, token: 'demo');
 
   static Future<List<PairedPc>> load() async {
     final p = await SharedPreferences.getInstance();
@@ -114,6 +119,9 @@ class PcLink {
   }
 
   static Future<Map<String, dynamic>> state(PairedPc pc) async {
+    if (pc.host == 'demo') {
+      return Map<String, dynamic>.from(jsonDecode(await rootBundle.loadString('assets/demo_state.json')) as Map);
+    }
     final r = await _send(() => http.get(pc.uri('/api/state'), headers: {'X-ND-Token': pc.token}), 'load data');
     if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
@@ -121,6 +129,7 @@ class PcLink {
   }
 
   static Future<String> startScan(PairedPc pc) async {
+    if (pc.host == 'demo') return '(demo) scan started';
     final r = await _send(() => http.post(pc.uri('/api/scan'), headers: {'X-ND-Token': pc.token}), 'start a scan');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
     return ((jsonDecode(r.body) as Map)['result'] ?? '').toString();
@@ -133,6 +142,11 @@ class PcLink {
   /// Runs an action on the PC (tag, bind, block, fix an alert, ping, slow-site check...).
   /// Answers {ok, message} or {ok, job} for long work (see [waitJob]).
   static Future<Map<String, dynamic>> action(PairedPc pc, String action, [Map<String, dynamic> args = const {}]) async {
+    if (pc.host == 'demo') {
+      return action == 'job'
+          ? {'ok': true, 'done': true, 'text': '(demo) the office PC would show the result here'}
+          : {'ok': true, 'message': '(demo) $action sent to the office PC'};
+    }
     final r = await _send(
         () => http.post(pc.uri('/api/action'),
             headers: {'X-ND-Token': pc.token, 'Content-Type': 'application/json'},

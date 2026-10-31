@@ -431,8 +431,11 @@ class HealthTab extends StatelessWidget {
 
 // ------------------------------------------------------------------ tools
 class PcToolsTab extends StatefulWidget {
-  const PcToolsTab({super.key, required this.s});
+  const PcToolsTab({super.key, required this.s, this.only});
   final Map<String, dynamic> s;
+
+  /// Which tools to show (slow, ping, guard, router, library); null = all. A single tool opens expanded.
+  final List<String>? only;
 
   @override
   State<PcToolsTab> createState() => _PcToolsTabState();
@@ -457,8 +460,11 @@ class _PcToolsTabState extends State<PcToolsTab> {
         .where((c) => _cq.isEmpty || '${c['group']} ${c['name']} ${c['cmd']}'.toLowerCase().contains(_cq.toLowerCase()))
         .toList();
     final login = widget.s['router_login'] == true;
-    Widget section(String title, IconData icon, List<Widget> children) => Card(
+    final only = widget.only;
+    Widget section(String key, String title, IconData icon, List<Widget> children) =>
+        only != null && !only.contains(key) ? const SizedBox.shrink() : Card(
           child: ExpansionTile(
+            initiallyExpanded: only != null && only.length == 1,
             leading: Icon(icon),
             title: Text(title),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -481,12 +487,12 @@ class _PcToolsTabState extends State<PcToolsTab> {
       ),
     );
     return ListView(padding: const EdgeInsets.all(12), children: [
-      if (!login)
+      if (!login && (only == null || only.any((k) => ['guard', 'router'].contains(k))))
         const Card(
             child: ListTile(
                 leading: Icon(Icons.info_outline),
                 title: Text('Router changes need the router login saved on the PC (Setup > Router login).'))),
-      section('Slow website? Find the cause', Icons.speed, [
+      section('slow', 'Slow website? Find the cause', Icons.speed, [
         devPicker,
         const SizedBox(height: 8),
         TextField(controller: _url, decoration: const InputDecoration(labelText: 'Website', isDense: true)),
@@ -502,7 +508,7 @@ class _PcToolsTabState extends State<PcToolsTab> {
               title: 'Slow website: ${_url.text}'),
         ),
       ]),
-      section('Ping / traceroute from the PC', Icons.network_ping, [
+      section('ping', 'Ping / traceroute from the PC', Icons.network_ping, [
         TextField(
             controller: _ip,
             keyboardType: TextInputType.number,
@@ -517,7 +523,7 @@ class _PcToolsTabState extends State<PcToolsTab> {
               child: const Text('Traceroute')),
         ]),
       ]),
-      section('Network guard (on the router)', Icons.shield, [
+      section('guard', 'Network guard (on the router)', Icons.shield, [
         for (final g in const [
           ['torrent', 'Block torrents', 'Torrent traffic and torrent websites for every device'],
           ['dns', 'All DNS through the router', 'Exact website names in Usage; stops DNS bypass'],
@@ -536,9 +542,9 @@ class _PcToolsTabState extends State<PcToolsTab> {
               child: const Text('Apply'),
             ),
           ),
-        const Text('Undo: Tools > Network guard on the PC.'),
+        const Text('Undo: Security > Network guard on the PC.'),
       ]),
-      section('Router commands', Icons.terminal, [
+      section('router', 'Router commands', Icons.terminal, [
         TextField(
             decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Find a command', isDense: true),
             onChanged: (v) => setState(() => _cq = v)),
@@ -556,7 +562,7 @@ class _PcToolsTabState extends State<PcToolsTab> {
             ),
           ),
       ]),
-      section('Other brands, antivirus, drivers (copy)', Icons.library_books, [
+      section('library', 'Other brands, antivirus, drivers (copy)', Icons.library_books, [
         for (final c in _ms(widget.s['commands']).where((c) => c['where'] != 'Router').take(200))
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -702,5 +708,65 @@ class PcDeviceActions extends StatelessWidget {
       if (d.text.trim().isNotEmpty) 'dept': d.text.trim(),
       if (l.text.trim().isNotEmpty) 'location': l.text.trim(),
     });
+  }
+}
+
+
+// ------------------------------------------------------------------ sections (coloured groups of pages)
+class PcSection {
+  const PcSection(this.title, this.icon, this.color, this.pages);
+  final String title;
+  final IconData icon;
+  final Color color;
+  final List<(String, Widget Function())> pages;
+}
+
+/// One coloured section: chips for its pages on top, the chosen page below.
+class SectionView extends StatefulWidget {
+  const SectionView({super.key, required this.section});
+  final PcSection section;
+
+  @override
+  State<SectionView> createState() => _SectionViewState();
+}
+
+class _SectionViewState extends State<SectionView> with AutomaticKeepAliveClientMixin {
+  int _i = 0;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final sec = widget.section;
+    final pages = sec.pages;
+    if (_i >= pages.length) _i = 0;
+    return Column(children: [
+      if (pages.length > 1)
+        Container(
+          color: sec.color.withValues(alpha: 0.08),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            child: Row(children: [
+              for (var i = 0; i < pages.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text(pages[i].$1),
+                    selected: i == _i,
+                    showCheckmark: false,
+                    selectedColor: sec.color,
+                    labelStyle: TextStyle(color: i == _i ? Colors.white : sec.color, fontWeight: FontWeight.w600),
+                    side: BorderSide(color: sec.color.withValues(alpha: 0.5)),
+                    onSelected: (_) => setState(() => _i = i),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+      Expanded(child: pages[_i].$2()),
+    ]);
   }
 }
