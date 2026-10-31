@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'net/update.dart';
 
 import 'screens/about_screen.dart';
 import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/tools_screen.dart';
 
-const appVersion = '1.2.0';
+const appVersion = '1.3.0';
 
 void main() => runApp(const NetworkDoctorApp());
 
@@ -34,11 +37,38 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
+  AppUpdate? _update;
+
+  @override
+  void initState() {
+    super.initState();
+    dailyCheck(appVersion).then((u) {
+      if (mounted && u != null) setState(() => _update = u);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final u = _update;
     return Scaffold(
-      body: IndexedStack(index: _tab, children: const [ScanScreen(), ToolsScreen(), PcScreen(), AboutScreen()]),
+      body: Column(children: [
+        if (u != null)
+          SafeArea(
+            bottom: false,
+            child: MaterialBanner(
+              leading: const Icon(Icons.system_update),
+              content: Text('Network Doctor ${u.version} is available (you have $appVersion).'),
+              actions: [
+                TextButton(onPressed: () => setState(() => _update = null), child: const Text('Later')),
+                FilledButton(
+                    onPressed: () => launchUrl(Uri.parse(u.apkUrl), mode: LaunchMode.externalApplication),
+                    child: const Text('Update')),
+              ],
+            ),
+          ),
+        Expanded(
+            child: IndexedStack(index: _tab, children: const [ScanScreen(), ToolsScreen(), PcScreen(), AboutScreen()])),
+      ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),

@@ -6,7 +6,10 @@ import 'package:network_doctor/net/model.dart';
 import 'package:network_doctor/net/probe.dart';
 import 'package:network_doctor/net/snmp.dart' as snmp;
 import 'package:network_doctor/net/tools.dart';
+import 'package:network_doctor/net/update.dart';
 import 'package:network_doctor/screens/about_screen.dart';
+import 'package:network_doctor/screens/pc_more.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Uint8List fakeNbstatAnswer(String name) {
   final b = BytesBuilder();
@@ -106,7 +109,97 @@ void main() {
     });
   });
 
+
+  group('Updates', () {
+    test('version compare', () {
+      expect(isNewer('1.3.0', '1.2.0'), isTrue);
+      expect(isNewer('1.10.0', '1.9.9'), isTrue);
+      expect(isNewer('1.2.0', '1.2.0'), isFalse);
+      expect(isNewer('mobile-v1.2.1', '1.3.0'), isFalse);
+      expect(parseVersion('1.3.0+5'), [1, 3, 0]);
+    });
+    test('newest Android release with an APK is picked', () {
+      final rel = [
+        {'tag_name': 'v3.12.0', 'assets': [{'name': 'NetworkDoctor.exe', 'browser_download_url': 'x'}]},
+        {'tag_name': 'mobile-v1.4.0', 'draft': true, 'assets': [{'name': apkName, 'browser_download_url': 'd'}]},
+        {'tag_name': 'mobile-v1.3.0', 'html_url': 'p', 'assets': [{'name': apkName, 'browser_download_url': 'a13'}]},
+        {'tag_name': 'mobile-v1.2.0', 'assets': [{'name': apkName, 'browser_download_url': 'a12'}]},
+        {'tag_name': 'mobile-v1.5.0', 'assets': []},
+      ];
+      final u = newestMobile(rel)!;
+      expect(u.version, '1.3.0');
+      expect(u.apkUrl, 'a13');
+    });
+  });
+
+  group('Office PC tabs', () {
+    final snap = <String, dynamic>{
+      'pc': 'OFFICE-PC', 'pc_ip': '192.168.0.70', 'version': '3.13.0',
+      'devices': [
+        {'name': 'SALES-PC', 'ip': '192.168.0.40', 'online': true, 'category': 'Computers'},
+        {'name': 'Galaxy-S23', 'ip': '192.168.0.77', 'online': true, 'category': 'Phones / tablets'},
+      ],
+      'issues': [{'sev': 'warning', 'title': 'x'}],
+      'checklist': [
+        {'ok': true, 'title': 'Router login', 'detail': 'connected'},
+        {'ok': false, 'title': 'Router log', 'detail': 'waiting'},
+        {'ok': null, 'title': 'Exact app per person (optional)', 'detail': 'optional'},
+      ],
+      'monitor': {'status': {'flows': 'receiving (10 packets)', 'syslog': 'waiting'}},
+      'usage': {
+        'today': {
+          'cats': {'work': 3000000, 'neutral': 1000000, 'personal': 6000000},
+          'apps': [
+            {'app': 'YouTube', 'cat': 'personal', 'bytes': 6000000, 'minutes': 40, 'devices': 1, 'group': 'Video'},
+            {'app': 'WhatsApp', 'cat': 'work', 'bytes': 3000000, 'minutes': 25, 'devices': 2, 'group': 'Messaging'},
+          ],
+          'sites': [{'site': 'googlevideo.com', 'app': 'YouTube', 'cat': 'personal', 'bytes': 6000000, 'visits': 3}],
+          'devices': [
+            {'name': 'SALES-PC', 'dept': 'Sales', 'bytes': 9000000, 'work': 25, 'personal': 40, 'score': 38, 'top': 'YouTube'},
+          ],
+        },
+        'week': {'cats': {}, 'apps': [], 'sites': [], 'devices': []},
+        'insights': [{'sev': 'warning', 'title': 'Busiest hours: 15:00', 'text': 'YouTube', 'action': 'Block it'}],
+      },
+      'inventory': [
+        {'name': 'SALES-PC', 'ip': '192.168.0.40', 'mac': 'AA:BB', 'model': 'OptiPlex 7090', 'serial': 'ABC123',
+         'online': true, 'category': 'Computers', 'dept': 'Sales'},
+        {'name': 'Galaxy-S23', 'ip': '192.168.0.77', 'mac': 'DA:A1', 'online': true, 'category': 'Phones'},
+      ],
+    };
+    Future<void> noop() async {}
+    Widget wrap(Widget w) => MaterialApp(home: Scaffold(body: w));
+
+    testWidgets('summary shows cards and checklist', (tester) async {
+      await tester.pumpWidget(wrap(SummaryTab(s: snap, onRefresh: noop, goTo: (_) {})));
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text('Router login'), findsOneWidget);
+      expect(find.text('1 of 2'), findsOneWidget);
+    });
+    testWidgets('usage shows apps, people and advice', (tester) async {
+      await tester.pumpWidget(wrap(UsageTab(s: snap, onRefresh: noop)));
+      expect(find.text('YouTube'), findsWidgets);
+      expect(find.text('38%'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('Busiest hours: 15:00'), 300);
+      expect(find.text('Busiest hours: 15:00'), findsOneWidget);
+      await tester.tap(find.text('7 days'));
+      await tester.pump();
+      expect(find.text('No app traffic recorded for this period yet'), findsOneWidget);
+    });
+    testWidgets('inventory searches and expands', (tester) async {
+      await tester.pumpWidget(wrap(InventoryTab(s: snap, onRefresh: noop)));
+      expect(find.text('2 devices'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'abc123');
+      await tester.pump();
+      expect(find.text('1 devices'), findsOneWidget);
+      await tester.tap(find.text('SALES-PC'));
+      await tester.pumpAndSettle();
+      expect(find.byWidgetPredicate((w) => w is SelectableText && w.data == 'OptiPlex 7090'), findsOneWidget);
+    });
+  });
+
   testWidgets('About screen builds', (tester) async {
+    SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const MaterialApp(home: AboutScreen()));
     expect(find.text('Network Doctor'), findsOneWidget);
   });

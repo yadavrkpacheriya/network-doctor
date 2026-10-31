@@ -88,7 +88,7 @@ CATALOG = [
     ("Google Calendar / Contacts", WORK, "Cloud storage & office", ["calendar.google.com", "contacts.google.com"]),
     ("Google Photos", PERSONAL, "Photos", ["photos.google.com", "photos.googleapis.com",
                                            "photoslibrary.googleapis.com"]),
-    ("Google Play Store", NEUTRAL, "App stores & updates", ["play.google.com", "play.googleapis.com",
+    ("Google Play Store", NEUTRAL, "App stores", ["play.google.com", "play.googleapis.com",
                                                             "play-fe.googleapis.com", "android.clients.google.com",
                                                             "play-lh.googleusercontent.com"]),
     ("Google Maps", NEUTRAL, "Maps & travel", ["maps.google.com", "maps.googleapis.com", "maps.gstatic.com",
@@ -113,13 +113,21 @@ CATALOG = [
     ("Microsoft 365 (Office)", WORK, "Cloud storage & office", ["office.com", "office.net", "office365.com",
                                                                 "officeapps.live.com", "microsoft365.com",
                                                                 "microsoftonline.com", "msauth.net", "msftauth.net",
-                                                                "officecdn.microsoft.com", "cloud.microsoft"]),
+                                                                "cloud.microsoft"]),
     ("Copilot / Bing AI", WORK, "AI tools", ["copilot.microsoft.com", "copilot.cloud.microsoft", "sydney.bing.com"]),
-    ("Windows Update", NEUTRAL, "App stores & updates", [
+    ("Windows Update", NEUTRAL, "Updates & drivers", [
         "windowsupdate.com", "update.microsoft.com", "delivery.mp.microsoft.com", "download.windowsupdate.com",
         "windowsupdate.microsoft.com", "dl.delivery.mp.microsoft.com", "tlu.dl.delivery.mp.microsoft.com",
-        "emdl.ws.microsoft.com", "officecdn.microsoft.com.edgesuite.net"]),
-    ("Microsoft Store", NEUTRAL, "App stores & updates", ["storeedgefd.dsx.mp.microsoft.com",
+        "emdl.ws.microsoft.com", "wustat.windows.com", "ntservicepack.microsoft.com"]),
+    ("Microsoft Office updates", NEUTRAL, "Updates & drivers", ["officecdn.microsoft.com",
+                                                                "officecdn.microsoft.com.edgesuite.net",
+                                                                "officecdnmac.microsoft.com"]),
+    ("Windows Defender updates", NEUTRAL, "Updates & drivers", ["definitionupdates.microsoft.com",
+                                                                "wdcp.microsoft.com", "wdcpalt.microsoft.com",
+                                                                "smartscreen-prod.microsoft.com",
+                                                                "unitedstates.cp.wd.microsoft.com"]),
+    ("Edge browser updates", NEUTRAL, "Updates & drivers", ["msedge.api.cdp.microsoft.com", "edge.microsoft.com"]),
+    ("Microsoft Store", NEUTRAL, "App stores", ["storeedgefd.dsx.mp.microsoft.com",
                                                           "displaycatalog.mp.microsoft.com", "apps.microsoft.com"]),
     ("Xbox", PERSONAL, "Games", ["xboxlive.com", "xbox.com", "xboxservices.com", "gamepass.com"]),
     ("MSN news", PERSONAL, "News & sports", ["msn.com", "msn.cn"]),
@@ -307,13 +315,48 @@ CATALOG = [
                                                   "booking.com", "airbnb.com", "airindia.com", "goindigo.in",
                                                   "uber.com", "olacabs.com", "rapido.bike"]),
     # ---- system, security, cameras, ads
-    ("Apple / iCloud", NEUTRAL, "App stores & updates", ["icloud.com", "apple.com", "mzstatic.com", "aaplimg.com",
+    ("Apple / iCloud", NEUTRAL, "App stores", ["icloud.com", "apple.com", "mzstatic.com", "aaplimg.com",
                                                          "cdn-apple.com", "apple-cloudkit.com", "itunes.com",
                                                          "icloud-content.com"]),
-    ("Android / phone updates", NEUTRAL, "App stores & updates", [
+    ("Phone software updates (Samsung, Xiaomi...)", NEUTRAL, "Updates & drivers", [
         "samsung.com", "samsungcloud.com", "samsungosp.com", "xiaomi.com", "miui.com", "mi.com",
         "oppomobile.com", "heytapmobile.com", "coloros.com", "vivo.com.cn", "vivoglobal.com", "realme.com",
-        "oneplus.com", "oneplus.net", "motorola.com", "lenovo.com", "hihonor.com"]),
+        "oneplus.com", "oneplus.net", "motorola.com", "hihonor.com"]),
+    ("Dell drivers & support", NEUTRAL, "Updates & drivers", ["dell.com", "dellcdn.com", "dellsupportcenter.com",
+                                                              "downloads.dell.com", "dl.dell.com", "dell.co.in",
+                                                              "delltechnologies.com"]),
+    ("Lenovo drivers & support", NEUTRAL, "Updates & drivers", ["lenovo.com", "lenovomm.com", "lenovo.co.in",
+                                                                "lenovovantage.com", "lenovo.com.cn"]),
+    ("HP drivers & support", NEUTRAL, "Updates & drivers", ["hp.com", "hpsmart.com", "hpeprint.com",
+                                                            "hpconnected.com", "hpicorp.net", "hpcloud.hp.com",
+                                                            "hp.io"]),
+    ("Intel drivers", NEUTRAL, "Updates & drivers", ["intel.com", "intel.cn", "intel.in"]),
+    ("NVIDIA / AMD graphics drivers", NEUTRAL, "Updates & drivers", ["nvidia.com", "geforce.com", "nvidia.cn",
+                                                                     "amd.com", "amd.cn"]),
+    ("Other PC makers' drivers", NEUTRAL, "Updates & drivers", ["realtek.com", "asus.com", "asus.com.cn",
+                                                                "acer.com", "msi.com", "gigabyte.com",
+                                                                "asrock.com", "toshiba.com", "dynabook.com",
+                                                                "microsoftsurface.com", "logitech.com",
+                                                                "logi.com", "tp-link.com", "seagate.com",
+                                                                "westerndigital.com", "wdc.com", "sandisk.com",
+                                                                "kingston.com", "crucial.com"]),
+    ("Printer drivers & cloud", NEUTRAL, "Updates & drivers", ["canon.com", "canon.co.in", "epson.com",
+                                                               "epson.co.in", "epson.net", "brother.com",
+                                                               "brother.in", "brother.co.jp", "kyoceradocumentsolutions.com",
+                                                               "ricoh.com", "xerox.com", "konicaminolta.com",
+                                                               "sharp.co.jp", "pantum.com"]),
+    ("Chrome browser updates", NEUTRAL, "Updates & drivers", ["dl.google.com", "update.googleapis.com",
+                                                              "edgedl.me.gvt1.com", "redirector.gvt1.com",
+                                                              "tools.google.com"]),
+    ("Firefox / other browser updates", NEUTRAL, "Updates & drivers", ["mozilla.org", "mozilla.net",
+                                                                       "mozilla.com", "firefox.com", "opera.com",
+                                                                       "operacdn.com", "brave.com",
+                                                                       "bravesoftware.com"]),
+    ("Software downloads (other)", NEUTRAL, "Updates & drivers", ["java.com", "sourceforge.net", "filehippo.com",
+                                                                  "softonic.com", "uptodown.com", "ninite.com",
+                                                                  "7-zip.org", "videolan.org", "winrar.com",
+                                                                  "rarlab.com", "notepad-plus-plus.org",
+                                                                  "apkpure.com", "apkmirror.com"]),
     ("Antivirus updates", NEUTRAL, "Security", ["quickheal.com", "quickheal.co.in", "k7computing.com",
                                                 "avast.com", "avcdn.net", "avg.com", "kaspersky.com",
                                                 "kaspersky-labs.com", "eset.com", "mcafee.com", "norton.com",
@@ -366,6 +409,7 @@ for _app, _cat in [(a, c) for _, a, c in ORG_HINTS] + [(a, c) for a, c in PORT_R
 # addresses whose service is in the middle of the name
 NAME_PATTERNS = [(re.compile(r"(^|\.)doc-[\w-]+-docs\.googleusercontent\.com$"), "Google Drive / Docs"),
                  (re.compile(r"(^|\.)[\w-]+---sn-[\w-]+\.googlevideo\.com$"), "YouTube"),
+                 (re.compile(r"(^|\.)[\w-]+---sn-[\w-]+\.gvt1\.com$"), "Chrome browser updates"),
                  (re.compile(r"(^|\.)web\.whatsapp\.com$"), "WhatsApp"),
                  (re.compile(r"(^|\.)[\w-]*instagram[\w-]*\.([\w-]+\.)*fbcdn\.net$"), "Instagram"),
                  (re.compile(r"(^|\.)whatsapp-cdn-shv[\w-]*\.fbcdn\.net$"), "WhatsApp")]
@@ -828,13 +872,17 @@ class UsageStore:
                             "action": "Give it a speed limit, or schedule its big jobs (backup, CCTV upload, "
                                       "updates) after office hours."})
         # updates / backups during office hours
-        for a in ("Windows Update", "Dropbox", "Apple / iCloud", "CCTV cloud"):
+        upd = [a for a in set().union(*[set(c) for c in app_by_hour.values()]) if group_of(a) == "Updates & drivers"]
+        for hour in range(24):  # all updates and driver downloads together
+            app_by_hour[hour]["Updates & drivers (all)"] = sum(app_by_hour[hour][a] for a in upd)
+        for a in ("Updates & drivers (all)", "Dropbox", "OneDrive / SharePoint", "Apple / iCloud", "CCTV cloud"):
             work_h = sum(app_by_hour[h][a] for h in range(10, 18))
             if work_h > 2e9 * max(1, n_days / 7):
                 out.append({"sev": "info", "title": f"{a}: {fmt_bytes(work_h)} during office hours",
                             "text": "Large downloads / uploads between 10:00 and 18:00 slow everybody else.",
-                            "action": "Schedule it for the night (Windows: Active hours / Delivery Optimization "
-                                      "limits; backups and CCTV cloud: night schedule)."})
+                            "action": "Schedule it for the night (Windows: Active hours and Delivery Optimization "
+                                      "limits; Dell / Lenovo / HP update tools: set to notify only; backups and CCTV "
+                                      "cloud: night schedule)."})
         if n_days < 7:
             out.append({"sev": "info", "title": f"Learning: {n_days} day(s) recorded",
                         "text": "Patterns and 'unusual' warnings get reliable after a week of data.", "action": ""})

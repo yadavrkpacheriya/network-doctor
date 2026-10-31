@@ -21,6 +21,8 @@ This information:
 - is stored only on that device: on Windows in `%APPDATA%\NetworkDoctor`, on Mac in `~/Library/Application Support/NetworkDoctor`, and on Android inside the app's private storage;
 - is never uploaded to the developer or to any third party.
 
+The Windows / Mac app can also keep an internet-usage history (which device used which app or website, how much and when) in `usage.db` in the same folder, for 120 days. It exists only when the router sends traffic data, stays on that PC, and is shown to paired phones on the office network. Tell staff before you use it to measure productivity.
+
 ## Phone app and office PC link
 
 You can pair the Android app with the Network Doctor PC app. The phone then reads the PC's results directly over your local network.
@@ -42,7 +44,8 @@ When you tick *Receiver ON* in *Tools > LAN speed test*, the PC accepts speed te
 
 | Connection | Purpose | What is sent |
 |---|---|---|
-| GitHub (`api.github.com`, `github.com`) | Check for and download updates (Windows/Mac) | A request for the latest version; no personal data |
+| GitHub (`api.github.com`, `github.com`) | Check for and download updates (Windows/Mac/Linux; Android once a day, can be switched off in About) | A request for the latest version; no personal data |
+| Your MikroTik router - only when you save a router login in Setup | Read the device list, DHCP names and DNS cache; apply Network Doctor's own changes | The login stays on the PC, encrypted for the Windows user |
 | Public block-list sites (abuse.ch, Spamhaus, Emerging Threats, FireHOL, Tor Project) | Download lists of known malicious internet addresses | A normal download request; no personal data |
 | `rdap.org` and the regional internet registries | Look up which organisation owns an *internet* server your devices talk to | The internet server's public IP address only - never your own devices' details |
 | The device's DNS server | Look up names of devices and servers | The address being looked up |

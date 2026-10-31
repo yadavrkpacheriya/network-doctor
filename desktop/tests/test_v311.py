@@ -254,3 +254,35 @@ class AppCatalogue(unittest.TestCase):
         self.assertEqual(self.s.category_of("WhatsApp", "Sales"), U.WORK)
         lst = {x["app"]: x for x in self.s.app_list()}
         self.assertEqual(lst["WhatsApp"]["depts"], {"Sales": U.WORK})
+
+
+class PhoneNames(unittest.TestCase):
+    def test_dhcp_names_name_and_sort_phones(self):
+        raw = {"meta": {"gateway": "192.168.0.1", "local_ip": "192.168.0.10", "started": "2026-10-31 10:00"},
+               "arp": {"192.168.0.77": ["DA:A1:19:00:00:01"], "192.168.0.78": ["3C:52:82:01:02:03"],
+                       "192.168.0.1": ["48:8F:5A:11:22:33"]},
+               "ping": {"192.168.0.78": 128}, "ports": {"192.168.0.78": [445]}, "http": {}, "upnp": {}, "nbns": {},
+               "dns": {}, "self_mac": "00:1A:2B:3C:4D:5E",
+               "leases": {"DA:A1:19:00:00:01": {"host": "Galaxy-S23", "ip": "192.168.0.77"},
+                          "3C:52:82:01:02:03": {"host": "ACCOUNTS-PC", "ip": "192.168.0.78"}}}
+        db = {"labels": {}, "devices": {}, "ip_owner": {}, "scans": 0}
+        devs = {d["ip"]: d for d in core.build_devices(raw, {}, db)}
+        self.assertEqual(devs["192.168.0.77"]["name"], "Galaxy-S23")
+        self.assertEqual(devs["192.168.0.77"]["category"], core.CAT_PHONE)
+        self.assertEqual(devs["192.168.0.78"]["name"], "ACCOUNTS-PC")
+        for n in ("Redmi-Note-12", "iPhone", "OPPO-A78", "vivo-Y21", "realme-narzo", "Pixel-7", "SM-A546E",
+                  "android-5f3a1b2c"):
+            self.assertRegex(n.lower(), core.PHONE_NAMES)
+
+    def test_router_api_list_in_health_checks(self):
+        r = {"meta": {"started": core.now_s(), "gateway": "192.168.0.1", "local_ip": "192.168.0.10",
+                      "subnet": "192.168.0.0/24", "admin": True, "scapy": False, "local_subnet": True,
+                      "self_dhcp": True, "self_lease": 86400,
+                      "tests": {"router_arp": {"community": "router login (API)", "entries": 80}}},
+             "arp": {}, "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {}, "self_mac": ""}
+        r["leases"] = {"A": {"host": "Galaxy"}, "B": {"host": ""}}
+        _, checks = core.analyse(r, [], {"devices": {}, "labels": {}, "scans": [], "ip_owner": {}, "bindings": {}})
+        c = {x[0]: x for x in checks}
+        self.assertEqual(c["Router device list"][1], "pass")
+        self.assertIn("router login (API)", c["Router device list"][2])
+        self.assertIn("1 of 2", c["Device names from the router"][2])

@@ -25,7 +25,7 @@ import urllib.request
 REPO = "yadavrkpacheriya/network-doctor"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
-SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py", "nd_routeros.py", "nd_usage.py"]
+SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py", "nd_routeros.py", "nd_usage.py", "nd_home.py"]
 UA = {"User-Agent": "NetworkDoctor-updater", "Accept": "application/vnd.github+json"}
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")

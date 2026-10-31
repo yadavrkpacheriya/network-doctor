@@ -35,6 +35,7 @@ import nd_net as NT
 import nd_toolstab
 import nd_routeros as RO
 import nd_usage as US
+import nd_home
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -503,6 +504,7 @@ class App(tk.Tk):
 
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self._tab_home()
         self._tab_devices()
         self._tab_map()
         self._tab_monitor()
@@ -514,7 +516,7 @@ class App(tk.Tk):
         self._tab_commands()
         self._tab_tools()
         self._tab_setup()
-        names = ["devices", "map", "monitor", "usage", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
+        names = ["home", "devices", "map", "monitor", "usage", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
         self.tabs = dict(zip(names, self.nb.tabs()))
         self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
@@ -572,6 +574,12 @@ class App(tk.Tk):
         self.nb.add(f, text="  Network map  ")
         self.map = nd_tabs.MapTab(self, f)
 
+    def _tab_home(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Home  ")
+        self.M = M
+        self.home = nd_home.HomeTab(self, f)
+
     def _tab_usage(self):
         f = ttk.Frame(self.nb)
         self.nb.add(f, text="  Usage  ")
@@ -605,6 +613,8 @@ class App(tk.Tk):
                 self.binding.refresh()
             elif cur == self.tabs.get("usage"):
                 self.usage_tab.refresh()
+            elif cur == self.tabs.get("home"):
+                self.home.refresh()
             elif cur == self.tabs.get("commands"):
                 self.commands.refresh()
             elif cur == self.tabs.get("tools"):
@@ -818,6 +828,30 @@ class App(tk.Tk):
             (messagebox.showinfo if ok else messagebox.showerror)(APP, ("Router login works: " if ok else "") + text)
         threading.Thread(target=work, daemon=True).start()
 
+    def _router_fetch(self):
+        """For the scan (worker thread): the router's ARP table and DHCP leases, with the names devices gave."""
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            return None
+        try:
+            with c:
+                leases = c.leases()
+                arp = c.cmd("/ip/arp/print")
+        except RO.RosError as e:
+            return {"error": str(e)}
+        out_l = {}
+        for x in leases:
+            mac = core.norm_mac(x.get("mac-address", ""))
+            if mac:
+                out_l[mac] = {"host": (x.get("host-name") or "").strip()[:40], "ip": x.get("address", ""),
+                              "static": x.get("dynamic") != "true", "status": x.get("status", "")}
+        out_a = {}
+        for x in arp:
+            mac = core.norm_mac(x.get("mac-address", ""))
+            if mac and x.get("address") and x.get("invalid") != "true" and not core.is_bad_mac(mac):
+                out_a[x["address"]] = mac
+        return {"leases": out_l, "arp": out_a}
+
     def router_forget(self):
         self._settings().pop("router_api", None)
         self._save_settings()
@@ -960,6 +994,15 @@ class App(tk.Tk):
     def _tick(self):
         try:
             self._tick_once()
+        except Exception:
+            pass
+        try:
+            if self.nb.select() == self.tabs.get("home"):
+                self.home.refresh()
+            if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
+                self._checklist_t = time.time()
+                self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
+                                         for ok, t, d, _, _ in self.home.checklist()]
         except Exception:
             pass
         try:
@@ -1195,7 +1238,8 @@ class App(tk.Tk):
         self.btn_scan.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
-                "router_snmp": self._settings().get("router_snmp") or None}
+                "router_snmp": self._settings().get("router_snmp") or None,
+                "router_fetch": self._router_fetch if RO.from_settings(self._settings(), self.gw) else None}
         threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()
 
     def stop_scan(self):
@@ -1550,6 +1594,8 @@ class App(tk.Tk):
                             "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
                             "Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'}; "
                             "$n=@($r).Count; if($n){$r | Remove-NetFirewallRule}; $n"], 30).strip()
+        self._settings()["fw_ok"] = time.time()
+        self._save_settings()
         if not quiet:
             extra = (f"\n\nAlso removed {removed} Windows rule(s) that were BLOCKING Network Doctor (created when "
                      "Windows asked to allow the app and Cancel was clicked)." if removed.isdigit() and int(removed) else "")
@@ -2225,6 +2271,17 @@ class App(tk.Tk):
                          "active_alerts": [dict(v) for v in list(self.alerts_active.values())]},
                 "watch": [{"name": v.get("name"), "ip": v.get("ip"), "down": bool(v.get("down_since")),
                            "rtt": v.get("rtt"), "downs": v.get("downs", 0)} for v in list(self.watch_state.values())]}
+        snap["checklist"] = list(getattr(self, "_checklist_cache", []))
+        snap["usage"] = self._usage_snapshot()
+        try:
+            leases = [{"mac-address": m, "address": v.get("ip", ""), "host-name": v.get("host", "")}
+                      for m, v in ((self.raw or {}).get("leases") or {}).items()]
+            keep = ("name", "ip", "mac", "vendor", "category", "host", "dept", "location", "status", "first_seen",
+                    "os", "model", "serial", "cpu", "ram_gb", "disk_gb", "disk_free_gb", "user", "online")
+            snap["inventory"] = [{k: r.get(k, "") for k in keep}
+                                 for r in T.inventory_rows(list(self.devices), self.db, leases)][:600]
+        except Exception:
+            snap["inventory"] = []
         if mon:
             names = {d["ip"]: d.get("name", "") for d in devs}
             talk = sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:15]
@@ -2238,6 +2295,24 @@ class App(tk.Tk):
                 "talkers": [{"ip": ip, "name": names.get(ip, ""), "down_bps": r["down_bps"], "up_bps": r["up_bps"],
                              "last10": sum(mon.traffic.window_total(ip, 600))} for ip, r in talk]}
         return snap
+
+    def _usage_snapshot(self):
+        """Usage for the phone app (today and 7 days, advisor), refreshed at most once a minute."""
+        c = getattr(self, "_usage_snap_cache", None)
+        if c and time.time() - c[0] < 60:
+            return c[1]
+        out = None
+        if self.usage:
+            try:
+                def cut(sm):
+                    return {"start": sm["start"], "end": sm["end"], "cats": sm["cats"], "apps": sm["apps"][:25],
+                            "sites": sm["sites"][:25], "devices": sm["devices"][:60]}
+                out = {"today": cut(self.usage.summary(1)), "week": cut(self.usage.summary(7)),
+                       "insights": self.usage.insights(), "labels": US.CAT_LABEL}
+            except Exception:
+                out = None
+        self._usage_snap_cache = (time.time(), out)
+        return out
 
     # ---------------------------------------------------------------- online updates (GitHub Releases)
     def _settings(self):
