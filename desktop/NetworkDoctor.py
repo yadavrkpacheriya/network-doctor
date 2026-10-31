@@ -58,7 +58,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.17.0"
+VERSION = "3.17.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2723,6 +2723,8 @@ class App(tk.Tk):
             self.check_updates(True)
 
     def _update_mode(self, code=False):
+        if core.IS_STORE:  # the Microsoft Store installs updates; the app must not update itself
+            return "off" if code else next(k for k, v in self.UPDATE_MODES.items() if v == "off")
         st = self._settings()
         m = st.get("update_mode")
         if m not in ("auto", "ask", "off"):
@@ -2730,6 +2732,12 @@ class App(tk.Tk):
         return m if code else next(k for k, v in self.UPDATE_MODES.items() if v == m)
 
     def check_updates(self, auto=False, force=False):  # noqa: ARG002 (force kept for callers)
+        if core.IS_STORE:
+            self.var_upd.set(f"Version {VERSION} - updates come from the Microsoft Store")
+            if not auto:
+                messagebox.showinfo(APP, "This copy is from the Microsoft Store: the Store installs new versions "
+                                         "by itself (Microsoft Store > Library > Get updates).")
+            return
         """auto=True: the scheduled check (daily at 15:00). auto=False: the user pressed a button."""
         if auto and self._update_mode(True) == "off":
             return

@@ -38,6 +38,14 @@ jobs:
           if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Error "self-test did not finish" }
           Get-Content screens\selftest.txt
           if ($p.ExitCode -ne 0) { Write-Error "self-test reported errors" }
+      - name: Build the Microsoft Store package (proves the .msix builds)
+        shell: pwsh
+        run: |
+          pip install pillow
+          New-Item -ItemType Directory -Force dist-store | Out-Null
+          Copy-Item dist\NetworkDoctor.exe dist-store\
+          ./store/build_msix.ps1 -Version (Select-String -Path NetworkDoctor.py -Pattern '^VERSION = "([0-9.]+)"').Matches[0].Groups[1].Value
+          Get-Item dist\NetworkDoctor-Store.msix | Format-List Name, Length
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4
