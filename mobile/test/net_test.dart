@@ -189,6 +189,7 @@ void main() {
       expect(find.text('38%'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Busiest hours: 15:00'), 300, scrollable: find.byType(Scrollable).first);
       expect(find.text('Busiest hours: 15:00'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('7 days'), -300, scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('7 days'));
       await tester.pump();
       expect(find.text('No app traffic recorded for this period yet'), findsOneWidget);
