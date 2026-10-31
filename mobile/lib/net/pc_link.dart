@@ -18,20 +18,44 @@ class PcError implements Exception {
 }
 
 class PairedPc {
-  PairedPc({required this.name, required this.host, required this.port, required this.token});
+  PairedPc({required this.name, required this.host, required this.port, required this.token,
+      this.user = '', this.userToken = '', this.role = '', this.remote = ''});
   String name;
-  String host;
+  String host;      // LAN host/IP
   int port;
-  String token;
+  String token;     // pairing token (identifies this phone)
+  String user;      // signed-in user name (Pro)
+  String userToken; // sign-in token (Pro)
+  String role;      // admin / operator / viewer
+  String remote;    // optional remote address (host:port) to reach the PC from outside the office
 
-  Map<String, dynamic> toJson() => {'name': name, 'host': host, 'port': port, 'token': token};
+  Map<String, dynamic> toJson() =>
+      {'name': name, 'host': host, 'port': port, 'token': token, 'user': user, 'role': role, 'remote': remote};
   factory PairedPc.fromJson(Map<String, dynamic> j) => PairedPc(
       name: (j['name'] ?? 'PC') as String,
       host: (j['host'] ?? '') as String,
       port: (j['port'] ?? pcPort) as int,
-      token: (j['token'] ?? '') as String);
+      token: (j['token'] ?? '') as String,
+      user: (j['user'] ?? '') as String,
+      role: (j['role'] ?? '') as String,
+      remote: (j['remote'] ?? '') as String);
 
-  Uri uri(String path) => Uri.parse('http://$host:$port$path');
+  /// The base address to use now: the remote one when set and we're told to use it, else the LAN host.
+  Uri uriVia(String path, bool useRemote) {
+    if (useRemote && remote.isNotEmpty) {
+      final r = remote.contains(':') ? remote : '$remote:$port';
+      return Uri.parse('http://$r$path');
+    }
+    return uri(path);
+  }
+
+  Uri uri(String path) {
+    if (PcLink.viaRemote.contains(host) && remote.isNotEmpty) {
+      final r = remote.contains(':') ? remote : '$remote:$port';
+      return Uri.parse('http://$r$path');
+    }
+    return Uri.parse('http://$host:$port$path');
+  }
 }
 
 class FoundPc {
@@ -44,6 +68,16 @@ class FoundPc {
 
 class PcLink {
   static const _key = 'paired_pcs';
+
+  /// Hosts we are currently reaching through their remote address (set after the LAN fails, cleared on the LAN).
+  static final Set<String> viaRemote = {};
+  static void preferRemote(PairedPc pc, bool on) {
+    if (on && pc.remote.isNotEmpty) {
+      viaRemote.add(pc.host);
+    } else {
+      viaRemote.remove(pc.host);
+    }
+  }
 
   /// Demo / automatic screen test: --dart-define=ND_DEMO=true shows a recorded office PC (no network needed).
   static const demo = bool.fromEnvironment('ND_DEMO');
@@ -122,7 +156,7 @@ class PcLink {
     if (pc.host == 'demo') {
       return Map<String, dynamic>.from(jsonDecode(await rootBundle.loadString('assets/demo_state.json')) as Map);
     }
-    final r = await _send(() => http.get(pc.uri('/api/state'), headers: {'X-ND-Token': pc.token}), 'load data');
+    final r = await _send(() => http.get(pc.uri('/api/state'), headers: _h(pc)), 'load data');
     if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
@@ -130,7 +164,7 @@ class PcLink {
 
   static Future<String> startScan(PairedPc pc) async {
     if (pc.host == 'demo') return '(demo) scan started';
-    final r = await _send(() => http.post(pc.uri('/api/scan'), headers: {'X-ND-Token': pc.token}), 'start a scan');
+    final r = await _send(() => http.post(pc.uri('/api/scan'), headers: _h(pc)), 'start a scan');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
     return ((jsonDecode(r.body) as Map)['result'] ?? '').toString();
   }
@@ -149,7 +183,7 @@ class PcLink {
     }
     final r = await _send(
         () => http.post(pc.uri('/api/action'),
-            headers: {'X-ND-Token': pc.token, 'Content-Type': 'application/json'},
+            headers: {..._h(pc), 'Content-Type': 'application/json'},
             body: jsonEncode({'action': action, 'args': args})),
         'reach the PC');
     if (r.statusCode == 404) {
@@ -171,6 +205,38 @@ class PcLink {
       await Future.delayed(const Duration(seconds: 2));
     }
     return {'done': true, 'ok': false, 'text': 'The PC is still working on it - look again in a minute.'};
+  }
+
+  static Map<String, String> _h(PairedPc pc) =>
+      {'X-ND-Token': pc.token, if (pc.userToken.isNotEmpty) 'X-ND-User': pc.userToken};
+
+  /// Sign in a user on the PC (Pro). Fills pc.user / userToken / role on success.
+  static Future<void> login(PairedPc pc, String user, String password) async {
+    final r = await _send(
+        () => http.post(pc.uri('/api/login'),
+            headers: {'X-ND-Token': pc.token, 'Content-Type': 'application/json'},
+            body: jsonEncode({'user': user, 'password': password, 'device': 'phone'})),
+        'sign in');
+    final j = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode != 200) throw PcError((j['error'] ?? 'sign-in failed').toString());
+    pc.user = (j['user'] ?? user).toString();
+    pc.userToken = (j['token'] ?? '').toString();
+    pc.role = (j['role'] ?? '').toString();
+  }
+
+  static Future<void> logout(PairedPc pc) async {
+    try {
+      await _send(() => http.post(pc.uri('/api/logout'), headers: _h(pc)), 'sign out');
+    } catch (_) {}
+    pc.user = '';
+    pc.userToken = '';
+    pc.role = '';
+  }
+
+  /// State fetch that reports whether the PC wants a sign-in (Pro with accounts).
+  static Future<Map<String, dynamic>> hello2(PairedPc pc) async {
+    final r = await _send(() => http.get(pc.uri('/api/hello')), 'reach the PC');
+    return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
   static Future<http.Response> _send(Future<http.Response> Function() f, String what) async {

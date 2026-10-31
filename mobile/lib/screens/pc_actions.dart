@@ -676,6 +676,35 @@ class PcDeviceActions extends StatelessWidget {
                   child: const Text('Unblock')),
             if (mac.isNotEmpty)
               OutlinedButton(onPressed: () => runOnPc(context, 'wol', {'mac': mac, 'ip': ip}), child: const Text('Wake (WOL)')),
+            if (mac.isNotEmpty)
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.gpp_bad),
+                label: const Text('Quarantine'),
+                onPressed: () async {
+                  if (!await _confirm(context, 'Quarantine ${name.isEmpty ? ip : name}',
+                      'Block ALL this device\'s traffic on the router - full isolation until you release it.')) {
+                    return;
+                  }
+                  if (context.mounted) await runOnPc(context, 'isolate', {'mac': mac, 'ip': ip}, title: 'Quarantine $ip');
+                },
+              ),
+            if (mac.isNotEmpty)
+              OutlinedButton(
+                  onPressed: () => runOnPc(context, 'unisolate', {'mac': mac, 'ip': ip}, title: 'Release $ip'),
+                  child: const Text('Un-quarantine')),
+            if (mac.isNotEmpty)
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red.shade50),
+                icon: Icon(Icons.power_settings_new, color: Colors.red.shade700),
+                label: Text('Power off', style: TextStyle(color: Colors.red.shade700)),
+                onPressed: () async {
+                  if (!await _confirm(context, 'Power off ${name.isEmpty ? ip : name}',
+                      'Quarantine it now and tell its agent to disconnect / shut down. Admin only.')) {
+                    return;
+                  }
+                  if (context.mounted) await runOnPc(context, 'poweroff', {'mac': mac, 'ip': ip}, title: 'Contain $ip');
+                },
+              ),
           ]),
         ]),
       ),
@@ -768,5 +797,117 @@ class _SectionViewState extends State<SectionView> with AutomaticKeepAliveClient
         ),
       Expanded(child: pages[_i].$2()),
     ]);
+  }
+}
+
+// ------------------------------------------------------------------ Pro: auto-defense, security checks, audit
+class ProSecurityTab extends StatelessWidget {
+  const ProSecurityTab({super.key, required this.s, required this.onRefresh});
+  final Map<String, dynamic> s;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final def = Map<String, dynamic>.from((s['defense'] as Map?) ?? const {});
+    final armed = def['armed'] == true;
+    final contained = _ms(def['contained']);
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.all(12), children: [
+        Card(
+          color: armed ? Colors.red.shade50 : null,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(armed ? Icons.shield : Icons.shield_outlined, color: armed ? Colors.red.shade700 : null),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Auto-defense', style: t.titleMedium)),
+                Switch(
+                  value: armed,
+                  onChanged: (v) async {
+                    await runOnPc(context, 'defense_arm', {'armed': v, 'mode': def['mode'] ?? 'auto'});
+                    onRefresh();
+                  },
+                ),
+              ]),
+              Text(armed
+                  ? 'ARMED - ${def['mode'] == 'alert' ? 'alerting only' : 'contains attackers automatically'}'
+                      '${def['night_only'] == true ? ' at night' : ''}'
+                  : 'Off - attacks are detected and alerted, but nothing is contained automatically.'),
+              const SizedBox(height: 6),
+              if (armed)
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'auto', label: Text('Act')),
+                    ButtonSegment(value: 'alert', label: Text('Alert only')),
+                  ],
+                  selected: {(def['mode'] ?? 'auto').toString()},
+                  onSelectionChanged: (v) async {
+                    await runOnPc(context, 'defense_arm', {'armed': true, 'mode': v.first});
+                    onRefresh();
+                  },
+                ),
+            ]),
+          ),
+        ),
+        if (contained.isNotEmpty) ...[
+          Text('Quarantined now', style: t.titleMedium),
+          for (final c in contained)
+            Card(
+              child: ListTile(
+                leading: Icon(Icons.block, color: Colors.red.shade700),
+                title: Text('${c['name'] ?? c['ip']}'),
+                subtitle: Text('${c['ip'] ?? ''}  ${c['mac'] ?? ''}\n${c['kind'] ?? ''} · ${c['level'] ?? ''} · by ${c['by'] ?? ''}'),
+                isThreeLine: true,
+                trailing: TextButton(
+                  onPressed: () async {
+                    await runOnPc(context, 'defense_release', {'mac': c['mac'] ?? '', 'ip': c['ip'] ?? ''});
+                    onRefresh();
+                  },
+                  child: const Text('Release'),
+                ),
+              ),
+            ),
+        ],
+        const SizedBox(height: 8),
+        Text('Checks', style: t.titleMedium),
+        Card(
+          child: Column(children: [
+            ListTile(
+              leading: const Icon(Icons.verified_user),
+              title: const Text('Security check'),
+              subtitle: const Text('Find open ports, default passwords, poisoners - with fixes'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => runOnPc(context, 'vuln', {}, title: 'Security check'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: const Text('Internet exposure'),
+              subtitle: const Text('What Shodan & Censys see of your office'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => runOnPc(context, 'exposure', {}, title: 'Internet exposure'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.travel_explore),
+              title: const Text('Packet capture'),
+              subtitle: const Text('20 seconds of traffic, explained'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => runOnPc(context, 'capture', {'seconds': 20}, title: 'Packet capture'),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        Text('Audit log - who changed what', style: t.titleMedium),
+        for (final e in _ms(s['audit']).take(60))
+          ListTile(
+            dense: true,
+            leading: Text('${e['ts'] ?? ''}'.split(' ').last, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            title: Text('${e['user']} · ${e['action']}'),
+            subtitle: Text('${e['detail'] ?? ''}  ${e['result'] ?? ''}'),
+          ),
+      ]),
+    );
   }
 }

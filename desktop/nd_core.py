@@ -46,11 +46,24 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.17.1"
+VERSION = "3.18.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 # Installed from the Microsoft Store (MSIX): Windows keeps it under ...\WindowsApps\ and the Store updates it
 IS_STORE = IS_WIN and "\\windowsapps\\" in (getattr(sys, "executable", "") or "").lower()
+# Private "Pro" edition (advanced security: auto-defense, remote, capture, vuln scan). Compiled in only when
+# ND_EDITION=pro at build time; a baked-in marker file also enables it. Never in the public Play / Store build.
+def _is_pro():
+    if os.environ.get("ND_EDITION", "").lower() == "pro":
+        return True
+    try:
+        base = getattr(sys, "_MEIPASS", HERE)
+        return os.path.exists(os.path.join(base, "pro_edition.txt"))
+    except Exception:
+        return False
+
+
+IS_PRO = _is_pro()
 if getattr(sys, "frozen", False):
     HERE = os.path.dirname(sys.executable)
 else:

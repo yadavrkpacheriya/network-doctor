@@ -1,3 +1,38 @@
+## Network Doctor 3.18.0
+
+**Standard app:** no visible change - this version adds a separate private "Pro" edition for the owner.
+
+### Network Doctor Pro (private build - auto-defense, remote, security tools)
+
+A separate `NetworkDoctor-Pro.exe` (built privately, never in the public download, Play or the Microsoft Store)
+adds, behind a sign-in and an audit log:
+
+- **Users & sign-in + audit log.** Add admin / operator / viewer users. The phone and remote access must sign in;
+  every change (block, isolate, router fix, auto-defense action, setting) is written to an audit log you can read
+  on the PC or the phone. The PC console itself is always trusted (physical access) and logged as "console".
+- **Auto-defense (24/7, even at night).** Arm it and Network Doctor contains an attacker by itself: cut a device's
+  internet, fully quarantine it on the router, or (with the PC agent) power it off / make it disconnect. You choose
+  how far it may go for each kind of attack, exclude your servers and admin PC, and optionally limit automatic
+  action to night hours. Everything is reversible and logged, and your phone is notified. It reacts to: a device
+  open to the internet, malware contact, ARP spoofing, a rogue DHCP server, a torrent, and a device suddenly
+  scanning the LAN or spreading to many PCs.
+- **Security check (Nessus / Nuclei, made safe).** Reads only: finds devices reachable from the internet, default
+  passwords, Telnet / FTP, old SMBv1, weak HTTPS, and a credential poisoner (Responder) - each with a plain fix,
+  plus one-click Windows hardening commands. It never logs in or attacks anything.
+- **Packet capture & analysis (Wireshark + Zeek, readable).** A few seconds of capture, explained: protocols,
+  who talked to whom, the websites looked up, and anything suspicious (clear-text passwords, a port scan, a flood).
+- **Internet exposure (Shodan + Censys).** Looks up your office's public IP and lists what the outside world can
+  reach (add your free API keys).
+- **Remote access from outside the office.** With remote access turned on and a free Cloudflare Tunnel / Tailscale
+  on the PC, a signed-in user can check and fix the network from their phone over the internet - block or quarantine
+  a device, reboot the router, run a security check - at any time, from anywhere. Outside connections can do nothing
+  until they sign in, and everything is audited.
+- **On the phone:** sign-in, the Auto-defense & checks tab, and Quarantine / Power-off / Reboot on any device - so
+  a 3 a.m. breach can be stopped from your phone.
+
+The Pro features never appear in the public app: the public exe, Play app and Store app have none of them, and the
+phone shows them only when it is connected to your signed-in Pro PC.
+
 ## Network Doctor 3.17.1
 
 - **Microsoft Store package.** Every release now also has `NetworkDoctor-Store.msix`, the package type the Microsoft Store accepts, with Network Doctor's Store identity (Pacheriya.NetworkDoctor) and its logos.
