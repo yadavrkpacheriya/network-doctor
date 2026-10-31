@@ -240,8 +240,19 @@ del "%~f0"
 """
     with open(bat, "w", encoding="ascii", errors="replace") as f:
         f.write(script)
-    flags = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
-    subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True, env=clean_env())
+    # CREATE_NO_WINDOW only. Combining it with DETACHED_PROCESS makes Windows ignore the no-window
+    # flag, so the helper's ping/move loop flashes a console window again and again while it waits
+    # for this app to close. A hidden STARTUPINFO makes doubly sure nothing shows. The helper still
+    # outlives this process without DETACHED_PROCESS (Windows does not kill it when the parent exits).
+    kw = dict(creationflags=0x08000000, close_fds=True, env=clean_env())
+    try:  # Windows-only; apply_exe never runs on other platforms (guarded so tests can call it)
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        kw["startupinfo"] = si
+    except AttributeError:
+        pass
+    subprocess.Popen(["cmd", "/c", bat], **kw)
 
 
 def update_sources(info, folder):
