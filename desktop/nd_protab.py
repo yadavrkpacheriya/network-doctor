@@ -375,5 +375,107 @@ class AuditPage:
                                    e.get("detail", ""), e.get("result", ""), e.get("ip", "")))
 
 
+class ActivatePage:
+    """Always visible (even in the locked app). Shows licence status and lets the owner paste a licence
+    to unlock the advanced features. The licence is signed with the owner's private key, so a plain email
+    or a copied string from anyone else will not verify."""
+
+    def __init__(self, app, f):
+        self.app = app
+        import nd_license as L
+        self.L = L
+        ttk.Label(f, text="Pro / Activate - advanced security features", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        ttk.Label(f, text="The advanced features (24/7 auto-defense, isolate / power-off a breached device, "
+                          "remote access from your phone, packet capture, security check, internet-exposure "
+                          "check, users & sign-in, audit log) are built in but locked. Paste your licence key "
+                          "below to unlock them. A licence is tied to your account and signed by the owner - it "
+                          "cannot be shared or faked.", wraplength=820, foreground="#344054",
+                  justify="left").pack(anchor="w", pady=(0, 10))
+        self.var_status = tk.StringVar(value="")
+        self.lbl = ttk.Label(f, textvariable=self.var_status, font=("Segoe UI", 11, "bold"), wraplength=820,
+                             justify="left")
+        self.lbl.pack(anchor="w", pady=(0, 10))
+        box = ttk.LabelFrame(f, text="Licence key", padding=10)
+        box.pack(fill="x", pady=(0, 10))
+        ttk.Label(box, text="Paste the licence key you were given (one long line):",
+                  foreground="#667085").pack(anchor="w")
+        self.txt = tk.Text(box, height=4, width=100, font=("Consolas", 9), wrap="char")
+        self.txt.pack(fill="x", pady=4)
+        bar = ttk.Frame(box)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Activate", style="Big.TButton", command=self.activate).pack(side="left")
+        ttk.Button(bar, text="Load from file...", command=self.load_file).pack(side="left", padx=6)
+        ttk.Button(bar, text="Remove licence", command=self.remove).pack(side="left", padx=6)
+        ttk.Label(f, text="Where do I get a licence? Licences are issued by the owner of Network Doctor. During "
+                          "testing only the owner's account is enabled. Paid licences will be available in a future "
+                          "release.", wraplength=820, foreground="#667085", justify="left").pack(anchor="w")
+        self.refresh()
+
+    def refresh(self):
+        info = core.pro_info()
+        if info:
+            exp = info.get("exp", 0)
+            when = "no expiry" if not exp else ("expires " + time.strftime("%Y-%m-%d", time.localtime(exp)))
+            self.var_status.set("✔ Pro is ACTIVE for %s  (%s, %s)." %
+                                (info.get("email", "?"), info.get("plan", "pro"), when))
+            self.lbl.configure(foreground="#067647")
+        else:
+            cur = self.L.read_license(core.DATA_DIR)
+            if cur:
+                ok, _p, reason = self.L.verify_license(cur)
+                self.var_status.set("✖ The installed licence is not valid (%s). Paste a current licence." % reason)
+            else:
+                self.var_status.set("✖ Pro is locked. No licence installed - the standard features work "
+                                    "normally; paste a licence to unlock the advanced ones.")
+            self.lbl.configure(foreground="#b42318")
+
+    def load(self):
+        self.refresh()
+
+    def activate(self):
+        lic = self.txt.get("1.0", "end").strip()
+        if not lic:
+            messagebox.showinfo("Network Doctor", "Paste your licence key first.")
+            return
+        ok, info, reason = self.L.save_license(core.DATA_DIR, lic)
+        if not ok:
+            messagebox.showerror("Network Doctor", "That licence could not be activated: %s.\n\nCheck you copied "
+                                 "the whole key (one long line)." % reason)
+            self.refresh()
+            return
+        core.refresh_pro()
+        self.txt.delete("1.0", "end")
+        self.refresh()
+        messagebox.showinfo("Network Doctor", "Pro activated for %s.\n\nPlease restart Network Doctor so the "
+                            "advanced tabs appear." % info.get("email", ""))
+
+    def load_file(self):
+        from tkinter import filedialog
+        p = filedialog.askopenfilename(title="Select your licence file",
+                                       filetypes=[("Licence", "*.ndlic *.txt"), ("All files", "*.*")])
+        if not p:
+            return
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                self.txt.delete("1.0", "end")
+                self.txt.insert("1.0", fh.read().strip())
+        except Exception as e:
+            messagebox.showerror("Network Doctor", str(e))
+            return
+        self.activate()
+
+    def remove(self):
+        if not messagebox.askyesno("Network Doctor", "Remove the installed licence and lock the advanced "
+                                   "features again?"):
+            return
+        self.L.clear_license(core.DATA_DIR)
+        core.refresh_pro()
+        self.refresh()
+        messagebox.showinfo("Network Doctor", "Licence removed. Restart Network Doctor to hide the advanced tabs.")
+
+
 PRO_PAGES = {"defense": AutoDefensePage, "vuln": VulnPage, "capture": CapturePage, "expose": ExposePage,
              "accounts": AccountsPage, "audit": AuditPage}
+
+# Always available, even when Pro is locked (so the owner can paste a licence):
+ALWAYS_PAGES = {"activate": ActivatePage}

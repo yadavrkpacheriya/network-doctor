@@ -23,3 +23,4 @@ nd_vuln.py
 nd_capture.py
 nd_expose.py
 nd_protab.py
+nd_license.py

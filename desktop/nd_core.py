@@ -51,19 +51,6 @@ IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 # Installed from the Microsoft Store (MSIX): Windows keeps it under ...\WindowsApps\ and the Store updates it
 IS_STORE = IS_WIN and "\\windowsapps\\" in (getattr(sys, "executable", "") or "").lower()
-# Private "Pro" edition (advanced security: auto-defense, remote, capture, vuln scan). Compiled in only when
-# ND_EDITION=pro at build time; a baked-in marker file also enables it. Never in the public Play / Store build.
-def _is_pro():
-    if os.environ.get("ND_EDITION", "").lower() == "pro":
-        return True
-    try:
-        base = getattr(sys, "_MEIPASS", HERE)
-        return os.path.exists(os.path.join(base, "pro_edition.txt"))
-    except Exception:
-        return False
-
-
-IS_PRO = _is_pro()
 if getattr(sys, "frozen", False):
     HERE = os.path.dirname(sys.executable)
 else:
@@ -77,6 +64,45 @@ else:
 DB_PATH = os.path.join(DATA_DIR, "devices_db.json")
 OUI_PATH = os.path.join(DATA_DIR, "oui_cache.json")
 REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor Reports")
+
+# Advanced ("Pro") features (auto-defense, remote access, packet capture, security check, exposure, users &
+# audit) ship INSIDE this one public app but stay locked. They unlock only when a licence signed with the
+# owner's private key is installed (Setup > Pro / Activate). No other user - and no internal tester - can
+# unlock them, because only the owner holds the signing key; the same licence mechanism issues paid
+# licences later. Verification is in nd_license (pure-Python Ed25519, no extra dependencies).
+def _pro_enabled():
+    # Developer / CI override: honoured ONLY when running from source, never in a shipped (frozen) build,
+    # so setting an env var can never bypass the licence on an installed app.
+    if not getattr(sys, "frozen", False) and os.environ.get("ND_EDITION", "").lower() == "pro":
+        return True
+    try:
+        import nd_license
+        ok, _info = nd_license.is_licensed(DATA_DIR)
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def pro_info():
+    """The verified licence payload (email, plan, exp) when Pro is unlocked, else None."""
+    if not getattr(sys, "frozen", False) and os.environ.get("ND_EDITION", "").lower() == "pro":
+        return {"email": "dev@localhost", "plan": "pro", "exp": 0}
+    try:
+        import nd_license
+        ok, info = nd_license.is_licensed(DATA_DIR)
+        return info if ok else None
+    except Exception:
+        return None
+
+
+IS_PRO = _pro_enabled()
+
+
+def refresh_pro():
+    """Re-evaluate the licence (after one is installed or removed). Returns the new IS_PRO."""
+    global IS_PRO
+    IS_PRO = _pro_enabled()
+    return IS_PRO
 
 
 # ==========================================================================

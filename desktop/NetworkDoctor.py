@@ -641,9 +641,10 @@ class App(tk.Tk):
                 self.tools._inv_done(None, "")
             elif cur and cur.startswith("t_"):
                 self.tools.show(cur[2:])
-            elif core.IS_PRO and cur in nd_protab.PRO_PAGES:
+            elif cur in nd_protab.ALWAYS_PAGES or (core.IS_PRO and cur in nd_protab.PRO_PAGES):
+                factory = nd_protab.ALWAYS_PAGES.get(cur) or nd_protab.PRO_PAGES[cur]
                 if cur not in self._pro_built:
-                    self._pro_built[cur] = nd_protab.PRO_PAGES[cur](self, self.nav.page(cur))
+                    self._pro_built[cur] = factory(self, self.nav.page(cur))
                 else:
                     pg = self._pro_built[cur]
                     for m in ("load", "refresh"):
@@ -1785,12 +1786,12 @@ class App(tk.Tk):
         self.alert_win = None
         self.alert_lines = []
         self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
+        self._pro_built = {}  # also holds the always-visible "Pro / Activate" page when locked
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
             self.defense = DF.Defense(self._settings(), self.gw)
             self._portscan_seen = {}
-            self._pro_built = {}
         self.quick_summary = "not run yet"
 
     @staticmethod
@@ -3020,7 +3021,7 @@ class App(tk.Tk):
             self.check_updates(True)
 
     def _update_mode(self, code=False):
-        if core.IS_STORE or core.IS_PRO:  # Store updates itself; Pro is a private build, not auto-updated
+        if core.IS_STORE:  # the Store installs updates itself; Pro features now ship in this same app
             return "off" if code else next(k for k, v in self.UPDATE_MODES.items() if v == "off")
         st = self._settings()
         m = st.get("update_mode")
@@ -3029,8 +3030,8 @@ class App(tk.Tk):
         return m if code else next(k for k, v in self.UPDATE_MODES.items() if v == m)
 
     def check_updates(self, auto=False, force=False):  # noqa: ARG002 (force kept for callers)
-        if core.IS_STORE or core.IS_PRO:
-            self.var_upd.set(f"Version {VERSION}" + (" - Microsoft Store updates this" if core.IS_STORE else " - private Pro build (rebuild from CI to update)"))
+        if core.IS_STORE:
+            self.var_upd.set(f"Version {VERSION} - Microsoft Store updates this")
             if not auto:
                 messagebox.showinfo(APP, "This copy is from the Microsoft Store: the Store installs new versions "
                                          "by itself (Microsoft Store > Library > Get updates).")
