@@ -7,6 +7,7 @@ PC fix script. The main window sets UI["make_tree"] / UI["text_box"] before crea
 import os
 import re
 import subprocess
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
@@ -1193,3 +1194,242 @@ class AppListDialog(tk.Toplevel):
                             "; ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
                             " ".join(x["domains"])])
         self.tab.app.var_status.set(f"App list saved: {p}")
+
+
+# ==========================================================================
+# slow website for one person: measure every link, name the cause, fix it
+# ==========================================================================
+class SlowTab:
+    def __init__(self, app, parent):
+        import nd_slow as S
+        self.S, self.app = S, app
+        self.stop = None
+        self.result = None
+        intro = ("Someone says a website is slow (Google Sheets, Gmail, a portal)? Choose that person's device, the "
+                 "website, and press Find the cause. Network Doctor tests every link - their Wi-Fi / cable, the office "
+                 "network, the router, the internet line, DNS, the website itself, whether the line is full and who "
+                 "fills it - and tells you the cause and the fix (about 1 minute).")
+        ttk.Label(parent, text=intro, wraplength=1250, foreground="#344054", padding=(0, 6)).pack(anchor="w")
+        r1 = ttk.Frame(parent)
+        r1.pack(fill="x", pady=2)
+        ttk.Label(r1, text="User / device:").pack(side="left")
+        self.var_dev = tk.StringVar()
+        self.cb_dev = ttk.Combobox(r1, textvariable=self.var_dev, width=44)
+        self.cb_dev.pack(side="left", padx=4)
+        ttk.Label(r1, text="  Website:").pack(side="left")
+        self.var_url = tk.StringVar(value=S.COMMON_SITES[0][1])
+        ttk.Entry(r1, textvariable=self.var_url, width=42).pack(side="left", padx=4)
+        ttk.Label(r1, text="  Internet plan:").pack(side="left")
+        self.var_mbps = tk.StringVar(value=str(app._settings().get("line_mbps") or ""))
+        ttk.Entry(r1, textvariable=self.var_mbps, width=6).pack(side="left", padx=2)
+        ttk.Label(r1, text="Mbps").pack(side="left")
+        r2 = ttk.Frame(parent)
+        r2.pack(fill="x", pady=2)
+        ttk.Label(r2, text="Quick:").pack(side="left")
+        for label, url in S.COMMON_SITES:
+            ttk.Button(r2, text=label, command=lambda u=url: self.var_url.set(u)).pack(side="left", padx=2)
+        self.var_load = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r2, text="Also test delay while the line is busy (uses the internet for 10 s)",
+                        variable=self.var_load).pack(side="left", padx=10)
+        r3 = ttk.Frame(parent)
+        r3.pack(fill="x", pady=(4, 2))
+        self.btn = ttk.Button(r3, text="Find the cause", style="Big.TButton", command=self.start)
+        self.btn.pack(side="left")
+        ttk.Button(r3, text="Stop", command=lambda: self.stop and self.stop.set()).pack(side="left", padx=6)
+        self.var_prog = tk.StringVar(value="")
+        ttk.Label(r3, textvariable=self.var_prog, foreground="#5b21b6").pack(side="left", padx=8)
+        self.btn_fix = ttk.Button(r3, text="Fix this on the router", command=self.fix, state="disabled")
+        self.btn_fix.pack(side="right")
+        ttk.Button(r3, text="Copy report", command=self.copy).pack(side="right", padx=6)
+        pw = ttk.PanedWindow(parent, orient="horizontal")
+        pw.pack(fill="both", expand=True, pady=(6, 0))
+        a, b = ttk.Frame(pw), ttk.Frame(pw)
+        pw.add(a, weight=2)
+        pw.add(b, weight=3)
+        self.tv = UI["make_tree"](a, ("conf",), ("Likely?",), (80,), first=("Cause (most likely first)", 380))
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self.show())
+        for sev, col in (("critical", "#b42318"), ("warning", "#b54708"), ("ok", "#1f7a3d"), ("info", "#667085")):
+            self.tv.tag_configure(sev, foreground=col)
+        self.txt = UI["text_box"](b)
+        self.items = {}
+        self.findings = []
+
+    def refresh(self):
+        devs = sorted([d for d in self.app.devices if d.get("online")],
+                      key=lambda d: ((d.get("name") or "~").lower(), core.ip_key(d.get("ip", ""))))
+        self.devmap = {f"{d.get('name') or '-'}  {d.get('ip', '')}": d for d in devs}
+        self.cb_dev.configure(values=list(self.devmap))
+
+    def _device(self):
+        v = self.var_dev.get().strip()
+        if v in getattr(self, "devmap", {}):
+            return self.devmap[v]
+        low = v.lower()
+        for d in self.app.devices:  # typed: an IP or part of a name
+            if v and (d.get("ip") == v or low in (d.get("name") or "").lower()):
+                return d
+        return None
+
+    def start(self):
+        url = self.S.norm_url(self.var_url.get())
+        if not url:
+            messagebox.showinfo(APP, "Type the website, for example docs.google.com")
+            return
+        dev = self._device()
+        if self.var_dev.get().strip() and not dev:
+            messagebox.showinfo(APP, "That device is not in the last scan. Choose it from the list (Scan first), or "
+                                     "leave it empty to test only the office network and the website.")
+            return
+        try:
+            mbps = float(self.var_mbps.get()) if self.var_mbps.get().strip() else None
+        except ValueError:
+            mbps = None
+        st = self.app._settings()
+        if mbps:
+            st["line_mbps"] = mbps
+            self.app._save_settings()
+        self.stop = threading.Event()
+        self.btn.configure(state="disabled")
+        self.btn_fix.configure(state="disabled")
+        self.tv.delete(*self.tv.get_children())
+        self.txt.configure(state="normal")
+        self.txt.delete("1.0", "end")
+        self.txt.configure(state="disabled")
+        ctx = {"gw": self.app.gw, "lip": self.app.lip, "mon": self.app.mon, "usage": self.app.usage,
+               "db": self.app.db, "raw": self.app.raw, "issues": list(self.app.issues),
+               "devices": list(self.app.devices), "router": self.app.router_client(ask=False), "line_mbps": mbps}
+        loaded = self.var_load.get()
+        q = self.app.q
+
+        def prog(pct, text):
+            q.put(("call", lambda: self.var_prog.set(f"{pct}%  {text}")))
+
+        def work():
+            try:
+                m = self.S.measure(url, dev, ctx, prog, self.stop, loaded)
+                m["gw"] = self.app.gw
+                f = self.S.judge(m)
+            except Exception as e:
+                m, f = {"url": url}, [{"sev": "critical", "title": f"The check failed: {type(e).__name__}: {e}",
+                                       "conf": "", "evidence": [], "fixes": [], "action": None, "score": 0}]
+            q.put(("call", lambda: self.done(m, f, mbps)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def done(self, m, findings, mbps):
+        self.btn.configure(state="normal")
+        self.result, self.findings, self.mbps = m, findings, mbps
+        self.var_prog.set(f"Finished {time.strftime('%H:%M:%S')} - {len(findings)} finding(s)")
+        self.tv.delete(*self.tv.get_children())
+        self.items = {}
+        for f in findings:
+            iid = self.tv.insert("", "end", text=f["title"], values=(f["conf"],), tags=(f["sev"],))
+            self.items[iid] = f
+        kids = self.tv.get_children()
+        if kids:
+            self.tv.selection_set(kids[0])
+        self.show()
+        dev = m.get("device") or {}
+        self.app._health_log("Slow website", "info", f"{m.get('host')} for {dev.get('name') or 'office'}: "
+                                                     + (findings[0]["title"] if findings else "no finding"))
+
+    def show(self):
+        sel = self.tv.selection()
+        f = self.items.get(sel[0]) if sel else None
+        t = self.txt
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        if f:
+            t.insert("end", f["title"] + "\n", "h")
+            if f.get("conf"):
+                t.insert("end", f"How likely: {f['conf']}\n\n")
+            if f["evidence"]:
+                t.insert("end", "What was measured\n", "h")
+                for e in f["evidence"]:
+                    t.insert("end", f"  - {e}\n")
+            if f["fixes"]:
+                t.insert("end", "\nHow to fix it\n", "h")
+                for x in f["fixes"]:
+                    t.insert("end", f"  -> {x}\n", "ok")
+            a = f.get("action") or ""
+            scr = self.S.fix_script(a, self.mbps, self._lan()) if a and not a.startswith("open:") else ""
+            if scr:
+                t.insert("end", "\nRouter commands for this fix (or press 'Fix this on the router'):\n", "h")
+                t.insert("end", scr)
+                if a.startswith("limit:"):
+                    t.insert("end", "(If the limit seems ignored: Commands > Turn off FastTrack.)\n")
+        m = self.result or {}
+        if m:
+            t.insert("end", "\nAll measurements\n", "h")
+            for line in self._numbers(m):
+                t.insert("end", f"  {line}\n")
+            t.insert("end", "\nCompare on the user's own PC (Command Prompt), then compare with the numbers above:\n", "h")
+            t.insert("end", self.S.compare_command(m.get("url", "")) + "\n")
+        t.configure(state="disabled")
+        a = (f or {}).get("action") or ""
+        self.btn_fix.configure(state="normal" if a else "disabled",
+                               text="Open the right tool" if a.startswith("open:") else "Fix this on the router")
+
+    def _lan(self):
+        try:
+            import ipaddress
+            return str(ipaddress.ip_network(self.app.net, strict=False))
+        except Exception:
+            return ""
+
+    def _numbers(self, m):
+        out = []
+        for key, label in (("dev_ping", "user's device"), ("gw_ping", "router"), ("inet_ping", "internet 1.1.1.1")):
+            p = m.get(key)
+            if p:
+                out.append(f"ping {label}: " + (f"loss {p['loss']:.0f}%, avg {p['avg']:.0f} ms, max {p['max']:.0f} ms, "
+                                                f"jitter {p['jitter']:.0f} ms" if p.get("recv") else "no answer"))
+        for d in m.get("dns") or []:
+            out.append(f"DNS {d.get('label')} {d.get('server')}: " + (d["error"] if d.get("error") else
+                                                                      f"{d.get('ms', 0):.0f} ms (repeat "
+                                                                      f"{d.get('cached_ms') or 0:.0f} ms)"))
+        for x in m.get("site_summary") or []:
+            out.append(x)
+        if m.get("mtu"):
+            out.append(f"largest packet (MTU): {m['mtu']}")
+        ln = m.get("line") or {}
+        if ln.get("have_flows"):
+            out.append(f"line now: {ln['down_bps'] / 1e6:.1f} Mbps in use" +
+                       (f" of {ln['capacity_mbps']:.0f}" if ln.get("capacity_mbps") else ""))
+        if m.get("router_cpu") is not None:
+            out.append(f"router CPU: {m['router_cpu']}%")
+        if (m.get("loaded") or {}).get("busy"):
+            out.append(f"delay idle {m['loaded']['idle']:.0f} ms, while busy {m['loaded']['busy']:.0f} ms")
+        return out
+
+    def fix(self):
+        sel = self.tv.selection()
+        f = self.items.get(sel[0]) if sel else None
+        a = (f or {}).get("action") or ""
+        if a.startswith("open:"):
+            where = a[5:]
+            if where in ("website", "guard", "wifi"):
+                self.app.show_tab("tools")
+                self.app.tools.show(where)
+            else:
+                self.app.show_tab(where)
+            return
+        if a == "queue_fair" and not self.mbps:
+            messagebox.showinfo(APP, "Type your internet plan speed (Mbps) first, then run the check again.")
+            return
+        scr = self.S.fix_script(a, self.mbps, self._lan())
+        if scr:
+            self.app.router_apply(scr, f"Slow website fix: {f['title']}")
+
+    def copy(self):
+        m, fs = self.result, self.findings
+        if not m:
+            return
+        dev = (m.get("device") or {}).get("name") or "office"
+        lines = [f"Slow website check: {m.get('url')} for {dev}  ({time.strftime('%d %b %Y %H:%M')})", ""]
+        for f in fs:
+            lines.append(f"[{f['sev'].upper()}] {f['title']} ({f['conf']})")
+            lines += [f"   measured: {e}" for e in f["evidence"]] + [f"   fix: {x}" for x in f["fixes"]]
+        lines += ["", "Measurements:"] + [f"   {x}" for x in self._numbers(m)]
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(lines))
+        self.app.var_status.set("Report copied.")

@@ -62,6 +62,8 @@ class HomeTab:
             ("See problems and how to fix them", "each problem with the reason and the fix",
              lambda: self.app.show_tab("problems")),
             ("Who uses the internet?", "apps, websites and productivity per person", lambda: self.app.show_tab("usage")),
+            ("A website is slow for someone", "Google Sheets slow? find the cause and fix it",
+             lambda: self.app.show_tab("slow")),
             ("All devices", "names, IPs, makers; tag them by department", lambda: self.app.show_tab("devices")),
             ("Inventory", "every PC with model, serial, RAM; export to Excel", lambda: self._tool("inventory")),
             ("Block websites / apps", "YouTube, games, adult sites... for the whole office",

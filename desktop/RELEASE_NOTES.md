@@ -1,3 +1,23 @@
+## Network Doctor 3.13.0
+
+**New Home screen, "Slow website?" check, phone names, and a phone app with usage and inventory.**
+
+- **Home screen (first tab).**
+  - Your network at a glance: devices online, problems, internet used today, router connection.
+  - Big buttons for the everyday jobs.
+  - A setup checklist with a Fix button on every line that is not green yet.
+- **New tab: Slow website?** Someone says Google Sheets (or Gmail, a portal...) is slow:
+  1. Choose their device and the website, then press **Find the cause**.
+  2. In about a minute Network Doctor tests their Wi-Fi / cable, the office network, the router (and its CPU), the internet line, DNS, packet size (MTU), the website itself against a reference site, whether the line is full and who fills it, what their PC is downloading, and their PC's RAM / disk.
+  3. Optionally it also measures the delay while the line is busy.
+  4. You get the causes, most likely first, each with the measurements, the fix steps and - where it can - a **Fix this on the router** button (fast public DNS, MSS clamp, limit the biggest user, fair queue). A command to compare the same timings on the user's own PC is included.
+- **Phone and device names.** With the router login, the scan reads the router's DHCP list and ARP table, so phones show their names (Galaxy-S23, Redmi-Note-12, iPhone...) and devices that sleep are still listed. Health checks show how many devices got a name.
+- **Updates & drivers in the app list.** Windows Update, Office and Defender updates, Dell / Lenovo / HP / Intel / NVIDIA / AMD / Realtek / Asus / Acer drivers, printer drivers, Chrome / Edge / Firefox updates and more - 146 apps, 871 website addresses in all. The advisor warns when updates run in office hours.
+- **Phone app 1.3.0.**
+  - Office PC now has Summary, Problems, Devices, **Usage** (apps, websites, productivity per person, advice), **Inventory** and Monitor.
+  - **Check for updates** in About, plus a once-a-day automatic check with an Update button.
+- Privacy policy updated (usage history, router login, phone update check).
+
 ## Network Doctor 3.12.0
 
 **Apps told apart: WhatsApp, Instagram, Facebook, YouTube, Google Drive, Gmail and 126 more.**

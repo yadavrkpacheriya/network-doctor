@@ -57,7 +57,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.12.0"
+VERSION = "3.13.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -509,6 +509,7 @@ class App(tk.Tk):
         self._tab_map()
         self._tab_monitor()
         self._tab_usage()
+        self._tab_slow()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
@@ -516,7 +517,7 @@ class App(tk.Tk):
         self._tab_commands()
         self._tab_tools()
         self._tab_setup()
-        names = ["home", "devices", "map", "monitor", "usage", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
+        names = ["home", "devices", "map", "monitor", "usage", "slow", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
         self.tabs = dict(zip(names, self.nb.tabs()))
         self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
@@ -580,6 +581,11 @@ class App(tk.Tk):
         self.M = M
         self.home = nd_home.HomeTab(self, f)
 
+    def _tab_slow(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Slow website?  ")
+        self.slow = nd_tabs.SlowTab(self, f)
+
     def _tab_usage(self):
         f = ttk.Frame(self.nb)
         self.nb.add(f, text="  Usage  ")
@@ -615,6 +621,8 @@ class App(tk.Tk):
                 self.usage_tab.refresh()
             elif cur == self.tabs.get("home"):
                 self.home.refresh()
+            elif cur == self.tabs.get("slow"):
+                self.slow.refresh()
             elif cur == self.tabs.get("commands"):
                 self.commands.refresh()
             elif cur == self.tabs.get("tools"):
