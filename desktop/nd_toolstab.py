@@ -11,7 +11,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 
 import nd_core as core
 import nd_dnsfilter as DF
@@ -38,6 +38,15 @@ TOOLS = [
     ("website", "Website firewall (block sites for the whole network)",
      "Blocks ads, adult sites, gambling, social media, video or games - or your own list - for every phone, PC and TV "
      "on the network, with nothing to install on them. Shows which device tried to open what."),
+    ("guard", "Network guard (rogue router, DNS, random MACs)",
+     "Stops a second router from handing out its own IP / DNS, sends every DNS question through the office router "
+     "(or this PC's website firewall), and blocks phones / laptops that hide behind a randomized MAC - so each "
+     "device keeps one identity and one history. Applied on a MikroTik directly (router login in Setup) or as "
+     "commands to paste."),
+    ("inventory", "Inventory (all devices and PCs)",
+     "Every device ever seen with IP, MAC, maker, host name, type, department, location, first / last seen - plus "
+     "Windows details (model, serial, CPU, RAM, disk, Windows version, user) from the PC script. Edit tags in the "
+     "list, export to Excel."),
     ("ports", "Port scanner",
      "Which services a device offers (open TCP ports), with what each one is and the risky ones marked."),
     ("dns", "DNS lookup / DNS server test",
@@ -795,6 +804,9 @@ class ToolsTab:
             return
         names = {d.get("ip"): d.get("name") or d.get("ip") for d in self.app.devices if d.get("ip")}
         out(("Website firewall", "info", f"started, {len(blocked):,} sites blocked"), "log")
+        self.dnsf = fw
+        if getattr(self.app, "usage", None):
+            fw.on_answer = self.app.usage.dns_seen
         try:
             while not stop.wait(3):
                 snap = fw.snapshot()
@@ -821,6 +833,7 @@ class ToolsTab:
                             "mute")
                 out(f"ON - {snap['queries']:,} look-ups, {snap['blocked']:,} blocked", "status")
         finally:
+            self.dnsf = None
             fw.stop()
             out("\nWebsite firewall stopped. Devices fall back to their other DNS server (if the router gives one).",
                 "warn")
@@ -1142,6 +1155,217 @@ class ToolsTab:
         t.configure(state="disabled")
 
     # ------------------------------------------------------------------ MAC lookup
+    # ------------------------------------------------------------------ network guard
+    def _build_guard(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        self.g = {k: tk.BooleanVar(value=v) for k, v in (("dhcp", True), ("dns", True), ("random", False))}
+        ttk.Checkbutton(row, text="Only the router gives out IPs (drop other DHCP servers)",
+                        variable=self.g["dhcp"]).pack(side="left")
+        ttk.Checkbutton(row, text="All DNS through", variable=self.g["dns"]).pack(side="left", padx=(12, 2))
+        self.var_g_dns = tk.StringVar(value="router")
+        ttk.Radiobutton(row, text="the router", value="router", variable=self.var_g_dns).pack(side="left")
+        ttk.Radiobutton(row, text="this PC (website firewall)", value="pc", variable=self.var_g_dns).pack(side="left")
+        ttk.Checkbutton(row, text="Block randomized MACs", variable=self.g["random"]).pack(side="left", padx=12)
+        row2 = ttk.Frame(f)
+        row2.pack(fill="x", pady=(6, 2))
+        ttk.Label(row2, text="Devices acting as a second router (from the last scan) - ticked ones are blocked from "
+                             "giving DHCP / DNS:", foreground="#344054").pack(side="left")
+        ttk.Label(row2, text="Bridge:").pack(side="right")
+        self.var_g_bridge = tk.StringVar(value="bridge")
+        ttk.Entry(row2, textvariable=self.var_g_bridge, width=10).pack(side="right", padx=4)
+        lf = ttk.Frame(f, height=120)
+        lf.pack(fill="x")
+        self.g_tv = nd_tabs.UI["make_tree"](lf, ("block", "ip", "mac", "vendor", "why"),
+                                           ("Block", "IP", "MAC", "Maker", "Why it looks like a router"),
+                                           (55, 120, 140, 160, 520), first=("Name", 170))
+        self.g_tv.configure(height=4)
+        self.g_tv.bind("<Button-1>", self._guard_toggle)
+        self.g_rows, self.g_tick = {}, set()
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=4)
+        ttk.Button(bar, text="Make commands", style="Big.TButton", command=self._guard_make).pack(side="left")
+        ttk.Button(bar, text="Apply on router", command=lambda: self._guard_apply(False)).pack(side="left", padx=4)
+        ttk.Button(bar, text="UNDO on router", command=lambda: self._guard_apply(True)).pack(side="left")
+        ttk.Button(bar, text="Copy commands", command=lambda: self._guard_copy(False)).pack(side="left", padx=4)
+        ttk.Button(bar, text="Copy UNDO", command=lambda: self._guard_copy(True)).pack(side="left")
+        ttk.Button(bar, text="Save .rsc", command=self._guard_save).pack(side="left", padx=4)
+        ttk.Button(bar, text="Refresh list", command=self._guard_refresh).pack(side="right")
+        self.g_apply = self.g_undo = ""
+        self._out_box(f, "guard")
+        self._guard_refresh()
+
+    def _guard_refresh(self):
+        tv = self.g_tv
+        tv.delete(*tv.get_children())
+        self.g_rows = {}
+        for c in T.rogue_candidates(self.app.devices, self.app.raw, self.app.gw):
+            d = c["dev"]
+            iid = tv.insert("", "end", text=d.get("name") or "-",
+                            values=("☑" if d["mac"] in self.g_tick else "☐", d["ip"], d["mac"], d.get("vendor", ""),
+                                    c["why"]))
+            self.g_rows[iid] = d
+        if not self.g_rows:
+            tv.insert("", "end", text="none found", values=("", "", "", "", "Run a scan; extra routers show up here"))
+
+    def _guard_toggle(self, ev):
+        iid = self.g_tv.identify_row(ev.y)
+        d = self.g_rows.get(iid)
+        if d and self.g_tv.identify_column(ev.x) == "#1":
+            self.g_tick.symmetric_difference_update({d["mac"]})
+            self._guard_refresh()
+
+    def _guard_make(self):
+        opts = {k: v.get() for k, v in self.g.items()}
+        opts["dns_target"] = self.var_g_dns.get()
+        if opts["dns"] and opts["dns_target"] == "pc" and not getattr(self, "dnsf", None):
+            messagebox.showwarning("Network guard", "DNS to this PC needs the Website firewall running here (Tools > "
+                                                    "Website firewall > Start), or every device loses internet names. "
+                                                    "Choose 'the router' or start the firewall first.")
+            return False
+        if opts["random"] and not messagebox.askyesno(
+                "Network guard", "Block randomized MACs: phones and laptops using a private Wi-Fi address get NO "
+                                 "network until 'Private address' / 'Random hardware address' is switched off for the "
+                                 "office Wi-Fi.\n\nTell staff first. Continue?"):
+            return False
+        self.g_apply, self.g_undo = T.guard_commands(opts, sorted(self.g_tick), self.app.lip,
+                                                     self.var_g_bridge.get().strip() or "bridge")
+        t = self.texts["guard"]
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        t.insert("end", self.g_apply + "\n# ---------------- UNDO ----------------\n" + self.g_undo)
+        t.configure(state="disabled")
+        self.status["guard"].set("commands ready")
+        return True
+
+    def _guard_apply(self, undo):
+        if not self.g_apply and not self._guard_make():
+            return
+        self.app.router_apply(self.g_undo if undo else self.g_apply,
+                              "Network guard - UNDO" if undo else "Network guard")
+
+    def _guard_copy(self, undo):
+        if not self.g_apply and not self._guard_make():
+            return
+        self.app.clipboard_clear()
+        self.app.clipboard_append(self.g_undo if undo else self.g_apply)
+        self.status["guard"].set("copied - paste in WinBox > New Terminal")
+
+    def _guard_save(self):
+        if not self.g_apply and not self._guard_make():
+            return
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        p = filedialog.asksaveasfilename(initialdir=core.REPORT_DIR, initialfile="ndguard.rsc",
+                                         defaultextension=".rsc", filetypes=[("RouterOS script", "*.rsc")])
+        if p:
+            name = T.write_rsc(p, self.g_apply, self.g_undo)
+            messagebox.showinfo("Network guard", T.RSC_HOWTO.format(file=name, undo=name[:-4] + "-undo.rsc"))
+
+    # ------------------------------------------------------------------ inventory
+    def _build_inventory(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        ttk.Label(row, text="Search:").pack(side="left")
+        self.var_inv_q = tk.StringVar()
+        e = ttk.Entry(row, textvariable=self.var_inv_q, width=26)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self._inv_fill())
+        self.var_inv_show = tk.StringVar(value="All devices")
+        cb = ttk.Combobox(row, textvariable=self.var_inv_show, state="readonly", width=22,
+                          values=["All devices", "Online now", "PCs with details", "PCs without details",
+                                  "Not tagged", "Randomized MAC"])
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda ev: self._inv_fill())
+        ttk.Button(row, text="Refresh (+ router host names)", command=self._inv_refresh).pack(side="left", padx=4)
+        ttk.Button(row, text="Tag selected...", command=self._inv_tag).pack(side="left", padx=4)
+        ttk.Button(row, text="PC details script...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
+            side="left", padx=4)
+        ttk.Button(row, text="Export to Excel (CSV)", style="Big.TButton", command=self._inv_export).pack(side="right")
+        self.var_inv_sum = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.var_inv_sum, foreground="#5b21b6").pack(anchor="w", pady=(4, 2))
+        fr = ttk.Frame(f)
+        fr.pack(fill="both", expand=True)
+        cols = T.INV_COLS[1:]
+        self.inv_tv = nd_tabs.UI["make_tree"](fr, tuple(c[0] for c in cols), tuple(c[1] for c in cols),
+                                             tuple(c[2] for c in cols), first=(T.INV_COLS[0][1], T.INV_COLS[0][2]))
+        self.inv_tv.bind("<Double-1>", lambda e: self._inv_tag())
+        self.inv_rows, self.inv_leases, self.inv_items = [], None, {}
+        self._inv_refresh(router=False)
+
+    def _inv_refresh(self, router=True):
+        c = self.app.router_client(ask=False) if router else None
+        if c:
+            self.var_inv_sum.set("reading host names from the router...")
+
+            def work():
+                try:
+                    with c:
+                        ls = c.leases()
+                except Exception as e:
+                    ls, err = None, str(e)
+                else:
+                    err = ""
+                self.q.put(("inventory", lambda: self._inv_done(ls, err), "call"))
+            threading.Thread(target=work, daemon=True).start()
+        else:
+            self._inv_done(self.inv_leases, "")
+
+    def _inv_done(self, leases, err):
+        if leases is not None:
+            self.inv_leases = leases
+        self.inv_rows = T.inventory_rows(self.app.devices, self.app.db, self.inv_leases)
+        self._inv_fill()
+        if err:
+            self.var_inv_sum.set(self.var_inv_sum.get() + f"   (router: {err})")
+
+    def _inv_fill(self):
+        q = self.var_inv_q.get().strip().lower()
+        show = self.var_inv_show.get()
+        tv = self.inv_tv
+        tv.delete(*tv.get_children())
+        self.inv_items = {}
+        n = 0
+        for r in self.inv_rows:
+            if q and q not in " ".join(str(v) for v in r.values()).lower():
+                continue
+            if (show == "Online now" and not r["online"] or show == "PCs with details" and not r["model"] or
+                    show == "PCs without details" and (r["model"] or "omputer" not in r["category"]) or
+                    show == "Not tagged" and (r["dept"] or r["location"]) or show == "Randomized MAC" and not r["random"]):
+                continue
+            iid = tv.insert("", "end", text=r["name"] or "-", values=tuple(r.get(c[0], "") for c in T.INV_COLS[1:]),
+                            tags=() if r["online"] else ("off",))
+            self.inv_items[iid] = r
+            n += 1
+        pcs = sum(1 for r in self.inv_rows if r["model"])
+        self.var_inv_sum.set(f"{n} shown of {len(self.inv_rows)} devices  |  online {sum(r['online'] for r in self.inv_rows)}"
+                             f"  |  PCs with hardware details {pcs}  |  "
+                             + ("router host names included" if self.inv_leases else
+                                "tip: a router login in Setup adds the host name of every device"))
+
+    def _inv_tag(self):
+        sel = [self.inv_items[i] for i in self.inv_tv.selection() if i in self.inv_items]
+        devs = []
+        for r in sel:
+            if not r["mac"]:
+                continue
+            d = next((x for x in self.app.devices if x.get("mac") == r["mac"]), None)
+            devs.append(d or {"mac": r["mac"], "ip": r["ip"], "name": r["name"]})
+        if not devs:
+            messagebox.showinfo("Inventory", "Select one or more devices (Ctrl / Shift + click).")
+            return
+        dlg = nd_tabs.TagDialog(self.app, devs)
+        dlg.bind("<Destroy>", lambda e: self._inv_done(None, "") if e.widget is dlg else None, add="+")
+
+    def _inv_export(self):
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        p = filedialog.asksaveasfilename(initialdir=core.REPORT_DIR,
+                                         initialfile=time.strftime("network-inventory-%Y%m%d.csv"),
+                                         defaultextension=".csv", filetypes=[("Excel CSV", "*.csv")])
+        if p:
+            T.export_inventory_csv(p, self.inv_rows)
+            self.app.var_status.set(f"Inventory saved: {p}")
+            self.app.open_folder(os.path.dirname(p))
+
     def _build_mac(self, f):
         row = ttk.Frame(f)
         row.pack(fill="x")

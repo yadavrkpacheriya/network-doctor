@@ -11,3 +11,5 @@ nd_snmp.py
 nd_plugins.py
 nd_linux.py
 nd_dnsfilter.py
+nd_routeros.py
+nd_usage.py

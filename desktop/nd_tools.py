@@ -6,6 +6,7 @@ PC fix script and the command library. Pure logic only (no window code) so it ca
 
 import csv
 import io
+import os
 import re
 import socket
 import struct
@@ -431,6 +432,202 @@ def binding_commands(rows, tags, strict_arp=False, block_random=False, bridge="b
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
+# ==========================================================================
+# Network guard: rogue DHCP / DNS routers, DNS forced through the router, randomized MACs (MikroTik)
+# ==========================================================================
+def rogue_candidates(devices, raw, gw_ip):
+    """Devices that act like a second router: answer DHCP, run DNS (port 53) or announce an internet gateway."""
+    t = ((raw or {}).get("meta") or {}).get("tests") or {}
+    dhcp_ips = {s for s in (t.get("dhcp") or {}) if s != gw_ip}
+    out = []
+    for d in devices:
+        if not d.get("online") or d.get("ip") == gw_ip or d.get("self") or not d.get("mac"):
+            continue
+        why = []
+        if d.get("ip") in dhcp_ips:
+            why.append("gives out IP addresses (DHCP server)")
+        if 53 in (d.get("ports") or []):
+            why.append("answers DNS (port 53)")
+        if "internetgatewaydevice" in " ".join((d.get("upnp") or {}).get("st", [])).lower():
+            why.append("announces itself as an internet router (UPnP)")
+        if why:
+            out.append({"dev": d, "why": ", ".join(why)})
+    return out
+
+
+def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
+    """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random. Returns (apply_text, undo_text)."""
+    ts = time.strftime("%Y-%m-%d %H:%M")
+    a = [f"# Network Doctor - network guard - generated {ts}",
+         "# Paste in WinBox > New Terminal, or Apply on router. Safe to run again: old ND rules are replaced."]
+    u = [f"# Network Doctor - UNDO network guard - generated {ts}"]
+    clean_bf = ':do {/interface bridge filter remove [find where comment~"^ND guard"]} on-error={}'
+    a.append(clean_bf)
+    u.append(clean_bf)
+    if opts.get("dhcp"):
+        a += ["# 1) Only the router may give out IP addresses: DHCP answers from any other device (a second Wi-Fi",
+              "#    router plugged in by its LAN port) are dropped when they pass the router's bridge.",
+              f'/interface bridge filter add chain=forward mac-protocol=ip ip-protocol=udp src-port=67 dst-port=68 '
+              f'action=drop comment="ND guard: rogue DHCP"',
+              "#    Bridge filters need the traffic to go through the router CPU: with hardware offload on a switch",
+              "#    chip, set the second router to access-point mode or unplug it (the scan shows where it is)."]
+    for mac in rogue_macs:
+        a.append(f'/interface bridge filter add chain=forward src-mac-address={mac}/FF:FF:FF:FF:FF:FF mac-protocol=ip '
+                 f'ip-protocol=udp src-port=67 action=drop comment="ND guard: rogue router {mac} DHCP"')
+        a.append(f'/interface bridge filter add chain=forward dst-mac-address={mac}/FF:FF:FF:FF:FF:FF mac-protocol=ip '
+                 f'ip-protocol=udp dst-port=53 action=drop comment="ND guard: rogue router {mac} DNS"')
+        a.append(f'/interface bridge filter add chain=forward dst-mac-address={mac}/FF:FF:FF:FF:FF:FF mac-protocol=ip '
+                 f'ip-protocol=tcp dst-port=53 action=drop comment="ND guard: rogue router {mac} DNS"')
+    clean_nat = ':do {/ip firewall nat remove [find where comment~"^ND guard"]} on-error={}'
+    a.append(clean_nat)
+    u.append(clean_nat)
+    if opts.get("dns"):
+        to_pc = opts.get("dns_target") == "pc" and lip
+        a += ["# 2) Every DNS question from the office goes to " + ("Network Doctor's website firewall on " + lip
+              if to_pc else "the router") + ", whatever DNS a device or a",
+              "#    second router set - so nobody bypasses the office DNS and wrong DNS servers stop breaking internet."]
+        if not to_pc:
+            a.append("/ip dns set allow-remote-requests=yes")
+        for proto in ("udp", "tcp"):
+            if to_pc:
+                a.append(f'/ip firewall nat add chain=dstnat in-interface={bridge} src-address=!{lip} protocol={proto} '
+                         f'dst-port=53 action=dst-nat to-addresses={lip} to-ports=53 comment="ND guard: DNS to PC"')
+            else:
+                a.append(f'/ip firewall nat add chain=dstnat in-interface={bridge} protocol={proto} dst-port=53 '
+                         f'action=redirect to-ports=53 comment="ND guard: DNS to router"')
+        a.append(':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}')
+        a.append('/ip firewall filter add chain=input in-interface=!' + bridge + ' protocol=udp dst-port=53 '
+                 'action=drop comment="ND guard: no DNS from internet"')
+        u.append(':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}')
+    if opts.get("random"):
+        a += ["# 3) Devices with a randomized (private) MAC get no network: every phone / laptop must use its real",
+              "#    MAC on the office Wi-Fi, so its history and reservations stay with one device.",
+              "/interface bridge filter add chain=input src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 "
+              'action=drop comment="ND guard: random MAC"',
+              "/interface bridge filter add chain=forward src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 "
+              'action=drop comment="ND guard: random MAC"']
+    return "\n".join(a) + "\n", "\n".join(u) + "\n"
+
+
+RSC_HOWTO = ("Saved {file} (and {undo}).\n\nA .rsc file does nothing when double-clicked on the PC - the ROUTER "
+             "runs it:\n1. WinBox > Files: drag {file} into the list.\n2. WinBox > New Terminal, type:\n"
+             "   /import file-name={file} verbose=yes\n   (verbose shows each line, and the line that fails).\n\n"
+             "Easier: save a router login in Setup and press 'Apply on router'.")
+
+
+def write_rsc(path, apply_text, undo_text):
+    """Writes a RouterOS script the router can /import: plain ASCII, short name, progress messages, and the undo in a
+    separate file. Returns the file name."""
+    folder, name = os.path.split(path)
+    base = re.sub(r"[^A-Za-z0-9_.-]", "-", os.path.splitext(name)[0]) or "netdoctor"
+    name = base + ".rsc"
+
+    def body(text, what):
+        lines = [":put \"Network Doctor: " + what + " - start\""]
+        lines += [ln for ln in text.splitlines() if ln.strip()]
+        lines.append(":put \"Network Doctor: " + what + " - done\"")
+        return "\n".join(lines) + "\n"
+    for fname, text, what in ((name, apply_text, "apply"), (base + "-undo.rsc", undo_text, "undo")):
+        with open(os.path.join(folder, fname), "w", encoding="ascii", errors="replace", newline="\n") as f:
+            f.write(body(text, what))
+    return name
+
+
+HW_FIELDS = (("maker", "Maker"), ("model", "Model"), ("serial", "Serial no."), ("cpu", "CPU"), ("ram_gb", "RAM GB"),
+             ("disk_gb", "Disk C: GB"), ("disk_free_gb", "Free GB"), ("os_build", "Windows build"),
+             ("domain", "Domain / workgroup"), ("logged_on", "Logged-on user"), ("last_boot", "Last start"))
+
+
+def clean_hw(hw):
+    """Hardware details reported by the PC script, as short strings (WMI dates made readable)."""
+    if not isinstance(hw, dict):
+        return {}
+    out = {}
+    for k, _ in HW_FIELDS + (("installed", ""), ("os_version", "")):
+        v = hw.get(k)
+        if v is None or v == "":
+            continue
+        v = str(v).strip()[:80]
+        m = re.match(r"^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})", v) if k in ("installed", "last_boot") else None
+        if m:
+            v = f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}"
+        m = re.match(r"^/Date\((\d+)\)/$", v)
+        if m:
+            v = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(m.group(1)) / 1000))
+        out[k] = v
+    return out
+
+
+INV_COLS = (("name", "Name", 150), ("ip", "IP", 110), ("mac", "MAC", 135), ("vendor", "Maker", 130),
+            ("category", "Type", 120), ("host", "Host name", 130), ("dept", "Department", 110),
+            ("location", "Location", 110), ("status", "Status", 120), ("first_seen", "First seen", 115),
+            ("os", "Windows", 150), ("model", "Model", 140), ("serial", "Serial no.", 110), ("cpu", "CPU", 180),
+            ("ram_gb", "RAM GB", 60), ("disk_gb", "Disk GB", 60), ("disk_free_gb", "Free GB", 60),
+            ("user", "User", 130), ("router_port", "Router port", 80), ("notes", "Notes", 200))
+
+
+def inventory_rows(devices, db, leases=None):
+    """One row per device ever seen (by MAC), merging the scan, history, tags, the router's DHCP leases
+    (host names) and the hardware the PC script reported."""
+    tags = tags_of(db)
+    with core.DB_LOCK:
+        hist = dict(db.get("devices") or {})
+        reports = dict(db.get("pc_reports") or {})
+    by_mac_report = {}
+    for host, r in reports.items():
+        for mac in r.get("macs") or []:
+            by_mac_report[mac] = (host, r)
+    lease_by_mac = {core.norm_mac(x.get("mac-address", "")): x for x in (leases or []) if x.get("mac-address")}
+    rows, seen = [], set()
+    for d in devices:
+        mac = d.get("mac") or ""
+        key = mac or ("IP-" + d.get("ip", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(_inv_row(mac, d, hist.get(mac), tags.get(mac, {}), by_mac_report.get(mac), lease_by_mac.get(mac)))
+    for mac, h in hist.items():
+        if mac not in seen:
+            seen.add(mac)
+            rows.append(_inv_row(mac, None, h, tags.get(mac, {}), by_mac_report.get(mac), lease_by_mac.get(mac)))
+    for mac, ls in lease_by_mac.items():  # known to the router only (never answered a scan)
+        if mac and mac not in seen:
+            seen.add(mac)
+            rows.append(_inv_row(mac, None, None, tags.get(mac, {}), by_mac_report.get(mac), ls))
+    rows.sort(key=lambda r: (r["status"] != "online", core.ip_key(r["ip"] or "255.255.255.255")))
+    return rows
+
+
+def _inv_row(mac, d, h, t, rep, lease):
+    d, h, t = d or {}, h or {}, t or {}
+    host, r = rep or ("", {})
+    hw = (r or {}).get("hw") or {}
+    online = bool(d.get("online"))
+    status = "online" if online else (f"last seen {h['last_seen']}" if h.get("last_seen") else
+                                      "router lease" if lease else "")
+    row = {"mac": mac, "name": t.get("name") or d.get("name") or host or (lease or {}).get("host-name", "") or
+           ((h.get("names") or [""])[-1]),
+           "ip": d.get("ip") or (lease or {}).get("address") or h.get("ip", ""),
+           "vendor": d.get("vendor") or h.get("vendor", ""), "category": d.get("category") or h.get("category", ""),
+           "host": (lease or {}).get("host-name") or host or (d.get("names") or {}).get("netbios", ""),
+           "dept": t.get("dept", ""), "location": t.get("location", ""), "status": status,
+           "first_seen": d.get("first_seen") or h.get("first_seen", ""), "os": (r or {}).get("os", ""),
+           "user": hw.get("logged_on") or (r or {}).get("user", ""), "router_port": t.get("router_port", ""),
+           "notes": t.get("notes", ""), "online": online, "random": core.is_random_mac(mac) if mac else False,
+           "report_time": (r or {}).get("time", "")}
+    for k in ("model", "serial", "cpu", "ram_gb", "disk_gb", "disk_free_gb"):
+        row[k] = hw.get(k, "")
+    return row
+
+
+def export_inventory_csv(path, rows):
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow([c[1] for c in INV_COLS] + ["PC report time"])
+        for r in rows:
+            w.writerow([r.get(c[0], "") for c in INV_COLS] + [r.get("report_time", "")])
+
+
 REPORT_TITLES = re.compile(r"^(Half-duplex cable link|PC cable runs at 100 Mbps|Cable errors on) ")
 
 
@@ -478,14 +675,18 @@ def binding_issues(devices, db):
             for ip in d.get("ips") or [d.get("ip")]:
                 by_ip.setdefault(ip, []).append(d)
     for mac, b in binds.items():
-        name = tags.get(mac, {}).get("name") or mac
         me = next((d for d in devices if d.get("mac") == mac and d.get("online")), None)
+        name = tags.get(mac, {}).get("name") or (me or {}).get("name") or mac
         if me and me.get("ip") != b["ip"] and b["ip"] not in (me.get("ips") or []):
             out.append({"sev": "warning", "title": f"Bound device {name} is on {me['ip']} instead of {b['ip']}",
                         "detail": "Its IP was reserved on the router, but the device uses another address. Either the "
-                                  "binding commands were not pasted yet, or the device has a hand-typed IP.",
-                        "fix": "Paste the binding commands from the IP-MAC binding tab, then set the device to "
-                               "automatic (DHCP) and renew its IP (PC fix script or 'ipconfig /renew').",
+                                  "binding commands were not pasted (or were pasted on another router), or the device "
+                                  "has a hand-typed IP, or it has not renewed its IP since.",
+                        "fix": f"Keep {b['ip']}: IP-MAC binding tab > tick it > Make router commands (they keep "
+                               f"{b['ip']}) > paste in WinBox, then set the device to automatic (DHCP) and renew its "
+                               f"IP ('ipconfig /renew', or unplug / re-plug it). Want {me['ip']} instead: tick "
+                               "'Moved devices: bind their NEW IP' before Make router commands. Not needed any more: "
+                               "select it and 'Forget binding of selected'.",
                         "items": [f"{name} / {mac}: reserved {b['ip']}, now {me['ip']}"]})
         for other in by_ip.get(b["ip"], []):
             if other.get("mac") and other["mac"] != mac:
@@ -607,8 +808,19 @@ $ads = foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue))
         dhcp = [string](Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp }}
 }}
 if ($opt.Report -and $URL) {{
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $osi = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
+    $hw = @{{ maker = [string]$cs.Manufacturer; model = [string]$cs.Model; serial = [string]$bios.SerialNumber;
+             cpu = [string]$cpu.Name; ram_gb = [math]::Round(([double]$cs.TotalPhysicalMemory) / 1GB, 1);
+             disk_gb = [math]::Round(([double]$disk.Size) / 1GB); disk_free_gb = [math]::Round(([double]$disk.FreeSpace) / 1GB);
+             os_build = [string]$osi.BuildNumber; os_version = [string]$osi.Version;
+             installed = [string]$osi.InstallDate; last_boot = [string]$osi.LastBootUpTime;
+             domain = [string]$cs.Domain; logged_on = [string]$cs.UserName }}
     $body = @{{ hostname = $env:COMPUTERNAME; user = "$env:USERDOMAIN\\$env:USERNAME";
-               os = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption;
+               os = $osi.Caption; hw = $hw;
                adapters = @($ads); actions = @($done) }} | ConvertTo-Json -Depth 4
     try {{
         Invoke-RestMethod -Uri $URL -Method Post -Body $body -ContentType 'application/json' -Headers @{{ 'X-ND-Report' = $KEY }} -TimeoutSec 8 | Out-Null
@@ -712,7 +924,8 @@ COMMANDS = [
     ("MikroTik router", "Router", "DHCP lease of a device", "/ip dhcp-server lease print detail where mac-address={mac}",
      "Shows its IP, host name, status and whether it is reserved (static)."),
     ("MikroTik router", "Router", "Reserve the current IP for a device (bind)",
-     '/ip dhcp-server lease add address={ip} mac-address={mac} comment="{name}"',
+     ':do {/ip dhcp-server lease remove [find where mac-address={mac}]} on-error={}; '
+     '/ip dhcp-server lease add address={ip} mac-address={mac} comment="ND: {name}"',
      "The device keeps DHCP and always gets this IP. Use the Binding tab for many devices at once."),
     ("MikroTik router", "Router", "Remove a device's reservation", "/ip dhcp-server lease remove [find where mac-address={mac}]",
      "Before giving the IP to another device."),
@@ -731,9 +944,12 @@ COMMANDS = [
      "Blocks loops between switches automatically (2-3 s LAN pause when applied)."),
     ("MikroTik router", "Router", "Restart a port (reboots PoE device behind it)",
      "/interface ethernet disable {port}; :delay 3s; /interface ethernet enable {port}", "Camera / AP hanging."),
-    ("MikroTik router", "Router", "Block a device", '/ip firewall filter add chain=forward src-mac-address={mac} action=drop place-before=0 comment="ND block {name}"',
+    ("MikroTik router", "Router", "Block a device (no internet, no other networks)",
+     ':do {/ip firewall filter add chain=forward src-mac-address={mac} action=drop comment="ND block {mac}" '
+     'place-before=0} on-error={/ip firewall filter add chain=forward src-mac-address={mac} action=drop '
+     'comment="ND block {mac}"}',
      "Cuts internet for a device that is attacking or misbehaving."),
-    ("MikroTik router", "Router", "Unblock a device", '/ip firewall filter remove [find where comment="ND block {name}"]', ""),
+    ("MikroTik router", "Router", "Unblock a device", '/ip firewall filter remove [find where comment="ND block {mac}"]', ""),
     ("MikroTik router", "Router", "Neighbours (switches / APs the router sees)", "/ip neighbor print detail",
      "Identity, model and port of MikroTik / CDP / LLDP devices - use to tag switches."),
     # ---- Mac
@@ -747,9 +963,16 @@ COMMANDS = [
      "What this device is talking to right now and how fast. Ctrl+C to stop."),
     ("MikroTik router", "Router", "Ping from the router", "/ping {ip} count=20",
      "If the router can ping it but a PC can't, the problem is between that PC and the switch."),
-    ("MikroTik router", "Router", "Limit the speed of one device", '/queue simple add name="ND limit {name}" target={ip}/32 '
-     'max-limit={limit}/{limit} comment="ND"', "E.g. limit 5M. Stops one PC / camera eating the whole internet line."),
-    ("MikroTik router", "Router", "Remove a speed limit", '/queue simple remove [find name="ND limit {name}"]', ""),
+    ("MikroTik router", "Router", "Limit the speed of one device",
+     ':do {/queue simple remove [find name="ND limit {ip}"]} on-error={}; /queue simple add name="ND limit {ip}" '
+     'target={ip}/32 max-limit={limit}/{limit} comment="ND {mac}"',
+     "E.g. limit 5M. Stops one PC / camera eating the whole internet line. If the limit seems ignored: FastTrack "
+     "(on in the default setup) skips speed limits - use 'Turn off FastTrack' below."),
+    ("MikroTik router", "Router", "Turn off FastTrack (so speed limits work)",
+     "/ip firewall filter disable [find where action=fasttrack-connection]",
+     "Speed limits and per-device traffic counting need it off. The router CPU works harder - check "
+     "'Router CPU, memory, uptime' afterwards. Undo: the same with 'enable'."),
+    ("MikroTik router", "Router", "Remove a speed limit", '/queue simple remove [find name="ND limit {ip}"]', ""),
     ("MikroTik router", "Router", "Fix websites that hang (MSS clamp)",
      '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn action=change-mss new-mss=clamp-to-pmtu '
      'passthrough=yes comment="ND: MSS clamp"', "For PPPoE / VPN lines with MTU below 1500 (Tools > MTU finder)."),

@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.10.0"
+VERSION = "3.11.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -67,6 +67,84 @@ REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor R
 # ==========================================================================
 # helpers
 # ==========================================================================
+# --------------------------------------------------------------------------
+# Name lookups that still work when this PC's own DNS server does not answer (a wrong DNS from a second router,
+# the website firewall stopped while the PC points to itself, ISP DNS down). Only used after a normal lookup fails.
+PUBLIC_DNS = ("1.1.1.1", "8.8.8.8", "9.9.9.9", "208.67.222.222")
+_orig_getaddrinfo = socket.getaddrinfo
+_dns_cache = {}
+_dns_state = {"fallback_used": 0, "last_host": ""}
+
+
+def _skip_name(msg, off):
+    while True:
+        ln = msg[off]
+        if ln == 0:
+            return off + 1
+        if ln & 0xC0 == 0xC0:
+            return off + 2
+        off += ln + 1
+
+
+def public_resolve(host, timeout=2.0):
+    """IPv4 addresses of host asked directly from public DNS servers, or []."""
+    host = host.strip(".").lower()
+    hit = _dns_cache.get(host)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    q = b"".join(bytes([len(p)]) + p.encode("idna") for p in host.split(".")) + b"\x00"
+    for server in PUBLIC_DNS:
+        qid = random.randint(1, 0xFFFF)
+        pkt = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0) + q + struct.pack("!HH", 1, 1)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.settimeout(timeout)
+            s.sendto(pkt, server if isinstance(server, tuple) else (server, 53))
+            data, _ = s.recvfrom(4096)
+            if struct.unpack("!H", data[:2])[0] != qid:
+                continue
+            an = struct.unpack("!H", data[6:8])[0]
+            off = _skip_name(data, 12) + 4
+            ips = []
+            for _ in range(an):
+                off = _skip_name(data, off)
+                typ, _cls, _ttl, rdlen = struct.unpack("!HHIH", data[off:off + 10])
+                off += 10
+                if typ == 1 and rdlen == 4:
+                    ips.append(socket.inet_ntoa(data[off:off + 4]))
+                off += rdlen
+            if ips:
+                _dns_cache[host] = (time.time(), ips)
+                return ips
+        except (OSError, struct.error, IndexError):
+            continue
+        finally:
+            s.close()
+    return []
+
+
+def _getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
+    except socket.gaierror:
+        h = host.decode() if isinstance(host, bytes) else (host or "")
+        if ("." not in h or re.fullmatch(r"[\d.]+|[0-9a-fA-F:]+", h) or
+                h.lower().endswith((".local", ".lan", ".home", ".internal", ".localdomain"))):
+            raise
+        ips = public_resolve(h)
+        if not ips:
+            raise
+        _dns_state["fallback_used"] += 1
+        _dns_state["last_host"] = h
+        out = []
+        for ip in ips:
+            out += _orig_getaddrinfo(ip, port, socket.AF_INET, type, proto, flags)
+        return out
+
+
+socket.getaddrinfo = _getaddrinfo
+
+
 def run(cmd, timeout=10):
     kw = {"creationflags": 0x08000000} if IS_WIN else {}
     try:
@@ -390,10 +468,90 @@ def ssdp_discover(lip, wait=4):
 
 
 def nonunicast_rx():
+    """Broadcast + multicast packets received (netstat -e 'Non-unicast'). Fallback only: see bcast_mcast_rx."""
     if not IS_WIN:
         return None
     m = re.search(r"Non-unicast packets\s+(\d+)\s+(\d+)", run(["netstat", "-e"], 10))
     return int(m.group(1)) if m else None
+
+
+# Broadcast and multicast counted separately. netstat's 'Non-unicast' adds them together, but multicast (CCTV / NVR
+# streams, mDNS, SSDP, IPv6, IPTV) is not a loop sign: on offices with cameras it alone passes the storm limit, and
+# the "unplug cables to find the loop" advice then never makes the warning go away.
+NU_PS = ("$b=0;$m=0;foreach($s in (Get-NetAdapterStatistics -ErrorAction SilentlyContinue)){"
+         "$b+=[uint64]$s.ReceivedBroadcastPackets;$m+=[uint64]$s.ReceivedMulticastPackets};\"$b $m\"")
+
+
+def bcast_mcast_rx():
+    """(broadcast, multicast) packets received on all adapters, or None when Windows cannot split them."""
+    if not IS_WIN:
+        return None
+    m = re.search(r"(\d+)\s+(\d+)", run(["powershell", "-NoProfile", "-NonInteractive", "-Command", NU_PS], 20))
+    if not m or (m.group(1) == "0" and m.group(2) == "0"):  # some drivers do not fill these counters
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def nu_snapshot():
+    """('split', broadcast, multicast) or ('sum', broadcast+multicast, None) or None."""
+    bm = bcast_mcast_rx()
+    if bm:
+        return ("split",) + bm
+    n = nonunicast_rx()
+    return ("sum", n, None) if n is not None else None
+
+
+def nu_rates(tests, s0, s1, secs):
+    """Fills tests['bcast_pps'] (+ 'mcast_pps', or 'bcast_mixed' when only the total was available)."""
+    if not s0 or not s1 or s0[0] != s1[0] or s1[1] < s0[1]:
+        return
+    secs = max(secs, 1)
+    tests["bcast_pps"] = round((s1[1] - s0[1]) / secs, 1)
+    if s0[0] == "split":
+        tests["mcast_pps"] = round(max(0, s1[2] - s0[2]) / secs, 1)
+    else:
+        tests["bcast_mixed"] = True
+
+
+class NuCounter:
+    """One hidden PowerShell that prints the broadcast / multicast counters every second (for the live monitor,
+    where starting PowerShell every 2 s would cost too much CPU)."""
+
+    def __init__(self):
+        self.val, self.t, self.p = None, 0.0, None
+
+    def start(self):
+        if not IS_WIN:
+            return
+        try:
+            self.p = subprocess.Popen(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "while($true){" + NU_PS + ";[Console]::Out.Flush();Start-Sleep -Seconds 1}"],
+                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+                creationflags=0x08000000)
+        except Exception:
+            self.p = None
+            return
+        threading.Thread(target=self._read, daemon=True, name="nu-counter").start()
+
+    def _read(self):
+        try:
+            for line in self.p.stdout:
+                m = re.match(r"\s*(\d+)\s+(\d+)", line)
+                if m and (m.group(1) != "0" or m.group(2) != "0"):
+                    self.val, self.t = (int(m.group(1)), int(m.group(2))), time.time()
+        except Exception:
+            pass
+
+    def read(self):
+        return self.val if self.val and time.time() - self.t < 5 else None
+
+    def stop(self):
+        try:
+            if self.p:
+                self.p.kill()
+        except Exception:
+            pass
 
 
 def gateway_monitor(gw, count, result):
@@ -750,6 +908,61 @@ class Stopped(Exception):
     pass
 
 
+def parse_nets(text):
+    """'192.168.0.0/24, 192.168.1.0/24' -> [IPv4Network, ...]. Raises ValueError. Up to 4096 addresses in all."""
+    nets = []
+    for part in re.split(r"[,;\s]+", str(text or "").strip()):
+        if part:
+            n = ipaddress.ip_network(part, strict=False)
+            if n.version != 4:
+                raise ValueError("only IPv4 networks")
+            if n not in nets:
+                nets.append(n)
+    if not nets:
+        raise ValueError("no network")
+    if sum(n.num_addresses for n in nets) > 4096:
+        raise ValueError("too many addresses (at most 4096 in all, for example four /24 networks)")
+    return nets
+
+
+def in_net(ip, net):
+    try:
+        return ipaddress.IPv4Address(ip) in net
+    except Exception:
+        return False
+
+
+def is_private_ip(ip):
+    try:
+        return ipaddress.IPv4Address(ip).is_private
+    except Exception:
+        return False
+
+
+ARP_OID = "1.3.6.1.2.1.4.22.1.2"  # ipNetToMediaPhysAddress: index ifIndex.a.b.c.d -> MAC
+
+
+def router_arp_table(gw, community=None, timeout=1.2, port=161):
+    """{ip: mac} from the router's ARP table over SNMP, and the community that worked; ({}, '') if not allowed."""
+    import nd_snmp
+    for comm in [c for c in (community, "netdoctor", "public") if c]:
+        try:
+            rows = nd_snmp.Snmp(gw, comm, "2c", port=port, timeout=timeout, retries=0).table(ARP_OID)
+        except Exception:
+            continue
+        out = {}
+        for idx, v in rows.items():
+            parts = idx.split(".")
+            if len(parts) >= 5:
+                ip = ".".join(parts[-4:])
+                mac = norm_mac(nd_snmp.mac_of(v))
+                if mac and not is_bad_mac(mac):
+                    out[ip] = mac
+        if out:
+            return out, comm
+    return {}, ""
+
+
 def scan(subnet, opts, progress, stop):
     """Returns raw results. progress(pct, text). stop = threading.Event."""
     def chk():
@@ -757,15 +970,16 @@ def scan(subnet, opts, progress, stop):
             raise Stopped()
 
     gw, lip = detect_network()
-    net = ipaddress.ip_network(subnet, strict=False)
-    hosts = [str(h) for h in net.hosts()]
+    nets = parse_nets(subnet)
+    net = next((n for n in nets if in_net(lip, n)), nets[0])  # this PC's own network (ARP works only there)
+    hosts = sorted({str(h) for n in nets for h in n.hosts()}, key=ip_key)
     admin = is_admin()
-    try:
-        local = ipaddress.IPv4Address(lip) in net
-    except Exception:
-        local = True
-    raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": str(net), "admin": admin,
-                    "scapy": False, "tests": {}, "local_subnet": local,
+    local = in_net(lip, net)
+
+    def is_local(ip):
+        return local and in_net(ip, net)
+    raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": ", ".join(map(str, nets)),
+                    "admin": admin, "scapy": False, "tests": {}, "local_subnet": local,
                     "self_dhcp": local_dhcp_enabled(lip), "self_lease": local_lease_seconds(lip)},
            "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},
            "self_mac": local_mac(lip)}
@@ -780,22 +994,20 @@ def scan(subnet, opts, progress, stop):
     if gw:
         mon_t = threading.Thread(target=gateway_monitor, args=(gw, 30, mon), daemon=True)
         mon_t.start()
-    b0, t0 = nonunicast_rx(), time.time()
+    b0, t0 = nu_snapshot(), time.time()
     for _ in range(10):
         chk()
         time.sleep(0.5)
-    b1 = nonunicast_rx()
-    if b0 is not None and b1 is not None:
-        tests["bcast_pps"] = round((b1 - b0) / max(time.time() - t0, 1), 1)
+    nu_rates(tests, b0, nu_snapshot(), time.time() - t0)
 
     # 2. live sweep
-    progress(8, f"Finding live devices in {net} (ARP + ping)...")
+    progress(8, f"Finding live devices in {raw['meta']['subnet']} (ARP + ping)...")
     done = [0]
 
     def probe(ip):
         if stop.is_set():
             return ip, None, None
-        mac = win_sendarp(ip) if (IS_WIN and local and ip != lip) else None
+        mac = win_sendarp(ip) if (IS_WIN and is_local(ip) and ip != lip) else None
         ttl = ping(ip)
         if ttl is None and mac:
             ttl = ping(ip)
@@ -811,11 +1023,36 @@ def scan(subnet, opts, progress, stop):
             if ttl is not None:
                 raw["ping"][ip] = ttl
     chk()
-    if not IS_WIN and local:
+    # Second chance for phones / cameras in Wi-Fi power-save, which often miss the first ARP request.
+    if IS_WIN and local:
+        missed = [ip for ip in hosts if is_local(ip) and ip != lip and ip not in raw["arp"]]
+        progress(34, f"Second ARP round for {len(missed)} addresses (sleeping phones / cameras)...")
+        with ThreadPoolExecutor(96) as ex:
+            for ip, mac in zip(missed, ex.map(win_sendarp, missed)):
+                if mac:
+                    raw["arp"][ip].add(mac)
+    chk()
+    if local:  # what the operating system learned on its own (all systems, Windows included)
         hostset = set(hosts)
         for ip, mac in os_arp_table().items():
-            if ip in hostset and ip != lip:
+            if ip in hostset and ip != lip and not raw["arp"].get(ip):
                 raw["arp"][ip].add(mac)
+    # The router knows every device that talked in the last minutes, on every network it routes - including
+    # phones that sleep and cameras on another range. Read its ARP table over SNMP when it allows it.
+    if gw:
+        progress(35, "Asking the router which devices it knows (SNMP)...")
+        ra, who = router_arp_table(gw, opts.get("router_snmp"))
+        if ra:
+            hostset = set(hosts)
+            tests["router_arp"] = {"community": who, "entries": len(ra)}
+            raw["router_arp"] = {}
+            for ip, mac in ra.items():
+                if ip in hostset and ip != lip:
+                    raw["router_arp"][ip] = mac
+                    if not raw["arp"].get(ip):
+                        raw["arp"][ip].add(mac)
+            raw["other_nets"] = sorted({str(ipaddress.ip_network(ip + "/24", strict=False)) for ip in ra
+                                        if ip not in hostset and is_private_ip(ip)})
     alive = sorted(set(raw["arp"]) | set(raw["ping"]), key=ip_key)
 
     # 3. IP-conflict rounds: clear cache, ask again; a 2nd MAC winning a round = conflict
@@ -826,7 +1063,7 @@ def scan(subnet, opts, progress, stop):
             progress(36 + r * 3, f"IP-conflict check, round {r + 1}/{rounds}...")
             flush_arp_cache()
             with ThreadPoolExecutor(96) as ex:
-                for ip, mac in zip(alive, ex.map(win_sendarp, alive)):
+                for ip, mac in zip(alive, ex.map(lambda x: win_sendarp(x) if is_local(x) else None, alive)):
                     if mac:
                         raw["arp"][ip].add(mac)
             time.sleep(0.7)
@@ -986,6 +1223,8 @@ def build_devices(raw, oui, db):
                      nm.get("dns", "").split(".")[0] or "")
         if d["random"]:
             d["notes"].append("Randomized MAC")
+        if d["ip"] in (raw.get("router_arp") or {}) and d["ip"] not in raw["ping"]:
+            d["notes"].append("seen by the router (does not answer this PC - sleeping phone or firewall)")
         h = db["devices"].get(mac) if mac else None
         d["first_seen"] = h["first_seen"] if h else m["started"]
         if h and h.get("names") and nm.get("netbios") and h["names"][-1] != nm["netbios"]:
@@ -1061,7 +1300,8 @@ def analyse(raw, devices, db):
         if not d["mac"]:
             continue
         prev = db["ip_owner"].get(d["ip"])
-        if prev and prev["mac"] != d["mac"]:
+        # A phone that changes its private (randomized) MAC is the same phone, not another device taking the IP.
+        if prev and prev["mac"] != d["mac"] and not is_random_mac(prev["mac"]):
             prev_now = by_mac.get(prev["mac"])
             if prev_now is None or prev_now["ip"] == d["ip"]:
                 flips.append(f"{d['ip']}: was {prev['mac']} ({prev.get('name', '')}) on {prev['time']}, now {label_of(d)}")
@@ -1136,7 +1376,21 @@ def analyse(raw, devices, db):
     # ---- loops / storms / stability
     loop = False
     bp = t.get("bcast_pps")
-    if bp is not None:
+    mixed = bool(t.get("bcast_mixed"))
+    if bp is not None and mixed:
+        # Only the total of broadcast + multicast was available: a high value may be cameras, not a loop.
+        bad = bp > 300
+        if bad:
+            loop = loop or bp > 3000
+            add("critical" if bp > 3000 else "warning", f"Very high broadcast / multicast traffic ({bp}/second)",
+                "This PC receives hundreds of broadcast or multicast packets per second (Windows could not tell the two "
+                "apart here). Broadcasts point to a network loop; multicast usually comes from CCTV cameras / NVRs "
+                "streaming in multicast or from IPTV, copied to every port by switches without IGMP snooping.",
+                "1) Turn on IGMP snooping (MikroTik: /interface bridge set [find] igmp-snooping=yes) and set cameras / "
+                "NVR to unicast streaming, then re-scan. 2) If the number stays high, unplug switch-to-switch cables "
+                "one by one; when it drops, you found the loop.")
+        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} broadcast + multicast per second"))
+    elif bp is not None:
         bad = bp > 300
         if bad:
             loop = loop or bp > 1000
@@ -1145,7 +1399,17 @@ def analyse(raw, devices, db):
                 "connecting a switch back to itself or two switches linked twice) or a faulty device.",
                 "Unplug switch-to-switch cables one by one and re-scan; when the number drops, you found the loop. "
                 "Use switches with loop protection / STP.")
-        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} per second received"))
+        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} broadcasts per second received"))
+    mp = t.get("mcast_pps")
+    if mp is not None:
+        bad = mp > 1000
+        if bad:
+            add("warning", f"Very high multicast traffic ({mp}/second)",
+                "Not a loop. Multicast this high usually comes from CCTV cameras / an NVR streaming in multicast, or "
+                "IPTV. Switches without IGMP snooping copy it to every port, which slows Wi-Fi, old PCs and printers.",
+                "Set the cameras / NVR to unicast streaming (or turn multicast off). Turn on IGMP snooping: MikroTik "
+                "/interface bridge set [find] igmp-snooping=yes, and on managed switches. Then re-scan.")
+        checks.append(("Multicast level", "warn" if bad else "pass", f"{mp} per second received (cameras, mDNS, IPv6)"))
     g = t.get("gw_ping") or {}
     if g.get("loss") is not None:
         bad = g["loss"] >= 5 or (g.get("avg") or 0) > 30 or (g.get("max") or 0) > 300
@@ -1179,6 +1443,23 @@ def analyse(raw, devices, db):
                 "Unplug switch uplinks one at a time; when the echo stops, the last cable removed was the loop.")
         checks.append(("Loop echo test", "fail" if bad else "pass", f"sent {echo['sent']}, came back {echo['seen']}"))
     checks.append(("Loop overall", "fail" if loop else "pass", "based on the tests above"))
+
+    # ---- networks / devices this PC could not reach itself
+    other = raw.get("other_nets") or []
+    if other:
+        add("info", f"The router also knows devices on {len(other)} other network(s)",
+            "Its ARP table lists devices outside the networks you scanned - cameras / NVRs often sit on their own "
+            "range (Hikvision 192.168.1.x, Dahua 192.168.1.108).",
+            "Add them to the network box at the top, separated by commas (for example "
+            f"'{raw['meta'].get('subnet', '')}, {other[0]}'), and scan again.", other[:10])
+    ra = t.get("router_arp")
+    if ra:
+        checks.append(("Router device list (SNMP)", "pass", f"{ra['entries']} entries read with community "
+                       f"'{ra['community']}'"))
+    elif not raw["meta"].get("quick"):
+        checks.append(("Router device list (SNMP)", "skip", "the router did not answer SNMP - sleeping phones and "
+                       "other networks may be missed. Setup > Copy router commands turns it on (read-only, only "
+                       "for this PC)"))
 
     # ---- info
     rnd = [d for d in online if d["random"]]
@@ -1337,7 +1618,7 @@ def local_lease_seconds(lip):
 # ==========================================================================
 # quick health check (runs every few minutes between full scans)
 # ==========================================================================
-QUICK_TITLES = re.compile(r"conflict|rogue dhcp|dhcp is given|broadcast|loop|unstable|duplicate replies|extra router",
+QUICK_TITLES = re.compile(r"conflict|rogue dhcp|dhcp is given|broadcast|multicast|loop|unstable|duplicate replies|extra router",
                           re.I)
 
 
@@ -1349,12 +1630,10 @@ def quick_check(subnet, known_ips, opts, stop=None):
             raise Stopped()
 
     gw, lip = detect_network()
-    net = ipaddress.ip_network(subnet, strict=False)
+    nets = parse_nets(subnet)
+    net = next((n for n in nets if in_net(lip, n)), nets[0])
     admin = is_admin()
-    try:
-        local = ipaddress.IPv4Address(lip) in net
-    except Exception:
-        local = True
+    local = in_net(lip, net)
     raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": str(net), "admin": admin,
                     "scapy": False, "tests": {}, "local_subnet": local, "quick": True},
            "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},
@@ -1367,13 +1646,11 @@ def quick_check(subnet, known_ips, opts, stop=None):
         mon_t = threading.Thread(target=gateway_monitor, args=(gw, 12, mon), daemon=True)
         mon_t.start()
     # broadcast level over 6 s (loop / storm)
-    b0, t0 = nonunicast_rx(), time.time()
+    b0, t0 = nu_snapshot(), time.time()
     for _ in range(12):
         chk()
         time.sleep(0.5)
-    b1 = nonunicast_rx()
-    if b0 is not None and b1 is not None and b1 >= b0:
-        tests["bcast_pps"] = round((b1 - b0) / max(time.time() - t0, 1), 1)
+    nu_rates(tests, b0, nu_snapshot(), time.time() - t0)
     # IP conflicts on the known devices
     ips = [ip for ip in known_ips if ip and ip != lip]
     try:

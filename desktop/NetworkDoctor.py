@@ -33,6 +33,8 @@ import nd_tabs
 import nd_tools as T
 import nd_net as NT
 import nd_toolstab
+import nd_routeros as RO
+import nd_usage as US
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -54,7 +56,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.10.0"
+VERSION = "3.11.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -186,6 +188,11 @@ class PingWindow(tk.Toplevel):
 
     def _close(self):
         self.alive = False
+        try:
+            if self.usage:
+                self.usage.flush(force=True)
+        except Exception:
+            pass
         self.destroy()
 
 
@@ -397,6 +404,11 @@ class App(tk.Tk):
         self.db = core.load_db()
         self.oui = {}
         self.raw = None
+        try:
+            self.usage = US.UsageStore(os.path.join(core.DATA_DIR, "usage.db"))
+        except Exception:
+            self.usage = None
+        self._dns_poll_t = 0
         self.devices, self.issues, self.checks = [], [], []
         self.gw, self.lip = core.detect_network()
         try:
@@ -450,8 +462,8 @@ class App(tk.Tk):
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
         ttk.Label(top, text="Network:").pack(side="left")
-        self.var_net = tk.StringVar(value=self.net)
-        ttk.Entry(top, textvariable=self.var_net, width=18).pack(side="left", padx=(4, 8))
+        self.var_net = tk.StringVar(value=self._settings().get("scan_nets") or self.net)
+        ttk.Entry(top, textvariable=self.var_net, width=34).pack(side="left", padx=(4, 8))
         self.btn_scan = ttk.Button(top, text="Scan", style="Big.TButton", command=self.start_scan)
         self.btn_scan.pack(side="left")
         self.btn_stop = ttk.Button(top, text="Stop", command=self.stop_scan, state="disabled")
@@ -494,6 +506,7 @@ class App(tk.Tk):
         self._tab_devices()
         self._tab_map()
         self._tab_monitor()
+        self._tab_usage()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
@@ -501,7 +514,7 @@ class App(tk.Tk):
         self._tab_commands()
         self._tab_tools()
         self._tab_setup()
-        names = ["devices", "map", "monitor", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
+        names = ["devices", "map", "monitor", "usage", "rca", "problems", "checks", "binding", "commands", "tools", "setup"]
         self.tabs = dict(zip(names, self.nb.tabs()))
         self.nb.bind("<<NotebookTabChanged>>", self._tab_changed)
 
@@ -559,6 +572,11 @@ class App(tk.Tk):
         self.nb.add(f, text="  Network map  ")
         self.map = nd_tabs.MapTab(self, f)
 
+    def _tab_usage(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text="  Usage  ")
+        self.usage_tab = nd_tabs.UsageTab(self, f)
+
     def _tab_binding(self):
         f = ttk.Frame(self.nb)
         self.nb.add(f, text="  IP-MAC binding  ")
@@ -585,6 +603,8 @@ class App(tk.Tk):
                 self.map.redraw()
             elif cur == self.tabs.get("binding"):
                 self.binding.refresh()
+            elif cur == self.tabs.get("usage"):
+                self.usage_tab.refresh()
             elif cur == self.tabs.get("commands"):
                 self.commands.refresh()
             elif cur == self.tabs.get("tools"):
@@ -594,6 +614,7 @@ class App(tk.Tk):
 
     def after_tags_changed(self):
         T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
+        self._usage_devices()
         self.fill_devices()
         self._tab_changed()
 
@@ -741,8 +762,133 @@ class App(tk.Tk):
         ttk.Label(ph, textvariable=self.var_share_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
         ttk.Button(ph, text="Remove paired phones", command=self.forget_phones).pack(side="right")
         ttk.Button(ph, text="New pairing code", command=self.new_share_code).pack(side="right", padx=6)
+        ro = ttk.LabelFrame(f, text="Router login (optional) - lets Network Doctor apply its own changes on a MikroTik "
+                                    "and run router commands", padding=(8, 4))
+        ro.pack(fill="x", pady=(0, 6))
+        r = st.get("router_api") or {}
+        self.var_ro_host = tk.StringVar(value=r.get("host") or self.gw or "")
+        self.var_ro_user = tk.StringVar(value=r.get("user", ""))
+        self.var_ro_pw = tk.StringVar(value=RO.unprotect(r.get("pw", "")) if r.get("pw") else "")
+        self.var_ro_ssl = tk.BooleanVar(value=bool(r.get("ssl")))
+        for lbl, var, w, show in (("Router IP", self.var_ro_host, 15, ""), ("User", self.var_ro_user, 12, ""),
+                                  ("Password", self.var_ro_pw, 14, "*")):
+            ttk.Label(ro, text=lbl + ":").pack(side="left", padx=(6, 2))
+            ttk.Entry(ro, textvariable=var, width=w, show=show).pack(side="left")
+        ttk.Checkbutton(ro, text="API-SSL (8729)", variable=self.var_ro_ssl).pack(side="left", padx=6)
+        ttk.Button(ro, text="Save + test", command=self.router_save_test).pack(side="left", padx=4)
+        ttk.Button(ro, text="Apply router settings now", command=lambda: self.router_apply(
+            M.router_setup_commands(self.lip), "Router settings (NetFlow, log, SNMP, loop protection)")).pack(
+            side="left", padx=4)
+        ttk.Button(ro, text="Forget login", command=self.router_forget).pack(side="right")
+        self.var_ro_info = tk.StringVar(value="saved - " + (r.get("ident") or "") if r.get("user") else
+                                        "not set: commands are shown to paste in WinBox instead")
+        ttk.Label(f, textvariable=self.var_ro_info, foreground="#5b21b6").pack(anchor="w", padx=8)
         self.tsetup = text_box(f)
         self._fill_setup()
+
+    # ---------------------------------------------------------------- router access (optional)
+    def router_save_test(self):
+        user = self.var_ro_user.get().strip()
+        if not user:
+            messagebox.showinfo(APP, "Type the router user name and password first.\n\nTip: make a separate user "
+                                     "for Network Doctor in WinBox > System > Users (group 'full', or 'write' + api), "
+                                     "and in IP > Services allow 'api' only from this PC's IP.")
+            return
+        st = self._settings()
+        st["router_api"] = {"host": self.var_ro_host.get().strip(), "user": user,
+                            "pw": RO.protect(self.var_ro_pw.get()), "ssl": self.var_ro_ssl.get()}
+        self._save_settings()
+        self.var_ro_info.set("testing...")
+        c = RO.from_settings(st, self.gw)
+
+        def work():
+            try:
+                with c:
+                    name, ver = c.identity()
+                res = (True, f"connected to '{name}' (RouterOS {ver})")
+            except RO.RosError as e:
+                res = (False, str(e))
+            self.q.put(("call", lambda: done(*res)))
+
+        def done(ok, text):
+            if ok:
+                st["router_api"]["ident"] = text
+                self._save_settings()
+            self.var_ro_info.set(("saved - " if ok else "NOT working: ") + text)
+            (messagebox.showinfo if ok else messagebox.showerror)(APP, ("Router login works: " if ok else "") + text)
+        threading.Thread(target=work, daemon=True).start()
+
+    def router_forget(self):
+        self._settings().pop("router_api", None)
+        self._save_settings()
+        self.var_ro_pw.set("")
+        self.var_ro_info.set("not set: commands are shown to paste in WinBox instead")
+
+    def router_client(self, ask=True):
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c and ask:
+            messagebox.showinfo(APP, "No router login is saved.\n\nSetup > Router login (user + password), or copy "
+                                     "the commands and paste them in WinBox > New Terminal.")
+        return c
+
+    def router_apply(self, script, what, done=None):
+        """Runs a RouterOS script on the router in the background; reports the result."""
+        c = self.router_client()
+        if not c:
+            return False
+        if not messagebox.askyesno(APP, f"Apply on the router now?\n\n{what}\n\nKeep the UNDO commands at hand."):
+            return False
+        self.var_status.set(f"{what}: sending to the router...")
+
+        def work():
+            try:
+                with c:
+                    err = c.run_script(script)
+            except RO.RosError as e:
+                err = str(e)
+            self.q.put(("call", lambda: finish(err)))
+
+        def finish(err):
+            self._health_log("Router", "warning" if err else "info", f"{what}: " + (err or "applied"))
+            if err:
+                self.var_status.set(f"{what}: the router reported a problem")
+                messagebox.showerror(APP, f"{what}\n\nThe router stopped with:\n{err}\n\nNothing after that line "
+                                          "was applied. Copy the commands and paste them in WinBox > New Terminal to "
+                                          "see which line fails.")
+            else:
+                self.var_status.set(f"{what}: applied on the router.")
+                messagebox.showinfo(APP, f"{what}: applied on the router.")
+            if done:
+                done(err)
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def router_cli(self, command, title="Router"):
+        """Runs one router command and shows its output in a window."""
+        c = self.router_client()
+        if not c:
+            return
+        win = tk.Toplevel(self)
+        win.title(f"{title}: {command[:60]}")
+        win.geometry("900x520")
+        t = text_box(win)
+        t.configure(font=("Consolas", 10))
+        t.insert("end", f"[{c.host}] {RO.bounded(command)}\n\nrunning...\n")
+
+        def work():
+            try:
+                with c:
+                    out = c.run_cli(command)
+            except RO.RosError as e:
+                out = "Failed: " + str(e)
+            self.q.put(("call", lambda: show(out)))
+
+        def show(out):
+            if not win.winfo_exists():
+                return
+            t.delete("3.0", "end")
+            t.insert("end", (out.strip() or "(done - no output)") + "\n")
+        threading.Thread(target=work, daemon=True).start()
 
     def _fill_setup(self):
         t = self.tsetup
@@ -754,7 +900,7 @@ class App(tk.Tk):
         t.insert("end", "What needs the router to SEND data to this PC (one time, 2 minutes)\n", "h")
         t.insert("end", "On a switched network a PC cannot see other devices' traffic or the router's ports. The router "
                         "is the only place that sees both, so it sends two standard feeds to this PC. Network Doctor "
-                        "stays a separate app: it never logs in to the router and changes nothing there.\n")
+                        "stays a separate app: without a router login (below) it never logs in to the router.\n")
         t.insert("end", "  - Traffic data (NetFlow, UDP 2055): bandwidth per device, apps / sites, dangerous destinations\n")
         t.insert("end", f"  - Router log (syslog, UDP {M.SYSLOG_PORT}): ether2 up/down, loops, DHCP vs static, IP conflicts\n\n")
         t.insert("end", f"Use a PC that stays on, with a fixed IP. This PC: {self.lip}\n", "warn")
@@ -770,13 +916,17 @@ class App(tk.Tk):
     def start_monitor(self):
         if self.mon and self.mon.running:
             return
-        if core.IS_WIN and core.is_admin():
-            self.firewall(quiet=True)
+        if core.IS_WIN and core.is_admin():  # in the background: netsh + PowerShell take a few seconds
+            threading.Thread(target=self.firewall, kwargs={"quiet": True}, daemon=True).start()
         try:
-            lan = str(ipaddress.ip_network(self.var_net.get().strip(), strict=False))
+            nets = core.parse_nets(self.var_net.get())
+            local = next((n for n in nets if core.in_net(self.lip, n)), nets[0])
+            lan = ", ".join(str(n) for n in [local] + [n for n in nets if n != local])  # this PC's network first
         except ValueError:
             lan = self.net
         self.mon = M.Monitor(lan, self.gw, self.lip, self.threat, self.orgs)
+        if self.usage:
+            self.mon.traffic.sink = self.usage.add_flow
         self._feed_monitor()
         self.mon.start()
         self.ev_seen = 0
@@ -823,18 +973,68 @@ class App(tk.Tk):
             pass
         self.after(2000, self._tick)
 
+    def _note_feeds(self, mon):
+        """Remembers that the router log / NetFlow arrived (and at which PC IP), at most every 10 minutes."""
+        changed = False
+        with core.DB_LOCK:
+            seen = self.db.setdefault("feeds_seen", {})
+            for k, last in (("syslog", mon.last_syslog), ("flow", mon.last_flow)):
+                h = seen.get(k) or {}
+                if last and (last - h.get("ts", 0) > 600 or h.get("lip") != mon.lip):
+                    seen[k] = {"ts": last, "lip": mon.lip}
+                    changed = True
+        if changed:
+            core.save_db(self.db)
+
+    def _usage_devices(self):
+        """Tells the usage history which MAC / name is behind each IP (after a scan or a tag change)."""
+        if self.usage:
+            try:
+                self.usage.set_devices(self.devices, T.tags_of(self.db))
+            except Exception:
+                pass
+
+    def _usage_tick(self):
+        """Saves usage every minute; every 3 minutes reads the router's DNS cache (names of internet addresses)."""
+        if not self.usage:
+            return
+        try:
+            self.usage.flush()
+        except Exception:
+            pass
+        if time.time() - self._dns_poll_t < 180:
+            return
+        self._dns_poll_t = time.time()
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            return
+
+        def work():
+            try:
+                with c:
+                    rows = c.cmd("/ip/dns/cache/all/print")
+                self.usage.learn_names([(r.get("data", ""), r.get("name", "")) for r in rows
+                                        if r.get("type") in ("A", None) and re.fullmatch(r"[\d.]+", r.get("data", ""))])
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
     def _tick_once(self):
         mon = self.mon
         if not mon:
             return
         fs = mon.feed_status()
+        self._note_feeds(mon)
+        self._usage_tick()
         self.mon_labels["flows"].set(fs["flows"])
         self.mon_labels["syslog"].set(fs["syslog"])
         self.mon_labels["sniffer"].set(fs["sniffer"])
         b = f"{fs['bcast']:.0f}" if fs["bcast"] is not None else "?"
         g = (f"{fs['gw_avg']:.0f} ms avg, {fs['gw_max']:.0f} max" if fs["gw_avg"] is not None else
              "not answering" if fs["gw"] else "no router found")
-        self.mon_labels["health"].set(f"broadcasts {b}/s  |  router {g}, loss {fs['gw_loss']:.0f}%")
+        mc = f"  |  multicast {fs['mcast']:.0f}/s" if fs.get("mcast") is not None else ""
+        bl = "broadcast+multicast" if fs.get("bcast_mixed") else "broadcasts"
+        self.mon_labels["health"].set(f"{bl} {b}/s{mc}  |  router {g}, loss {fs['gw_loss']:.0f}%")
         rt = fs["runtime"]
         self.var_mon.set(f"Live monitor: {'ON' if mon.running else 'stopped'} {rt // 3600}h{rt % 3600 // 60:02d}m"
                          + (f" | {fs['bcast']:.0f} bc/s" if fs["bcast"] is not None else ""))
@@ -971,20 +1171,26 @@ class App(tk.Tk):
             self.var_status.set("Scan will start when the running check finishes...")
             return
         try:
-            net = ipaddress.ip_network(self.var_net.get().strip(), strict=False)
-        except ValueError:
-            messagebox.showerror(APP, "Enter a network like 192.168.0.0/24")
+            nets = core.parse_nets(self.var_net.get())
+        except ValueError as e:
+            messagebox.showerror(APP, "Enter one or more networks, separated by commas, like\n"
+                                      "192.168.0.0/24, 192.168.1.0/24\n\n" + str(e))
             return
-        if net.num_addresses > 1024:
-            messagebox.showerror(APP, "Network too large (maximum /22 = 1024 addresses).")
-            return
+        net = ", ".join(map(str, nets))
+        st = self._settings()
+        if net != self.net:
+            st["scan_nets"] = net  # remembered: the next start and the automatic scans use the same networks
+        else:
+            st.pop("scan_nets", None)
+        self._save_settings()
         self.stop_ev.clear()
         self.scanning = True
         self._scan_is_auto = auto
         self.btn_scan.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get()}
-        threading.Thread(target=self._worker, args=(str(net), opts), daemon=True).start()
+        opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
+                "router_snmp": self._settings().get("router_snmp") or None}
+        threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()
 
     def stop_scan(self):
         self.stop_ev.set()
@@ -1015,7 +1221,9 @@ class App(tk.Tk):
             while True:
                 msg = self.q.get_nowait()
                 k = msg[0]
-                if k == "prog":
+                if k == "call":  # a background job's result, run here in the window's thread
+                    msg[1]()
+                elif k == "prog":
                     self.pb["value"] = msg[1]
                     self.var_status.set(msg[2])
                 elif k == "status":
@@ -1072,6 +1280,7 @@ class App(tk.Tk):
         self.last_scan_t = time.time()
         self._feed_monitor()
         T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
+        self._usage_devices()
         self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db)
         self._new_devices(self.raw["meta"].get("new_macs") or [])
         conflict_ips = set()
@@ -1318,18 +1527,29 @@ class App(tk.Tk):
             if not quiet:
                 messagebox.showinfo(APP, "Restart as Administrator first (button at top right).")
             return
+        # Always re-create the rules, so ports added in newer versions are included.
         name = "Network Doctor receivers"
-        if name not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"], 10):
-            core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in", "action=allow",
-                      "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT},5678,8788"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in", "action=allow",
+                  "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT},5678,8788", "profile=any"], 10)
         tname = "Network Doctor LAN (phone link, PC reports, speed test)"
-        if tname not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={tname}"], 10):
-            core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={tname}", "dir=in", "action=allow",
-                      "protocol=TCP", f"localport=8787,{NT.LAN_PORT}", "remoteip=localsubnet"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={tname}"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={tname}", "dir=in", "action=allow",
+                  "protocol=TCP", f"localport=8787,{NT.LAN_PORT}", "remoteip=localsubnet", "profile=any"], 10)
+        # Clicking Cancel in Windows' "allow this app" prompt silently adds BLOCK rules for the exe. A block rule
+        # wins over every allow rule, so the router log / NetFlow / phone link never arrive. Remove those.
+        exe = sys.executable.replace("'", "''")
+        removed = core.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            f"$r=Get-NetFirewallApplicationFilter -Program '{exe}' -ErrorAction SilentlyContinue | "
+                            "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+                            "Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'}; "
+                            "$n=@($r).Count; if($n){$r | Remove-NetFirewallRule}; $n"], 30).strip()
         if not quiet:
+            extra = (f"\n\nAlso removed {removed} Windows rule(s) that were BLOCKING Network Doctor (created when "
+                     "Windows asked to allow the app and Cancel was clicked)." if removed.isdigit() and int(removed) else "")
             messagebox.showinfo(APP, f"Windows Firewall now allows the router feeds (UDP {M.FLOW_PORT}, {M.SYSLOG_PORT}) "
                                      f"and, from the office network only, the phone link / PC reports / LAN speed test "
-                                     f"(TCP 8787, {NT.LAN_PORT}).")
+                                     f"(TCP 8787, {NT.LAN_PORT})." + extra)
 
     def forget_offline(self):
         off = [d["mac"] for d in self.devices if not d["online"] and d["mac"]]
@@ -1919,7 +2139,8 @@ class App(tk.Tk):
         with core.DB_LOCK:
             self.db.setdefault("pc_reports", {})[host or client] = {
                 "time": core.now_s(), "ip": client, "user": user, "os": str(data.get("os") or "")[:60], "macs": macs,
-                "links": links[:6], "actions": [str(x)[:120] for x in (data.get("actions") or [])][:10]}
+                "links": links[:6], "actions": [str(x)[:120] for x in (data.get("actions") or [])][:10],
+                "hw": T.clean_hw(data.get("hw"))}
         core.save_db(self.db)
         acts = "; ".join(str(x) for x in (data.get("actions") or [])[:4])
         self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
