@@ -807,6 +807,8 @@ def parse_router_line(text):
     m = re.search(r"login failure for user (\S+) from " + RX_IP, t)
     if m:
         return "login_fail", "warning", {"user": m.group(1), "ip": m.group(2)}
+    if re.search(r"^[\w,]*\bdebug\b", tl) or "init-reboot" in tl or "lease bound" in tl:
+        return "router_log", "debug", {}  # the router's own debug lines (e.g. "lease bound, init-reboot, extending")
     if re.search(r"rebooted without proper shutdown|power", tl):
         return "router_power", "critical", {}
     if re.search(r"\b(error|critical|fail\w*|reboot\w*)\b", tl):

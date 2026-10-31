@@ -154,8 +154,8 @@ def apply_tags(devices, db, neighbors=None):
         t = tags.get(mac, {})
         nb = neighbors.get(mac)
         d["tag"] = dict(t)
-        if nb and not t.get("name") and nb.get("identity") and not d.get("name"):
-            d["name"] = nb["identity"]
+        if nb and not t.get("name") and nb.get("identity") and (not d.get("name") or d.get("auto_name")):
+            d["name"], d["auto_name"] = nb["identity"], False
         if t.get("name"):
             d["name"] = t["name"]
         d["dept"] = t.get("dept", "")
@@ -464,6 +464,10 @@ TORRENT_SITES = ["thepiratebay", "1337x", "1377x", "yts", "yify", "rarbg", "torr
                  "utorrent", "bittorrent", "qbittorrent", "tixati", "vuze", "bitcomet", "frostwire"]
 
 
+DOH_SERVERS = ("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "149.112.112.112", "208.67.222.222",
+               "208.67.220.220", "94.140.14.14", "94.140.15.15", "185.228.168.9", "76.76.2.0")
+
+
 def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
     """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random. Returns (apply_text, undo_text)."""
     ts = time.strftime("%Y-%m-%d %H:%M")
@@ -507,7 +511,18 @@ def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
         a.append(':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}')
         a.append('/ip firewall filter add chain=input in-interface=!' + bridge + ' protocol=udp dst-port=53 '
                  'action=drop comment="ND guard: no DNS from internet"')
+        # browsers' "secure DNS" (DNS over HTTPS / TLS) to Google / Cloudflare / Quad9 / OpenDNS skips the office
+        # DNS, so nobody can see which website was opened. Blocking it makes them fall back to normal DNS by themselves.
+        a.append('/ip firewall address-list remove [find where list="ND-doh"]')
+        for ip in DOH_SERVERS:
+            a.append(f'/ip firewall address-list add list=ND-doh address={ip} comment="ND guard: secure DNS server"')
+        for proto in ("tcp", "udp"):
+            rule = (f'chain=forward protocol={proto} dst-port=443,853 dst-address-list=ND-doh action=reject '
+                    f'comment="ND guard: no secure DNS bypass"')
+            a.append(f':do {{ /ip firewall filter add {rule} place-before=([/ip firewall filter find]->0) }} '
+                     f'on-error={{ /ip firewall filter add {rule} }}')
         u.append(':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}')
+        u.append('/ip firewall address-list remove [find where list="ND-doh"]')
     if opts.get("torrent"):
         a += ["# 4) Block torrents (BitTorrent): torrent ports, the torrent handshake / DHT / tracker signatures and",
               "#    torrent websites. Put at the TOP of the forward chain, before FastTrack, or they never see the traffic.",
@@ -889,6 +904,27 @@ def local_inventory_cmd():
             HW_PS + "\n$hw | ConvertTo-Json -Compress"]
 
 
+# ---- the PC's network adapters (for the PC report)
+ADS_PS = r"""$ads = foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
+    [pscustomobject]@{ name = $a.Name; desc = $a.InterfaceDescription; mac = $a.MacAddress; permanent = $a.PermanentAddress;
+        status = [string]$a.Status; wifi = [bool]($a.MediaType -match '802\\.11');
+        speed = [string]$a.LinkSpeed; bps = [int64]$a.ReceiveLinkSpeed; duplex = $a.FullDuplex;
+        errors = [int64]((Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue).ReceivedPacketErrors);
+        ip = ((Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ',');
+        dhcp = [string](Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp }
+}
+"""
+
+
+def reporter_ps(url, key):
+    """The small daily report a PC sends after the script installed it (inventory only, changes nothing)."""
+    return ("$ErrorActionPreference = 'SilentlyContinue'\n" + f"$URL = '{url}'; $KEY = '{key}'\n" + ADS_PS + HW_PS +
+            "\n$body = @{ hostname = $env:COMPUTERNAME; user = [string]$cs.UserName; os = $osi.Caption; hw = $hw;"
+            " adapters = @($ads); actions = @('daily inventory report') } | ConvertTo-Json -Depth 4\n"
+            "Invoke-RestMethod -Uri $URL -Method Post -Body $body -ContentType 'application/json' "
+            "-Headers @{ 'X-ND-Report' = $KEY } -TimeoutSec 15 | Out-Null\n")
+
+
 def pc_fix_script(opts, gw, gw_mac, report_url, report_key):
     """opts: random_off, renew, lock_gw, report (booleans); to_dhcp: "ask" / "yes" / "no".
     Use to_dhcp "yes" or "no" when the script runs unattended (login script), "ask" when a person runs it.
@@ -898,9 +934,12 @@ def pc_fix_script(opts, gw, gw_mac, report_url, report_key):
     gw_dash = (gw_mac or "").replace(":", "-").lower()
     ps = f"""
 $ErrorActionPreference = 'Continue'
-$opt = @{{ RandomOff = {b('random_off')}; ToDhcp = '{to_dhcp}'; Renew = {b('renew')}; LockGw = {b('lock_gw')}; Report = {b('report')} }}
+$opt = @{{ RandomOff = {b('random_off')}; ToDhcp = '{to_dhcp}'; Renew = {b('renew')}; LockGw = {b('lock_gw')}; Report = {b('report')}; Daily = {b('daily')} }}
 $GW = '{gw or ''}'; $GWMAC = '{gw_dash}'
 $URL = '{report_url}'; $KEY = '{report_key}'
+$REPORTER = @'
+{reporter_ps(report_url, report_key)}
+'@
 {PS_ELEVATE}
 Write-Host "Network Doctor - PC network fix on $env:COMPUTERNAME" -ForegroundColor Cyan
 $done = New-Object System.Collections.ArrayList
@@ -959,16 +998,21 @@ if ($opt.LockGw -and $GW -and $GWMAC) {{
     }}
 }}
 
-$ads = foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {{
-    [pscustomobject]@{{ name = $a.Name; desc = $a.InterfaceDescription; mac = $a.MacAddress; permanent = $a.PermanentAddress;
-        status = [string]$a.Status; wifi = [bool]($a.MediaType -match '802\\.11');
-        speed = [string]$a.LinkSpeed; bps = [int64]$a.ReceiveLinkSpeed; duplex = $a.FullDuplex;
-        errors = [int64]((Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue).ReceivedPacketErrors);
-        ip = ((Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ',');
-        dhcp = [string](Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp }}
-}}
+{ADS_PS}
 if ($opt.Report -and $URL) {{
 {HW_PS}
+    if ($opt.Daily) {{  # keeps the inventory up to date by itself: a small daily report, nothing else
+        $dir = Join-Path $env:ProgramData 'NetworkDoctor'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $rep = Join-Path $dir 'nd-report.ps1'
+        Set-Content -Path $rep -Encoding UTF8 -Value $REPORTER
+        $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$rep`""
+        $trg = @((New-ScheduledTaskTrigger -Daily -At 11:30am), (New-ScheduledTaskTrigger -AtStartup))
+        $trg[1].Delay = 'PT5M'
+        $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+        Register-ScheduledTask -TaskName 'Network Doctor report' -Action $act -Trigger $trg -Settings $set -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+        [void]$done.Add("this PC now sends its details to Network Doctor every day (task 'Network Doctor report')")
+    }}
     $body = @{{ hostname = $env:COMPUTERNAME; user = "$env:USERDOMAIN\\$env:USERNAME";
                os = $osi.Caption; hw = $hw;
                adapters = @($ads); actions = @($done) }} | ConvertTo-Json -Depth 4
@@ -993,7 +1037,8 @@ foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-
     if ($key) {{ Remove-ItemProperty -Path $key.PSPath -Name 'NetworkAddress' -ErrorAction SilentlyContinue; Restart-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction SilentlyContinue }}
 }}
 if ($GW) {{ foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {{ netsh interface ipv4 delete neighbors interface="$($a.Name)" address=$GW 2>$null | Out-Null }} }}
-Write-Host "Undo finished: Wi-Fi MAC back to Windows settings, router MAC lock removed." -ForegroundColor Green
+Unregister-ScheduledTask -TaskName 'Network Doctor report' -Confirm:$false -ErrorAction SilentlyContinue
+Write-Host "Undo finished: Wi-Fi MAC back to Windows settings, router MAC lock removed, daily report task removed." -ForegroundColor Green
 """
     return (_cmd_launcher("Network Doctor - PC network fix") + _crlf(ps),
             _cmd_launcher("Network Doctor - undo PC network fix") + _crlf(undo))
@@ -1422,3 +1467,59 @@ VENDOR_COMMANDS = [
 ]
 for _c in VENDOR_COMMANDS:
     COMMANDS.append(_c)
+
+
+# ---- details of other PCs without running anything on them (Windows admin login, remote WMI over DCOM)
+def remote_inventory_ps():
+    """PowerShell that reads one PC's details remotely. Reads ND_IP / ND_USER / ND_PW from its environment (the
+    password never appears on a command line). Prints the details as JSON, or 'ERROR: ...'."""
+    body = HW_PS
+    body = body.replace("Get-CimInstance ", "Get-CimInstance -CimSession $s ")
+    body = body.replace("Get-PhysicalDisk ", "Get-PhysicalDisk -CimSession $s ")
+    body = body.replace("Get-NetFirewallProfile ", "Get-NetFirewallProfile -CimSession $s ")
+    body = body.replace("$hot = Get-HotFix ", "$hot = Get-HotFix -ComputerName $ip -Credential $cred ")
+    body = re.sub(r"\$sw = @\(Get-ItemProperty[^\n]*\n", "$sw = @(Get-SW)\n", body)
+    return r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$ip = $env:ND_IP
+$user = $env:ND_USER
+if ($user -notmatch '[\\@]') { $user = "$ip\$user" }
+$cred = New-Object System.Management.Automation.PSCredential($user, (ConvertTo-SecureString $env:ND_PW -AsPlainText -Force))
+try {
+    $o = New-CimSessionOption -Protocol Dcom
+    $s = New-CimSession -ComputerName $ip -Credential $cred -SessionOption $o -OperationTimeoutSec 25 -ErrorAction Stop
+} catch { Write-Output ("ERROR: " + $_.Exception.Message); exit }
+function Get-SW {
+    $out = @()
+    foreach ($root in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+        $r = Invoke-CimMethod -CimSession $s -Namespace root\default -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $root }
+        foreach ($k in @($r.sNames)) {
+            $v = Invoke-CimMethod -CimSession $s -Namespace root\default -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$root\$k"; sValueName = 'DisplayName' }
+            if ($v.sValue) { $out += [string]$v.sValue }
+        }
+    }
+    $out | Sort-Object -Unique
+}
+""" + body + r"""
+$hw['hostname'] = [string]$cs.Name
+Remove-CimSession $s
+$hw | ConvertTo-Json -Compress
+"""
+
+
+def parse_remote_inventory(out):
+    """(hw dict, error text) from the remote script's output."""
+    out = out or ""
+    if "{" in out:
+        try:
+            import json
+            return json.loads(out[out.find("{"):out.rfind("}") + 1]), ""
+        except ValueError:
+            pass
+    err = out.strip().splitlines()[-1] if out.strip() else "no answer"
+    low = err.lower()
+    if "access is denied" in low or "0x80070005" in low:
+        err = "wrong user / password, or this user is not an administrator on that PC"
+    elif "rpc server" in low or "0x800706ba" in low or "unavailable" in low:
+        err = "the PC's firewall blocks remote WMI (run the PC details script on it once instead)"
+    return {}, err.replace("ERROR: ", "")[:200]

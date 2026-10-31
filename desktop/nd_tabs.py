@@ -160,6 +160,8 @@ class MapTab:
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
         self.cv.bind("<Button-1>", self.click)
+        self._cw = 0
+        self.cv.bind("<Configure>", self._resized)
         self.cv.bind("<Double-1>", self.dclick)
         self.cv.bind("<MouseWheel>", lambda ev: self.cv.yview_scroll(int(-ev.delta / 120), "units"))
         self.cv.bind("<Button-4>", lambda ev: self.cv.yview_scroll(-3, "units"))
@@ -207,6 +209,11 @@ class MapTab:
                     put((e["data"] or {}).get("mac"), "critical")
         return bad, ports
 
+    def _resized(self, ev):
+        if abs(ev.width - self._cw) > 60:  # the matrix uses the window width
+            self._cw = ev.width
+            self.app.after_idle(self.redraw)
+
     def redraw(self):
         app = self.app
         bad, ports = self.problems()
@@ -224,30 +231,72 @@ class MapTab:
         def visible(n):
             return not self.var_bad.get() or n.get("child_bad") or n.get("bad") or n["kind"] in ("cloud", "router")
 
+        cw = max(self.cv.winfo_width(), 900)
+        gap = 10
+
+        def line_col(c):
+            return "#d92d20" if (c.get("child_bad") == "critical" or c.get("bad") == "critical") else \
+                "#dc6803" if (c.get("child_bad") or c.get("bad")) else "#c0c5cc"
+
+        def is_leaf(c):
+            return not [k for k in c["children"] if visible(k)] or c["id"] in self.collapsed
+
         def place(n, depth):
             kids = [c for c in n["children"] if visible(c)] if n["id"] not in self.collapsed else []
+            x = 10 + depth * self.DX
+            branches = [c for c in kids if not is_leaf(c)]
+            leaves = [c for c in kids if is_leaf(c)]
             if not kids:
                 cy = y[0]
                 y[0] += self.DY
+                self.draw_node(n, x, cy, n["id"] in path)
+                return cy
+            ys_ = [place(c, depth + 1) for c in branches]
+            mid = x + self.W + (self.DX - self.W) / 2
+            gx = 10 + (depth + 1) * self.DX
+            if len(leaves) > 3:  # many devices on one switch / port: a matrix instead of one long column
+                cols = max(1, int((cw - gx) // (self.W + gap)))
+                top = y[0]
+                rows = []
+                for i, c in enumerate(leaves):
+                    r, k = divmod(i, cols)
+                    if k == 0:
+                        rows.append([])
+                    rows[-1].append(c)
+                    self.draw_node(c, gx + k * (self.W + gap), top + r * self.DY, c["id"] in path)
+                y[0] = top + len(rows) * self.DY
+                for r, row in enumerate(rows):
+                    ry = top + r * self.DY + self.H / 2
+                    col = next((line_col(c) for c in row if line_col(c) != "#c0c5cc"), "#c0c5cc")
+                    cv.create_line(mid, ry, gx, ry, fill=col, width=2 if col != "#c0c5cc" else 1)
+                    for k in range(1, len(row)):  # small bus under each row
+                        bx = gx + k * (self.W + gap) - gap / 2
+                        cv.create_line(bx - gap / 2, ry, bx + gap / 2, ry, fill="#c0c5cc")
+                ys_.append(top)
+                ys_.append(top + (len(rows) - 1) * self.DY)
             else:
-                ys_ = [place(c, depth + 1) for c in kids]
-                cy = (ys_[0] + ys_[-1]) / 2
-            x = 10 + depth * self.DX
+                ys_ += [place(c, depth + 1) for c in leaves]
+            cy = (min(ys_) + max(ys_)) / 2 if not leaves or len(leaves) <= 3 else min(ys_)
             for c in kids:
+                if c["id"] not in self.boxes:
+                    continue
                 cx, ccy = self.boxes[c["id"]][0], self.boxes[c["id"]][1]
+                if len(leaves) > 3 and c in leaves:
+                    continue
                 hot = c["id"] in path and n["id"] in path
-                col = "#d92d20" if (c.get("child_bad") == "critical" or c.get("bad") == "critical") else \
-                    "#dc6803" if (c.get("child_bad") or c.get("bad")) else "#c0c5cc"
-                mid = x + self.W + (self.DX - self.W) / 2
+                col = line_col(c)
                 cv.create_line(x + self.W, cy + self.H / 2, mid, cy + self.H / 2, mid, ccy + self.H / 2, cx, ccy + self.H / 2,
                                fill="#1d4ed8" if hot else col, width=3 if hot else (2 if col != "#c0c5cc" else 1))
+            if len(leaves) > 3:
+                last = max(ys_)
+                cv.create_line(x + self.W, cy + self.H / 2, mid, cy + self.H / 2, mid, last + self.H / 2, fill="#c0c5cc")
             self.draw_node(n, x, cy, n["id"] in path)
             return cy
         # the "Internet" root is not drawn: router, "not placed" and "offline" start at the left edge
         for top in [c for c in self.root["children"] if visible(c)]:
             place(top, 0)
             y[0] += 10
-        cv.configure(scrollregion=(0, 0, 10 + 5 * self.DX, y[0] + 20))
+        cv.configure(scrollregion=(0, 0, max(10 + 5 * self.DX, cw), y[0] + 20))
 
     def draw_node(self, n, x, y, on_path):
         fill, line = STYLE.get(n["kind"], STYLE["dev"])
@@ -406,8 +455,8 @@ class BindingTab:
         self.rows = {}
         info = ("Bind = the router always gives each device the same IP (DHCP reservation). Devices stay on "
                 "'automatic' - no static IPs on PCs, which is what causes conflicts. Tick devices; double-click an IP "
-                "to choose the IP you want for that device; then 'Make router commands' and 'Apply on router' (router "
-                "login in Setup) or paste them in WinBox > New Terminal.")
+                "to choose the IP you want for that device; then press 'Bind on the router now' - Network Doctor sends it to "
+                "the router itself (router login in Setup). No WinBox or copy / paste needed.")
         ttk.Label(parent, text=info, wraplength=1100, foreground="#344054", padding=(0, 6)).pack(anchor="w")
         top = ttk.Frame(parent)
         top.pack(fill="x")
@@ -424,7 +473,8 @@ class BindingTab:
         ttk.Label(top, text="Bridge name:").pack(side="left", padx=(10, 2))
         self.var_bridge = tk.StringVar(value="bridge")
         ttk.Entry(top, textvariable=self.var_bridge, width=10).pack(side="left")
-        ttk.Button(top, text="Make router commands", style="Big.TButton", command=self.make).pack(side="right")
+        ttk.Button(top, text="Bind on the router now", style="Big.TButton", command=self.bind_now).pack(side="right")
+        ttk.Button(top, text="Only show commands", command=self.make).pack(side="right", padx=6)
         ttk.Button(top, text="PC fix script...", command=lambda: FixScriptDialog(app)).pack(side="right", padx=6)
         pw = ttk.PanedWindow(parent, orient="vertical")
         pw.pack(fill="both", expand=True, pady=(6, 0))
@@ -560,6 +610,18 @@ class BindingTab:
         self.refresh()
         return "break"
 
+    def bind_now(self):
+        """Ticked devices -> reservations on the router directly (no WinBox, no copy / paste)."""
+        if not self.app.router_client(ask=False):
+            self.make()
+            if self.apply and messagebox.askyesno(
+                    APP, "No router login is saved yet, so Network Doctor cannot send this to the router itself.\n\n"
+                         "Open Setup to save the router login now? (The commands are shown below meanwhile.)"):
+                self.app.show_tab("setup")
+            return
+        self.apply = ""
+        self.apply_router()
+
     def apply_router(self):
         if not self.apply:
             self.make()
@@ -690,7 +752,7 @@ class FixScriptDialog(tk.Toplevel):
                           "shared folder, or a domain login script). It asks for administrator rights itself.",
                   wraplength=560, justify="left").pack(anchor="w", pady=(0, 8))
         self.v = {k: tk.BooleanVar(value=val) for k, val in
-                  (("random_off", True), ("renew", True), ("lock_gw", False), ("report", True))}
+                  (("random_off", True), ("renew", True), ("lock_gw", False), ("report", True), ("daily", True))}
         ttk.Checkbutton(f, text="Turn off random (private) MAC addresses for Wi-Fi - the PC keeps one MAC",
                         variable=self.v["random_off"]).pack(anchor="w")
         row = ttk.Frame(f)
@@ -708,6 +770,8 @@ class FixScriptDialog(tk.Toplevel):
                         variable=self.v["lock_gw"]).pack(anchor="w")
         ttk.Checkbutton(f, text=f"Report the PC's name, user, MAC and hardware (model, serial, CPU, RAM, SSD, printers, mouse, keyboard, antivirus, drivers) "
                                 f"to this Network Doctor ({app.lip}) - fills the Inventory and tags it on the map", variable=self.v["report"]).pack(anchor="w")
+        ttk.Checkbutton(f, text="Keep the details up to date: the PC reports again every day by itself (a small Windows "
+                                "task; the Undo script removes it)", variable=self.v["daily"]).pack(anchor="w", padx=(20, 0))
         ttk.Label(f, text="\nFor an unattended login script choose 'switch to automatic' or 'leave it' (nobody is "
                           "there to answer). Run from \\\\server\\share or a local copy - not a mapped drive letter, "
                           "which disappears when Windows asks for admin rights.", wraplength=560, foreground="#667085",
@@ -723,6 +787,7 @@ class FixScriptDialog(tk.Toplevel):
         for k in ("random_off", "renew", "lock_gw"):
             self.v[k].set(False)
         self.v["report"].set(True)
+        self.v["daily"].set(True)
         self.var_dhcp.set("no")
         self.create()
 
@@ -759,8 +824,10 @@ class CommandsTab:
         top.pack(fill="x")
         ttk.Label(top, text="Device:").pack(side="left")
         self.var_dev = tk.StringVar()
-        self.cb = ttk.Combobox(top, textvariable=self.var_dev, width=46, state="readonly")
+        self.cb = ttk.Combobox(top, textvariable=self.var_dev, width=46)
         self.cb.pack(side="left", padx=4)
+        self.devmap = {}
+        Suggest(self.cb, lambda: list(self.devmap), on_pick=lambda v: self.pick_dev())
         self.cb.bind("<<ComboboxSelected>>", lambda e: self.pick_dev())
         ttk.Label(top, text="Brand / type:").pack(side="left", padx=(10, 0))
         self.var_grp = tk.StringVar(value="All")
@@ -943,6 +1010,112 @@ class CommandsTab:
 # ==========================================================================
 # usage: apps, websites, devices, productivity, advice
 # ==========================================================================
+class Suggest:
+    """Type-to-search for a combobox: a list of matches drops down under it while typing (name, IP, MAC)."""
+
+    def __init__(self, cb, values, on_pick=None):
+        self.cb, self.values, self.on_pick = cb, values, on_pick
+        self.pop = None
+        cb.bind("<KeyRelease>", self.key, add="+")
+        cb.bind("<FocusOut>", lambda e: cb.after(200, self.close), add="+")
+
+    def key(self, ev):
+        if ev.keysym in ("Return", "KP_Enter"):
+            if self.pop and self.lb.size():
+                self.pick(0)
+            return
+        if ev.keysym in ("Escape",):
+            self.close()
+            return
+        if ev.keysym in ("Up", "Down", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R"):
+            if ev.keysym == "Down" and self.pop:
+                self.lb.focus_set()
+                self.lb.selection_set(0)
+            return
+        q = self.cb.get().strip().lower()
+        words = q.split()
+        hits = [v for v in self.values() if words and all(w in v.lower() for w in words)][:15]
+        if not hits:
+            self.close()
+            return
+        if not self.pop:
+            self.pop = tk.Toplevel(self.cb)
+            self.pop.overrideredirect(True)
+            try:
+                self.pop.attributes("-topmost", True)
+            except Exception:
+                pass
+            self.lb = tk.Listbox(self.pop, font=("Segoe UI", 10), activestyle="none", relief="solid", borderwidth=1)
+            self.lb.pack(fill="both", expand=True)
+            self.lb.bind("<ButtonRelease-1>", lambda e: self.pick(self.lb.nearest(e.y)))
+            self.lb.bind("<Return>", lambda e: self.pick((self.lb.curselection() or (0,))[0]))
+            self.lb.bind("<Escape>", lambda e: self.close())
+        self.lb.delete(0, "end")
+        for h in hits:
+            self.lb.insert("end", h)
+        self.lb.configure(height=min(len(hits), 10))
+        x, y = self.cb.winfo_rootx(), self.cb.winfo_rooty() + self.cb.winfo_height()
+        self.pop.geometry(f"{max(self.cb.winfo_width(), 320)}x{min(len(hits), 10) * 20 + 4}+{x}+{y}")
+
+    def pick(self, i):
+        try:
+            v = self.lb.get(i)
+        except Exception:
+            return
+        self.cb.set(v)
+        self.close()
+        self.cb.icursor("end")
+        if self.on_pick:
+            self.on_pick(v)
+
+    def close(self):
+        if self.pop:
+            try:
+                self.pop.destroy()
+            except Exception:
+                pass
+            self.pop = None
+
+
+_UNITS = {"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12, "bps": 1, "kbps": 1e3, "mbps": 1e6, "gbps": 1e9}
+
+
+def _sort_key(v):
+    """'1.4 GB' / '5 h 20' / '75%' / '12 min' / names -> something that sorts the way a person expects."""
+    t = str(v).strip().lower()
+    m = re.fullmatch(r"(\d+) h (\d+)", t)
+    if m:
+        return (0, int(m.group(1)) * 60 + int(m.group(2)))
+    m = re.fullmatch(r"(\d+) min", t)
+    if m:
+        return (0, int(m.group(1)))
+    m = re.fullmatch(r"([\d.,]+)\s*([kmgt]?b(?:ps)?)?%?", t)
+    if m:
+        try:
+            return (0, float(m.group(1).replace(",", "")) * _UNITS.get(m.group(2) or "b", 1))
+        except ValueError:
+            pass
+    return (1, t)
+
+
+def sortable(tv):
+    """Click a column title to sort by it (numbers / sizes biggest first, names A-Z); click again to reverse."""
+    state = {}
+
+    def by(col):
+        rev = state.get(col, None)
+        rev = (col != "#0") if rev is None else not rev
+        state.clear()
+        state[col] = rev
+        items = list(tv.get_children(""))
+        items.sort(key=lambda i: _sort_key(tv.item(i, "text") if col == "#0" else tv.set(i, col)), reverse=rev)
+        for pos, i in enumerate(items):
+            tv.move(i, "", pos)
+    tv.heading("#0", command=lambda: by("#0"))
+    for c in tv["columns"]:
+        tv.heading(c, command=lambda c=c: by(c))
+
+
 class UsageTab:
     PERIODS = {"Today": 1, "Last 7 days": 7, "Last 30 days": 30}
 
@@ -980,6 +1153,27 @@ class UsageTab:
         ttk.Button(cat, text="App list (all apps and their websites)...", command=lambda: AppListDialog(self)).pack(
             side="left", padx=8)
         ttk.Label(cat, text="(remembered, and applied to the history too)", foreground="#667085").pack(side="left")
+        flt = ttk.Frame(parent)
+        flt.pack(fill="x", pady=(0, 4))
+        ttk.Label(flt, text="Find (user, app, website):").pack(side="left")
+        self.var_find = tk.StringVar()
+        e = ttk.Entry(flt, textvariable=self.var_find, width=24)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self.fill())
+        ttk.Label(flt, text="Category:").pack(side="left", padx=(8, 0))
+        self.var_cat = tk.StringVar(value="All")
+        cb = ttk.Combobox(flt, textvariable=self.var_cat, state="readonly", width=14,
+                          values=["All"] + [US.CAT_LABEL[c] for c in (US.WORK, US.NEUTRAL, US.PERSONAL)])
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.fill())
+        ttk.Label(flt, text="Department:").pack(side="left", padx=(8, 0))
+        self.var_dept = tk.StringVar(value="All")
+        self.cb_dept = ttk.Combobox(flt, textvariable=self.var_dept, state="readonly", width=14, values=["All"])
+        self.cb_dept.pack(side="left", padx=4)
+        self.cb_dept.bind("<<ComboboxSelected>>", lambda e: self.fill())
+        ttk.Label(flt, text="Click a column title to sort (e.g. Traffic = biggest first)",
+                  foreground="#667085").pack(side="left", padx=8)
+        ttk.Button(flt, text="Get exact website names...", command=self.exact_names).pack(side="right")
         pw = ttk.PanedWindow(parent, orient="vertical")
         pw.pack(fill="both", expand=True)
         up, down = ttk.PanedWindow(pw, orient="horizontal"), ttk.PanedWindow(pw, orient="horizontal")
@@ -1000,6 +1194,8 @@ class UsageTab:
         self.tv_sites = UI["make_tree"](c, ("app", "cat", "bytes", "visits"), ("App", "Category", "Traffic", "Visits"),
                                         (150, 100, 85, 60), first=("Website", 210))
         self.txt = UI["text_box"](d)
+        for tv in (self.tv_apps, self.tv_devs, self.tv_sites):
+            sortable(tv)
         self.devkeys = {}
         self.rows_apps, self.rows_sites = {}, {}
         self.last = None
@@ -1027,26 +1223,71 @@ class UsageTab:
         self.var_kpi.set(f"{fb(tot)} internet traffic  |  productive {self._m(work)}, unproductive {self._m(pers)}"
                          + (f"  |  productivity {score}%" if score is not None else "")
                          + f"  |  {len(s['devices'])} device(s)  |  {s['start']} to {s['end']}")
+        self.cb_dept.configure(values=["All"] + sorted({x["dept"] for x in s["devices"] if x.get("dept")}))
+        self.fill()
+        self._advisor(store, tot)
+
+    def fill(self):
+        """The three tables, with the Find / Category / Department filters."""
+        s = self.last
+        if not s:
+            return
+        fb = self.US.fmt_bytes
         lab = self.US.CAT_LABEL
+        q = self.var_find.get().strip().lower()
+        want = self.var_cat.get()
+        dept = self.var_dept.get()
+
+        def keep(x, *texts):
+            if want != "All" and lab.get(x.get("cat")) != want:
+                return False
+            return not q or any(q in str(t).lower() for t in texts)
         for tv in (self.tv_apps, self.tv_devs, self.tv_sites):
             tv.delete(*tv.get_children())
         self.rows_apps, self.rows_sites = {}, {}
         for x in s["apps"]:
+            if not keep(x, x["app"], x.get("group", "")):
+                continue
             iid = self.tv_apps.insert("", "end", text=x["app"], values=(x.get("group", ""), lab[x["cat"]], fb(x["bytes"]),
                                                                          self._m(x["minutes"]), x["devices"]),
                                       tags=(x["cat"],))
             self.rows_apps[iid] = x
         for x in s["devices"]:
+            if dept != "All" and x.get("dept") != dept or q and not any(
+                    q in str(t).lower() for t in (x["name"], x["dept"], x["top"], x["dev"])):
+                continue
             self.tv_devs.insert("", "end", text=x["name"], iid="dev:" + x["dev"],
                                 values=(x["dept"], fb(x["bytes"]), self._m(x["work"]), self._m(x["personal"]),
                                         "-" if x["score"] is None else f"{x['score']}%", x["top"]))
         for x in s["sites"]:
-            iid = self.tv_sites.insert("", "end", text=x["site"], values=(x["app"], lab[x["cat"]], fb(x["bytes"]),
+            site = self.US.pretty_site(x["site"])
+            if not keep(x, site, x["site"], x["app"]):
+                continue
+            iid = self.tv_sites.insert("", "end", text=site, values=(x["app"], lab[x["cat"]], fb(x["bytes"]),
                                                                            x["visits"] or ""), tags=(x["cat"],))
             self.rows_sites[iid] = x
         for tv in (self.tv_apps, self.tv_sites):
             tv.tag_configure("personal", foreground="#c2410c")
             tv.tag_configure("work", foreground="#1d4ed8")
+
+    def exact_names(self):
+        messagebox.showinfo(
+            APP, "Google, Meta and Akamai run hundreds of services on the same servers, so the traffic alone cannot "
+                 "say Sheets or Search. The exact name comes from each device's DNS question.\n\n"
+                 "Chrome / Edge 'secure DNS' sends those questions straight to Google or Cloudflare, so the router never "
+                 "sees them. Network guard > 'All DNS through the router' sends every DNS question through the router "
+                 "and blocks that bypass (browsers switch back to normal DNS by themselves). After that, usage shows "
+                 "docs.google.com, mail.google.com, youtube.com ... per user.\n\nThe Network guard opens now.")
+        self.app.show_tab("tools")
+        self.app.tools.show("guard")
+        try:
+            for k, v in self.app.tools.g.items():
+                if k in ("dns", "dhcp", "torrent", "random"):
+                    v.set(k == "dns")
+        except Exception:
+            pass
+
+    def _advisor(self, store, tot):
         t = self.txt
         t.configure(state="normal")
         t.delete("1.0", "end")
@@ -1248,11 +1489,13 @@ class SlowTab:
         self.var_dev = tk.StringVar()
         self.cb_dev = ttk.Combobox(r1, textvariable=self.var_dev, width=44)
         self.cb_dev.pack(side="left", padx=4)
+        self.devmap = {}
+        Suggest(self.cb_dev, lambda: list(self.devmap) or self._all_names())
         ttk.Label(r1, text="  Website:").pack(side="left")
         self.var_url = tk.StringVar(value=S.COMMON_SITES[0][1])
         ttk.Entry(r1, textvariable=self.var_url, width=42).pack(side="left", padx=4)
         ttk.Label(r1, text="  Internet plan:").pack(side="left")
-        self.var_mbps = tk.StringVar(value=str(app._settings().get("line_mbps") or ""))
+        self.var_mbps = tk.StringVar(value=str(app._settings().get("line_mbps") or 100))
         ttk.Entry(r1, textvariable=self.var_mbps, width=6).pack(side="left", padx=2)
         ttk.Label(r1, text="Mbps").pack(side="left")
         r2 = ttk.Frame(parent)
@@ -1289,18 +1532,23 @@ class SlowTab:
     def refresh(self):
         devs = sorted([d for d in self.app.devices if d.get("online")],
                       key=lambda d: ((d.get("name") or "~").lower(), core.ip_key(d.get("ip", ""))))
-        self.devmap = {f"{d.get('name') or '-'}  {d.get('ip', '')}": d for d in devs}
+        self.devmap = {f"{d.get('name') or '-'}  {d.get('ip', '')}  {d.get('mac') or ''}".strip(): d for d in devs}
         self.cb_dev.configure(values=list(self.devmap))
+
+    def _all_names(self):
+        self.refresh()
+        return list(self.devmap)
 
     def _device(self):
         v = self.var_dev.get().strip()
         if v in getattr(self, "devmap", {}):
             return self.devmap[v]
         low = v.lower()
-        for d in self.app.devices:  # typed: an IP or part of a name
-            if v and (d.get("ip") == v or low in (d.get("name") or "").lower()):
+        for d in self.app.devices:  # typed: an IP, a MAC or part of a name
+            if v and (d.get("ip") == v or low in (d.get("name") or "").lower() or low == (d.get("mac") or "").lower()):
                 return d
-        return None
+        hits = [d for k, d in self.devmap.items() if all(w in k.lower() for w in low.split())]
+        return hits[0] if len(hits) == 1 else None
 
     def start(self):
         url = self.S.norm_url(self.var_url.get())
@@ -1498,6 +1746,13 @@ class AlertsTab:
         e.pack(side="left", padx=4)
         e.bind("<KeyRelease>", lambda ev: self.refresh())
         ttk.Button(top, text="Export to Excel (CSV)", command=lambda: self.export("csv")).pack(side="right")
+        self.var_auto = tk.BooleanVar(value=app._settings().get("auto_fix", True))
+
+        def _auto():
+            app._settings()["auto_fix"] = self.var_auto.get()
+            app._save_settings()
+        ttk.Checkbutton(top, text="Auto-fix when the same alert repeats 5 times (safe fixes only)",
+                        variable=self.var_auto, command=_auto).pack(side="right", padx=10)
         ttk.Button(top, text="Export report (HTML)", command=lambda: self.export("html")).pack(side="right", padx=6)
         self.var_sum = tk.StringVar(value="")
         ttk.Label(parent, textvariable=self.var_sum, foreground="#5b21b6").pack(anchor="w")
@@ -1556,7 +1811,7 @@ class AlertsTab:
         op = [x for x in allx if x.get("status") == "open"]
         self.var_sum.set(f"{len(op)} open  |  P1 fix now: {sum(x['prio'] == 1 for x in op)}  |  "
                          f"P2 today: {sum(x['prio'] == 2 for x in op)}  |  {len(allx)} alerts kept  |  "
-                         "the same alert within 15 minutes is counted, not repeated")
+                         "the same alert within an hour is counted, not repeated")
 
     def selected(self):
         return [self.rows[i] for i in self.tv.selection() if i in self.rows]

@@ -441,6 +441,68 @@ def app_of_name(name):
     return None
 
 
+PRETTY = [  # server names that say nothing to a person -> what they are
+    (re.compile(r"1e100\.net|googleusercontent|google llc|\bgoogle\b"), "Google server (service not named)"),
+    (re.compile(r"whatsapp-cdn|whatsapp"), "WhatsApp media"),
+    (re.compile(r"instagram"), "Instagram media"),
+    (re.compile(r"fbcdn\.net|facebook|meta platforms"), "Facebook / Meta CDN"),
+    (re.compile(r"akamai"), "Akamai CDN (downloads, updates, video)"),
+    (re.compile(r"cloudfront"), "Amazon CloudFront CDN"),
+    (re.compile(r"amazonaws|amazon"), "Amazon Web Services (cloud)"),
+    (re.compile(r"cloudflare"), "Cloudflare CDN"),
+    (re.compile(r"msedge|microsoft|azure|windows\.net|office"), "Microsoft cloud"),
+    (re.compile(r"fastly"), "Fastly CDN"),
+    (re.compile(r"edgecast|edgio|limelight|llnw"), "CDN (Edgio)"),
+    (re.compile(r"jio|reliance"), "Jio network"),
+    (re.compile(r"airtel|bharti"), "Airtel network"),
+]
+
+
+def ptr_of(org):
+    """The server's own host name at the start of the 'ptr owner' text the monitor passes."""
+    t = (org or "").split()
+    return t[0].lower() if t and "." in t[0] and re.search(r"[a-z]", t[0].lower()) else ""
+
+
+def pretty_site(text):
+    """'lcdelw-in-f113.1e100.net Google LLC' -> 'Google server (service not named)';
+    'a23-55-245-233.deploy.static.akamaitechnologies.com' -> 'Akamai CDN ...'; real site names stay."""
+    t = (text or "").strip()
+    low = t.lower()
+    if not t:
+        return t
+    looks_server = bool(re.search(r"\d+[-.]\d+|\b(in-f\d+|shv-|deploy|static|edge|cache|cdn|srv|node|rev)\b", low)) \
+        or " " in t or low.endswith(("1e100.net", "fbcdn.net", "akamaitechnologies.com", "amazonaws.com",
+                                     "cloudfront.net", "akamaiedge.net"))
+    if not looks_server:
+        return t
+    for rx, nice in PRETTY:
+        if rx.search(low):
+            return nice
+    host = ptr_of(t) or t
+    return site_of(host) or t
+
+
+def cache_pairs(rows):
+    """(address, name) from the router's DNS cache. Follows CNAMEs back to the name the person typed:
+    docs.google.com -> CNAME googlehosted.l.googleusercontent.com -> A 142.250.x.x gives docs.google.com."""
+    back = {}
+    for r in rows:
+        if (r.get("type") or "").upper() == "CNAME" and r.get("data") and r.get("name"):
+            back.setdefault(r["data"].strip(".").lower(), r["name"].strip(".").lower())
+    out = []
+    for r in rows:
+        data = r.get("data", "")
+        if r.get("type") not in ("A", None) or not re.fullmatch(r"[\d.]+", data or ""):
+            continue
+        n, seen = (r.get("name") or "").strip(".").lower(), set()
+        while n in back and n not in seen:  # walk up the CNAME chain
+            seen.add(n)
+            n = back[n]
+        out.append((data, n))
+    return out
+
+
 def group_of(app):
     return APP_INFO.get(app, (NEUTRAL, "Other"))[1]
 
@@ -677,7 +739,12 @@ class UsageStore:
             info = self.devmap.get(lan) or (lan, lan, "")
             dev, dept = info[0], (info[2] if len(info) > 2 else "")
             ov = self.overrides
-        site = site_of(name)
+        from_ptr = False
+        if not name:  # no DNS name for this address: the server's own name still says a lot (whatsapp-cdn...)
+            ptr = ptr_of(org)
+            if ptr and app_of_name(ptr):
+                name, from_ptr = ptr, True
+        site = pretty_site(name if from_ptr else org) if (from_ptr or not name) else site_of(name)
         app, cat = classify(name, org, port, ov, dept)
         if app == name and site:
             app = site
@@ -686,7 +753,7 @@ class UsageStore:
             app = SHARED_FRONTENDS[app]
             cat = (ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app) or NEUTRAL
         with self.lock:
-            r = self.cur[(day, hour, dev, app, site or (org[:40] if org else ""), cat)]
+            r = self.cur[(day, hour, dev, app, (site or "")[:60], cat)]
             r[0 if up else 1] += nbytes
             r[2] += 1
             slot = int(now // SLOT)

@@ -39,6 +39,7 @@ jobs:
       KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +70,13 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Run tests
-        run: flutter test
+        # a failing test is also shown as an annotation on the check (readable without the full log)
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee test.log || {
+            grep -A22 "EXCEPTION CAUGHT" test.log | grep -v "^\s*$" | head -30 |
+              while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
 
       - name: Save generated project files to the repository
         if: steps.boot.outputs.created == 'true'
@@ -156,6 +163,19 @@ jobs:
           test -f build/NetworkDoctor-Android.aab
           gh release upload "mobile-v${{ steps.ver.outputs.version }}" build/NetworkDoctor-Android.aab --clobber \
             --repo "${{ github.repository }}"
+
+      - name: Publish to Google Play (internal testing track)
+        # Runs only for a new version and only once the Play Console service-account key is saved as the
+        # PLAY_SERVICE_ACCOUNT_JSON secret (and the app exists in Play Console). Promote to production in Play Console.
+        if: env.PLAY_JSON != '' && env.KS_B64 != '' && steps.ver.outputs.exists == 'false' && github.event_name != 'pull_request'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.pacheriya.networkdoctor
+          releaseFiles: mobile/build/NetworkDoctor-Android.aab
+          track: internal
+          status: completed
+          releaseName: ${{ steps.ver.outputs.version }}
 
       - name: Clean up signing files
         if: always()

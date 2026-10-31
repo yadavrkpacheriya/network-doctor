@@ -50,11 +50,11 @@ class Log(unittest.TestCase):
         log = AL.AlertLog(p)
         t = list(REAL)[1]
         log.add("warning", t, "Live monitor", now=1000)
-        log.add("warning", t, "Live monitor", now=1300)   # within 15 min: counted
-        log.add("warning", t, "Live monitor", now=3000)   # later: new line
+        log.add("warning", t, "Live monitor", now=1300)   # within an hour: counted
+        log.add("warning", t, "Live monitor", now=6000)   # later: new line
         self.assertEqual(len(log.items), 2)
         self.assertEqual(log.items[0]["count"], 2)
-        log.add("critical", "IP conflict on 192.168.0.41 - x", "Quick check", now=3100)
+        log.add("critical", "IP conflict on 192.168.0.41 - x", "Quick check", now=6100)
         self.assertEqual(log.resolve("IP conflict on 192.168.0.41"), 1)
         log.save()
         self.assertEqual(len(AL.AlertLog(p).items), 3)

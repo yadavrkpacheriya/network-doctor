@@ -1,3 +1,28 @@
+## Network Doctor 3.15.0
+
+**Every device has a name, readable website names, filters in Usage, a map in rows, and repeated alerts fix themselves.**
+
+- **Names for every device.** Devices that tell no name now show what they are: "Hikvision Camera .105", "XMeye Camera .69", "HP PC .57", "Phone .101". Tag a device to give it its real name. Windows PCs are also asked for their exact Windows version and domain over file sharing.
+- **PC details for all PCs.**
+  - Inventory > **Collect from all PCs (admin login)** reads RAM, SSD / HDD, printers, antivirus and more from every Windows PC with one administrator login. Nothing is installed and the password is not saved.
+  - The PC details script now installs a small daily report: run it once on a PC (Inventory only) and its details stay up to date by themselves.
+- **Network map as a matrix.** Many devices on one switch or port are laid out in rows across the window instead of one long column.
+- **Repeated alerts fix themselves.** When the same alert comes 5 times, Network Doctor applies its safe fix on the router by itself: it reserves the IP for a device with a hand-typed IP (the repeating "conflict by ARP response"), or turns on IGMP snooping or loop protection. It never closes port forwards or blocks users on its own. You can switch this off in the Alerts tab.
+- **Fewer false warnings.** Router debug lines such as "lease bound, init-reboot, extending" no longer show as warnings.
+- **Readable website names.**
+  - Server names like "lcdelw-in-f113.1e100.net Google LLC" or "a23-55-245-233.deploy.static.akamaitechnologies.com" now read "Google server (service not named)", "Akamai CDN", "WhatsApp media", "Instagram media" and so on.
+  - The router's DNS cache is read every minute and followed back to the name people typed (docs.google.com, not googlehosted.l.googleusercontent.com).
+  - The Live monitor's Main app uses the same names.
+  - **Get exact website names...** (Usage tab): Chrome / Edge "secure DNS" hides every site name from the router. Network guard > "All DNS through the router" now also blocks that bypass, so Usage shows docs.google.com, mail.google.com, youtube.com per user.
+- **Usage tab filters.** Find (user, app or website), Category (Productive / Neutral / Unproductive) and Department. Click any column title to sort, e.g. Traffic for the biggest users or sites first.
+- **Slow website?** Type part of a name, IP or MAC and the matching devices drop down. The internet plan starts at 100 Mbps.
+- **IP-MAC binding in one click.** "Bind on the router now" sends the reservations to the router directly. No WinBox, no copy / paste. The commands are still there under "Only show commands".
+- **Commands tab:** type part of a device name to pick it.
+- **Phone app 1.5.0:**
+  - Usage has a search box.
+  - Website names are readable.
+  - Google Play: once the Play Console key is added to the project, each new phone version is uploaded to Play by itself.
+
 ## Network Doctor 3.14.0
 
 **Alerts with priority, fixes and one-click Troubleshoot; Inventory tab with full PC details, torrent blocking, real website names, commands for other brands, and updates every day at 15:00.**
