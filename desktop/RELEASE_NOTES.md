@@ -1,6 +1,7 @@
 ## Network Doctor 3.11.1
 
 - **Fixed: "Security validation failure: invalid originating onefile parent process (PID not found)" after an update.** The update itself was installed, but the restarted app stopped with this message; it had to be started by hand. The new copy is now started with a clean environment. The same applies to "Restart as Administrator".
+- **Fixed: "Apply router settings now" failed on RouterOS 6 with "expected end of command (line 10 column 118)".** A fallback for very old RouterOS used a word that 6.43+ and 7 do not know, and the router refuses a whole script when one word is unknown. If the router ever refuses a script again, the message shows the exact line.
 
 ## Network Doctor 3.11.0
 

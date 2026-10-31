@@ -1586,7 +1586,7 @@ def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan
 # 1) Traffic data per device (bandwidth, apps, dangerous sites)
 /ip traffic-flow set enabled=yes interfaces=all active-flow-timeout=1m inactive-flow-timeout=15s
 :do {{/ip traffic-flow target remove [find where port={flow_port}]}} on-error={{}}
-:do {{/ip traffic-flow target add dst-address={lip} port={flow_port} version=9}} on-error={{/ip traffic-flow target add address={lip}:{flow_port} version=9}}
+/ip traffic-flow target add dst-address={lip} port={flow_port} version=9
 #    if bandwidth ever looks doubled:  /ip traffic-flow set interfaces=bridge,{wan}
 
 # 2) Router log (port up/down such as ether2, loops, DHCP vs static, IP conflicts, password attacks)

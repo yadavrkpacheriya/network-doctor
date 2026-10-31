@@ -849,12 +849,17 @@ class App(tk.Tk):
             self.q.put(("call", lambda: finish(err)))
 
         def finish(err):
-            self._health_log("Router", "warning" if err else "info", f"{what}: " + (err or "applied"))
+            m = re.search(r"line (\d+)", err or "")
+            lines = script.splitlines()
+            if m and 0 < int(m.group(1)) <= len(lines):  # show the line the router refused
+                err += f"\n\nLine {m.group(1)}:\n{lines[int(m.group(1)) - 1][:300]}"
+            self._health_log("Router", "warning" if err else "info", f"{what}: " + (err or "applied").splitlines()[0])
             if err:
                 self.var_status.set(f"{what}: the router reported a problem")
-                messagebox.showerror(APP, f"{what}\n\nThe router stopped with:\n{err}\n\nNothing after that line "
-                                          "was applied. Copy the commands and paste them in WinBox > New Terminal to "
-                                          "see which line fails.")
+                messagebox.showerror(APP, f"{what}\n\nThe router refused the commands:\n{err}\n\nA line the router "
+                                          "cannot read stops the whole script, so nothing was applied. Please report "
+                                          "this line; meanwhile copy the commands and paste them in WinBox > New "
+                                          "Terminal (there only that one line fails).")
             else:
                 self.var_status.set(f"{what}: applied on the router.")
                 messagebox.showinfo(APP, f"{what}: applied on the router.")
