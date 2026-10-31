@@ -58,7 +58,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.14.0"
+VERSION = "3.15.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1106,7 +1106,7 @@ class App(tk.Tk):
             self.usage.flush()
         except Exception:
             pass
-        if time.time() - self._dns_poll_t < 180:
+        if time.time() - self._dns_poll_t < 60:  # router DNS cache: names of the sites each address belongs to
             return
         self._dns_poll_t = time.time()
         c = RO.from_settings(self._settings(), self.gw)
@@ -1117,8 +1117,7 @@ class App(tk.Tk):
             try:
                 with c:
                     rows = c.cmd("/ip/dns/cache/all/print")
-                self.usage.learn_names([(r.get("data", ""), r.get("name", "")) for r in rows
-                                        if r.get("type") in ("A", None) and re.fullmatch(r"[\d.]+", r.get("data", ""))])
+                self.usage.learn_names(US.cache_pairs(rows))
             except Exception:
                 pass
         threading.Thread(target=work, daemon=True).start()
@@ -1223,7 +1222,8 @@ class App(tk.Tk):
                 app_c, site_c = Counter(), Counter()
                 for n, ((remote, svc, proto, inbound), v) in enumerate(rem[:300]):
                     info = self.orgs.get(remote) if n < 5 else self.orgs.cache_peek(remote)
-                    app_c[M.classify(remote, svc, proto, info, inbound, ip)[0]] += v[0] + v[1]
+                    known = self.usage.app_for(ip, remote) if (self.usage and not inbound) else None
+                    app_c[known or M.classify(remote, svc, proto, info, inbound, ip)[0]] += v[0] + v[1]
                     site_c[self._site_name(ip, remote, info, svc, inbound)] += v[0] + v[1]
                 main = app_c.most_common(1)[0][0] if app_c else ""
                 site_c.pop("", None)
@@ -1261,14 +1261,11 @@ class App(tk.Tk):
             except Exception:
                 name = ""
         site = US.site_of(name) if name else ""
-        if not site:
-            ptr = (info or {}).get("ptr", "")
-            site = US.site_of(ptr) if ptr else ""
         if not site and port in M.P2P_PORTS:
             site = "peer-to-peer (torrent)"
         if not site:
-            org = (info or {}).get("org", "")
-            site = f"{remote} ({org[:24]})" if org else ""
+            ptr, org = (info or {}).get("ptr", ""), (info or {}).get("org", "")
+            site = US.pretty_site(f"{ptr} {org}".strip()) if (ptr or org) else ""
         return site
 
     def _talker_open(self, _):
@@ -1923,11 +1920,11 @@ class App(tk.Tk):
         d = e.get("data") or {}
         key = (e["kind"], d.get("iface") or d.get("ip") or d.get("mac") or "")
         now = time.time()
+        self._record_alert(e["sev"], e["text"], "Live monitor")  # every time: repeats are counted (auto-fix at 5)
         if now - self.alert_cool.get(key, 0) < 900:  # same kind of event on the same port/device: once per 15 min
             return
         self.alert_cool[key] = now
         self._health_log("Live monitor", e["sev"], f"{e['src']}: {e['text']}")
-        self._record_alert(e["sev"], e["text"], "Live monitor")
         if self.var_alerts.get() and now >= self.alert_mute_until:
             self._popup(e["sev"], e["text"])
 
@@ -1941,11 +1938,47 @@ class App(tk.Tk):
     def _record_alert(self, sev, text, source):
         """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""
         try:
-            self.alert_log.add(sev, text, source, self.lip, self.gw)
+            e = self.alert_log.add(sev, text, source, self.lip, self.gw)
             self.alert_log.save()
             self._refresh_alerts()
+            self._auto_fix(e)
         except Exception:
             pass
+
+    AUTO_FIX_AFTER = 5
+
+    def _auto_fix(self, e):
+        """The same problem 5 times: apply its safe router fix by itself (setting in Alerts; on by default)."""
+        if e.get("count", 1) < self.AUTO_FIX_AFTER or e.get("autofix") or e.get("status") == "fixed" or \
+                not self._settings().get("auto_fix", True):
+            return
+        r = AL.explain(e["text"], e["sev"], self.lip, self.gw)
+        fix = next((a for a in r["auto"] if a["where"] == "router"), None) if r["kind"] in AL.AUTO_SAFE else None
+        if not fix:
+            return
+        c = self.router_client(ask=False)
+        if not c:
+            return
+        e["autofix"] = "trying"
+
+        def work():
+            try:
+                with c:
+                    err = c.run_script(fix["cmd"])
+            except Exception as ex:
+                err = str(ex)
+            self.q.put(("call", lambda: done(err)))
+
+        def done(err):
+            e["autofix"] = "failed: " + err[:120] if err else "done"
+            if not err:
+                self.alert_log.set_status({e["id"]}, "fixed", f"auto-fixed after {e['count']} repeats: {fix['label']}")
+            self.alert_log.save()
+            self._refresh_alerts()
+            self._log_event("info" if not err else "warning",
+                            f"Auto-fix ({e['count']} repeats) - {fix['label']}: " + ("done" if not err else err[:120]),
+                            "Auto-fix")
+        threading.Thread(target=work, daemon=True).start()
 
     def _refresh_alerts(self):
         if threading.current_thread() is not threading.main_thread():
@@ -2322,7 +2355,7 @@ class App(tk.Tk):
                 "hw": T.clean_hw(data.get("hw"))}
         core.save_db(self.db)
         acts = "; ".join(str(x) for x in (data.get("actions") or [])[:4])
-        if not quiet:
+        if not quiet and acts != "daily inventory report":
             self._log_event("info", f"PC fix script ran on {host} ({client}) - {acts}", "PC fix script")
         rx = T.REPORT_TITLES
         self.issues = [i for i in self.issues if not rx.search(i["title"])] + T.report_issues(self.db)
@@ -2441,7 +2474,8 @@ class App(tk.Tk):
             try:
                 def cut(sm):
                     return {"start": sm["start"], "end": sm["end"], "cats": sm["cats"], "apps": sm["apps"][:25],
-                            "sites": sm["sites"][:25], "devices": sm["devices"][:60]}
+                            "sites": [dict(x, site=US.pretty_site(x["site"])) for x in sm["sites"][:25]],
+                            "devices": sm["devices"][:60]}
                 out = {"today": cut(self.usage.summary(1)), "week": cut(self.usage.summary(7)),
                        "insights": self.usage.insights(), "labels": US.CAT_LABEL}
             except Exception:

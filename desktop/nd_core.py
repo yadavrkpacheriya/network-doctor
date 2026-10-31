@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.14.0"
+VERSION = "3.15.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -1123,7 +1123,8 @@ def scan(subnet, opts, progress, stop):
                 raw["nbns"][ip] = r
     chk()
     # Windows PCs that ignore NetBIOS still tell their name in the first step of a file-sharing login (SMB)
-    smb_ips = [ip for ip in alive if 445 in raw["ports"].get(ip, []) and ip not in raw["nbns"] and ip != lip]
+    # (asked of every PC with file sharing: also gives the exact Windows version and the domain / workgroup)
+    smb_ips = [ip for ip in alive if 445 in raw["ports"].get(ip, []) and ip != lip]
     if smb_ips:
         import nd_smbinfo
         progress(72, f"Reading computer names from file sharing ({len(smb_ips)})...")
@@ -1271,6 +1272,8 @@ def build_devices(raw, oui, db):
         if h and h.get("names") and nm.get("netbios") and h["names"][-1] != nm["netbios"]:
             d["notes"].append(f"Renamed (was {h['names'][-1]})")
         d["category"], d["reason"] = categorize(d, gw)
+        if not d["name"]:
+            d["name"], d["auto_name"] = auto_name(d), True
         d["status"] = "Online"
         out.append(d)
 
@@ -1292,6 +1295,35 @@ def build_devices(raw, oui, db):
                     "reason": "not answering now (off, asleep or left)", "first_seen": h.get("first_seen", "")})
     out.sort(key=lambda d: (CAT_ORDER.index(d["category"]), ip_key(d["ip"])))
     return out
+
+
+AUTO_KIND = {CAT_NET: "Switch / AP", CAT_PC: "PC", CAT_CAM: "Camera", CAT_PRN: "Printer", CAT_BIO: "Biometric",
+             CAT_PHONE: "Phone", CAT_IOT: "IoT", CAT_UNK: "Device", CAT_ROUTER: "Router"}
+CAM_BRANDS = (("hikvision", "Hikvision"), ("dahua", "Dahua"), ("xmeye", "XMeye"), ("netsurveillance", "XMeye"),
+              ("cp plus", "CP Plus"), ("uniview", "Uniview"), ("tp-link", "TP-Link"), ("ezviz", "EZVIZ"),
+              ("godrej", "Godrej"), ("honeywell", "Honeywell"))
+
+
+def auto_name(d):
+    """A readable name for a device that tells none (e.g. 'Hikvision Camera .105', 'HP PC .57', 'Phone .101').
+    Shown until you tag it; never stored as its real name."""
+    kind = AUTO_KIND.get(d.get("category"), "Device")
+    http = d.get("http") or {}
+    txt = " ".join(str(x) for x in (http.get("title", ""), http.get("server", ""), http.get("realm", ""),
+                                    str(http.get("blob", ""))[:2000], (d.get("upnp") or {}).get("modelName", ""),
+                                    " ".join(d.get("notes") or []))).lower()
+    brand = ""
+    if d.get("category") == CAT_CAM:
+        if 34567 in (d.get("ports") or []):
+            brand = "XMeye"
+        brand = next((b for k, b in CAM_BRANDS if k in txt), brand)
+    if not brand and not d.get("random"):
+        v = (d.get("vendor") or "").replace(",", " ").split()
+        brand = v[0] if v else ""
+        brand = {"hewlett": "HP", "lcfc(hefei)": "Lenovo", "liteon": "LiteON", "routerboard.com": "MikroTik",
+                 "shenzhen": "", "private": ""}.get(brand.lower(), brand)[:14]
+    last = (d.get("ip") or "").rsplit(".", 1)[-1]
+    return " ".join(x for x in (brand, kind, "." + last if last else "") if x)
 
 
 def label_of(d):

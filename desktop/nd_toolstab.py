@@ -1290,6 +1290,7 @@ class ToolsTab:
         ttk.Button(row, text="Tag selected...", command=self._inv_tag).pack(side="left", padx=4)
         ttk.Button(row, text="Get PC details (script)...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
             side="left", padx=4)
+        ttk.Button(row, text="Collect from all PCs (admin login)...", command=self._inv_collect).pack(side="left", padx=4)
         ttk.Button(row, text="Export to Excel (CSV)", style="Big.TButton", command=self._inv_export).pack(side="right")
         self.var_inv_sum = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.var_inv_sum, foreground="#5b21b6").pack(anchor="w", pady=(4, 2))
@@ -1322,6 +1323,66 @@ class ToolsTab:
         self.inv_text.configure(state="disabled")
         self.inv_rows, self.inv_leases, self.inv_items, self.inv_sel = [], None, {}, None
         self._inv_refresh(router=False)
+
+    def _inv_collect(self):
+        """Reads RAM, disks, printers, antivirus... from every Windows PC with an administrator login (remote WMI)."""
+        if not core.IS_WIN:
+            messagebox.showinfo("Inventory", "Collecting PC details remotely works from Windows.")
+            return
+        pcs = [d for d in self.app.devices if d.get("online") and d.get("mac") and not d.get("self") and
+               (d.get("category") == core.CAT_PC or 445 in (d.get("ports") or []) or 135 in (d.get("ports") or []))]
+        if not pcs:
+            messagebox.showinfo("Inventory", "No Windows PCs found yet - scan first.")
+            return
+        user = simpledialog.askstring(
+            "Collect PC details", f"{len(pcs)} PCs. Windows administrator user name that works on these PCs\n"
+            "(e.g. administrator, or OFFICE\\itadmin for a domain):", parent=self.app)
+        if not user:
+            return
+        pw = simpledialog.askstring("Collect PC details", f"Password for {user} (used once, not saved):", show="*",
+                                    parent=self.app)
+        if pw is None:
+            return
+        script = T.remote_inventory_ps()
+        res = {"ok": 0, "fail": []}
+        self.var_inv_sum.set(f"Reading details from {len(pcs)} PCs (about 20 s each, 6 at a time)...")
+
+        def one(d):
+            import subprocess
+            env = dict(os.environ, ND_IP=d["ip"], ND_USER=user, ND_PW=pw)
+            try:
+                r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "-"],
+                                   input=script, capture_output=True, text=True, timeout=120, env=env,
+                                   creationflags=0x08000000)
+                out = r.stdout + "\n" + r.stderr
+            except Exception as e:
+                out = "ERROR: " + str(e)
+            hw, err = T.parse_remote_inventory(out)
+            if hw:
+                data = {"hostname": hw.get("hostname") or d.get("name") or d["ip"], "user": hw.get("logged_on", ""),
+                        "os": hw.get("os_name", ""), "hw": hw, "adapters": [{"mac": d["mac"]}],
+                        "actions": ["daily inventory report"]}
+                self.q.put(("inventory", lambda: self.app._apply_report(d["ip"], data, quiet=True), "call"))
+                res["ok"] += 1
+            else:
+                res["fail"].append(f"{d.get('name') or '-'} {d['ip']}: {err}")
+            self.q.put(("inventory", lambda: self.var_inv_sum.set(
+                f"Reading PC details... {res['ok']} done, {len(res['fail'])} failed of {len(pcs)}"), "call"))
+
+        def work():
+            with cf.ThreadPoolExecutor(6) as ex:
+                list(ex.map(one, pcs))
+            self.q.put(("inventory", lambda: self._inv_collect_done(res, len(pcs)), "call"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _inv_collect_done(self, res, n):
+        self._inv_done(None, "")
+        msg = f"PC details read from {res['ok']} of {n} PCs."
+        if res["fail"]:
+            msg += ("\n\nNot read:\n" + "\n".join(res["fail"][:25]) +
+                    "\n\nFor these, run 'Get PC details (script)... > Inventory only' once on the PC: it reports by "
+                    "itself every day after that.")
+        messagebox.showinfo("Inventory", msg)
 
     def _inv_detail(self):
         sel = [self.inv_items[i] for i in self.inv_tv.selection() if i in self.inv_items]
@@ -1399,6 +1460,9 @@ class ToolsTab:
     def _inv_done(self, leases, err):
         if leases is not None:
             self.inv_leases = leases
+        elif not self.inv_leases and (self.app.raw or {}).get("leases"):  # host names the last scan read
+            self.inv_leases = [{"mac-address": m, "address": v.get("ip", ""), "host-name": v.get("host", "")}
+                               for m, v in self.app.raw["leases"].items()]
         self.inv_rows = T.inventory_rows(self.app.devices, self.app.db, self.inv_leases)
         self._inv_fill()
         if err:

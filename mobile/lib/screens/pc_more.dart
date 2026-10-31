@@ -163,6 +163,9 @@ class UsageTab extends StatefulWidget {
 
 class _UsageTabState extends State<UsageTab> {
   bool _week = false;
+  String _q = '';
+
+  bool _hit(Map x) => _q.isEmpty || x.values.join(' ').toLowerCase().contains(_q.toLowerCase());
 
   @override
   Widget build(BuildContext context) {
@@ -178,9 +181,9 @@ class _UsageTabState extends State<UsageTab> {
     final sm = Map<String, dynamic>.from((usage[_week ? 'week' : 'today'] as Map?) ?? const {});
     final cats = Map<String, dynamic>.from((sm['cats'] as Map?) ?? const {});
     final total = cats.values.fold<num>(0, (a, b) => a + (b as num));
-    final apps = _maps(sm['apps']);
-    final sites = _maps(sm['sites']);
-    final devs = _maps(sm['devices']);
+    final apps = _maps(sm['apps']).where(_hit).toList();
+    final sites = _maps(sm['sites']).where(_hit).toList();
+    final devs = _maps(sm['devices']).where(_hit).toList();
     final insights = _maps(usage['insights']);
     final double maxApp = apps.isEmpty ? 1.0 : math.max(1.0, ((apps.first['bytes'] as num?) ?? 1).toDouble());
     num work = 0, pers = 0;
@@ -196,6 +199,12 @@ class _UsageTabState extends State<UsageTab> {
           segments: const [ButtonSegment(value: false, label: Text('Today')), ButtonSegment(value: true, label: Text('7 days'))],
           selected: {_week},
           onSelectionChanged: (v) => setState(() => _week = v.first),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search), hintText: 'Find a user, app or website', isDense: true),
+          onChanged: (v) => setState(() => _q = v),
         ),
         const SizedBox(height: 8),
         Card(

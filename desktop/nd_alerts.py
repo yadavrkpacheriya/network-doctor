@@ -18,6 +18,10 @@ MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 PRIO = {1: "P1 - fix now", 2: "P2 - fix today", 3: "P3 - this week", 4: "P4 - for information"}
 SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 
+# fixes Network Doctor may apply by itself when the same alert repeats 5 times (they only add a reservation or turn
+# on a protection - nothing that can cut off a user or a camera)
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop"}
+
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
 
@@ -332,12 +336,12 @@ class AlertLog:
             pass
 
     def add(self, sev, text, source="", lip="", gw="", now=None):
-        """Adds an alert (the same text within 15 minutes only counts up). Returns the entry."""
+        """Adds an alert (the same text within an hour only counts up). Returns the entry."""
         now = time.time() if now is None else now
         r = explain(text, sev, lip, gw)
         with self.lock:
             for x in reversed(self.items[-60:]):
-                if x["text"] == text and now - x["last"] < 900:
+                if x["text"] == text and now - x["last"] < 3600:
                     x["last"], x["count"] = now, x.get("count", 1) + 1
                     if x.get("status") == "fixed":
                         x["status"] = "open"
