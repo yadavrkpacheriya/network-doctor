@@ -1,3 +1,22 @@
+## Network Doctor 3.17.0
+
+**A new, easier layout: seven coloured sections with their own pages.** Phone app 1.7.0 uses the same sections.
+
+- **The tabs are now grouped by what they are for.** Before there were 15 tabs plus a Tools list of 16 more items. Now there are seven sections, each with its own colour and its own row of pages:
+  - **Home** (grey): the overview.
+  - **Alerts** (orange): Alerts, Problems, Root cause, Health checks.
+  - **Devices** (blue): All devices, Inventory, Network map, IP-MAC binding, Switches (SNMP), Port scanner, MAC lookup, Wake-on-LAN.
+  - **Internet & Usage** (green): Live monitor, Usage, Slow website?, Speed test, Website check, DNS test.
+  - **Security** (purple): Network guard, Website firewall, Critical devices.
+  - **Fix & Commands** (amber): Commands, LAN speed (PC to PC), Wi-Fi analyzer, Network adapters, MTU finder, Subnet calculator.
+  - **Setup** (grey): Setup, What is missing.
+- Each section remembers the page you used last. The Alerts section shows how many alerts are open.
+- The Home buttons carry the colour of the section they open.
+- **Phone app 1.7.0**: the Office PC screen has the same coloured sections (Home, Alerts, Devices, Internet & Usage, Security, Fix & Commands). The top bar takes the section's colour, and the pages of a section are chips under it.
+- **Checked live before release.**
+  - The Windows .exe now runs a self-test on a real Windows machine: it opens every section and page, checks the phone link, and screenshots every page.
+  - The phone app is opened screen by screen on an Android emulator.
+
 ## Network Doctor 3.16.0
 
 **The phone app can now do what the PC does.** Phone app 1.6.0 with PC 3.16.0:

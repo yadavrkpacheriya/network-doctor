@@ -1993,3 +1993,110 @@ class TroubleshootWindow(tk.Toplevel):
         self.app.clipboard_clear()
         self.app.clipboard_append(txt)
         self.var_res.set("Copied.")
+
+
+# ---------------------------------------------------------------- navigation: coloured sections with sub-tabs
+SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
+    ("home", "Home", "#334155", "#e2e8f0", [("home", "Overview")]),
+    ("alerts_s", "Alerts", "#c2410c", "#ffedd5", [("alerts", "Alerts"), ("problems", "Problems"),
+                                                  ("rca", "Root cause"), ("checks", "Health checks")]),
+    ("devices_s", "Devices", "#1d4ed8", "#dbeafe", [("devices", "All devices"), ("inventory", "Inventory"),
+                                                    ("map", "Network map"), ("binding", "IP-MAC binding"),
+                                                    ("t_switch", "Switches (SNMP)"), ("t_ports", "Port scanner"),
+                                                    ("t_mac", "MAC lookup"), ("t_wol", "Wake-on-LAN")]),
+    ("internet_s", "Internet & Usage", "#047857", "#d1fae5", [("monitor", "Live monitor"), ("usage", "Usage"),
+                                                              ("slow", "Slow website?"), ("t_speed", "Speed test"),
+                                                              ("t_web", "Website check"), ("t_dns", "DNS test")]),
+    ("security_s", "Security", "#7c3aed", "#ede9fe", [("t_guard", "Network guard"), ("t_website", "Website firewall"),
+                                                      ("t_watch", "Critical devices")]),
+    ("fix_s", "Fix & Commands", "#b45309", "#fef3c7", [("commands", "Commands"), ("t_lan", "LAN speed (PC to PC)"),
+                                                       ("t_wifi", "Wi-Fi analyzer"), ("t_nic", "Network adapters"),
+                                                       ("t_mtu", "MTU finder"), ("t_subnet", "Subnet calculator")]),
+    ("setup_s", "Setup", "#475569", "#e2e8f0", [("setup", "Setup"), ("t_ready", "What is missing")]),
+]
+
+
+class SectionNav:
+    """Two rows of coloured buttons (section, then its pages) above one page area. Pages are created up front
+    (page(key) -> frame) and shown with select(key); on_change(key) runs after every switch."""
+
+    def __init__(self, master, on_change=None):
+        self.on_change = on_change
+        self.top = tk.Frame(master, bg="#f8fafc")
+        self.top.pack(fill="x", padx=10, pady=(2, 0))
+        self.strip = tk.Frame(master, height=4, bg="#334155")
+        self.strip.pack(fill="x", padx=10)
+        self.sub = tk.Frame(master, bg="#e2e8f0")
+        self.sub.pack(fill="x", padx=10)
+        self.body = ttk.Frame(master)
+        self.body.pack(fill="both", expand=True, padx=10, pady=(4, 6))
+        self.pages, self.labels, self.sec_btn, self.sub_btn = {}, {}, {}, {}
+        self.sec_of, self.last = {}, {}
+        self.cur, self.cur_sec = None, None
+        for key, title, col, light, subs in SECTIONS:
+            b = tk.Label(self.top, text=f"  {title}  ", font=("Segoe UI", 11, "bold"), fg=col, bg="#f8fafc",
+                         padx=10, pady=7, cursor="hand2")
+            b.pack(side="left", padx=(0, 2))
+            b.bind("<Button-1>", lambda e, k=key: self.select_section(k))
+            self.sec_btn[key] = b
+            for p, t in subs:
+                self.sec_of[p] = key
+                self.labels[p] = t
+            self.last[key] = subs[0][0]
+
+    def section(self, key):
+        return next(s for s in SECTIONS if s[0] == key)
+
+    def page(self, key):
+        """The frame for one page (created once)."""
+        if key not in self.pages:
+            self.pages[key] = ttk.Frame(self.body)
+        return self.pages[key]
+
+    def current(self):
+        return self.cur
+
+    def set_label(self, key, text):
+        self.labels[key] = text
+        b = self.sub_btn.get(key)
+        if b is not None:
+            b.configure(text=f" {text} ")
+        if key == "alerts" and "alerts_s" in self.sec_btn:  # the open-alert count also on the section
+            n = re.search(r"\((\d+)\)", text)
+            self.sec_btn["alerts_s"].configure(text=f"  Alerts ({n.group(1)})  " if n else "  Alerts  ")
+
+    def select_section(self, key):
+        self.select(self.last.get(key) or self.section(key)[4][0][0])
+
+    def select(self, key):
+        if key not in self.sec_of:
+            return
+        sec = self.sec_of[key]
+        _, _, col, light, subs = self.section(sec)
+        if sec != self.cur_sec:
+            for k, b in self.sec_btn.items():
+                s = self.section(k)
+                b.configure(bg=s[2] if k == sec else "#f8fafc", fg="white" if k == sec else s[2])
+            self.strip.configure(bg=col)
+            for w in self.sub.winfo_children():
+                w.destroy()
+            self.sub.configure(bg=light)
+            self.sub_btn = {}
+            for p, _t in subs:
+                b = tk.Label(self.sub, text=f" {self.labels[p]} ", font=("Segoe UI", 10), bg=light, fg="#1f2937",
+                             padx=10, pady=5, cursor="hand2")
+                b.pack(side="left")
+                b.bind("<Button-1>", lambda e, k=p: self.select(k))
+                self.sub_btn[p] = b
+            self.cur_sec = sec
+        for p, b in self.sub_btn.items():
+            on = p == key
+            b.configure(bg="white" if on else light, fg=col if on else "#1f2937",
+                        font=("Segoe UI", 10, "bold" if on else "normal"))
+        if self.cur and self.cur in self.pages:
+            self.pages[self.cur].pack_forget()
+        self.page(key).pack(fill="both", expand=True)
+        self.cur = key
+        self.last[sec] = key
+        if self.on_change:
+            self.on_change(key)

@@ -72,54 +72,37 @@ TOOLS = [
 
 
 class ToolsTab:
-    def __init__(self, app, parent):
+    def __init__(self, app, parent=None):
+        """Every tool is its own page in the section it belongs to (app.nav pages 't_<key>'), built the first
+        time it is opened."""
         self.app = app
         self.q = queue.Queue()
         self.frames, self.texts, self.status, self.stops, self.btns = {}, {}, {}, {}, {}
         self.lan_server = None
         self.live = set()
-        pw = ttk.PanedWindow(parent, orient="horizontal")
-        pw.pack(fill="both", expand=True, pady=(6, 0))
-        left = ttk.Frame(pw)
-        self.body = ttk.Frame(pw)
-        pw.add(left, weight=0)
-        pw.add(self.body, weight=1)
-        self.lb = tk.Listbox(left, width=34, activestyle="none", font=("Segoe UI", 10), exportselection=False,
-                             relief="flat", highlightthickness=1, highlightbackground="#d0d5dd",
-                             selectbackground="#1d4ed8", selectforeground="white")
-        self.lb.pack(fill="both", expand=True)
-        for _, name, _ in TOOLS:
-            self.lb.insert("end", "  " + name)
-        self.lb.bind("<<ListboxSelect>>", lambda e: self.show())
         self.current = None
-        self.lb.selection_set(0)
-        self.show()
         app.after(150, self._poll)
 
     # ------------------------------------------------------------------ plumbing
     def show(self, key=None):
-        if key is None:
-            sel = self.lb.curselection()
-            key = TOOLS[sel[0]][0] if sel else "watch"
-        elif key == "inventory":  # its own tab now
-            self.app.show_tab("inventory")
+        key = key or "watch"
+        if key == "inventory":  # its own page
+            self.app.nav.select("inventory")
             return
-        else:
-            idx = [t[0] for t in TOOLS].index(key)
-            self.lb.selection_clear(0, "end")
-            self.lb.selection_set(idx)
-        if self.current == key:
+        if key not in {t[0] for t in TOOLS}:
             return
-        if self.current:
-            self.frames[self.current].pack_forget()
+        if self.app.nav.current() != "t_" + key:
+            self.app.nav.select("t_" + key)  # comes back here through the page-change handler
+            return
         if key not in self.frames:
-            f = ttk.Frame(self.body, padding=(10, 0, 0, 0))
+            page = self.app.nav.page("t_" + key)
+            f = ttk.Frame(page, padding=(4, 4, 0, 0))
+            f.pack(fill="both", expand=True)
             self.frames[key] = f
             name, desc = next((n, d) for k, n, d in TOOLS if k == key)
             ttk.Label(f, text=name, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-            ttk.Label(f, text=desc, foreground="#667085", wraplength=900, justify="left").pack(anchor="w", pady=(0, 6))
+            ttk.Label(f, text=desc, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(0, 6))
             getattr(self, "_build_" + key)(f)
-        self.frames[key].pack(fill="both", expand=True)
         self.current = key
         if key == "watch":
             self.refresh_watch()

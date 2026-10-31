@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import nd_core as core
+import nd_tabs
 
 BG, CARD, INK, MUTE = "#f4f5f7", "#ffffff", "#1c2230", "#667085"
 OK, WARN, BAD, ACCENT = "#1f7a3d", "#b54708", "#b42318", "#1d4ed8"
@@ -73,21 +74,27 @@ class HomeTab:
             ("Give a device a fixed IP", "IP-MAC binding, applied on the router", lambda: self.app.show_tab("binding")),
             ("Watch the network live", "bandwidth now, router log, loops", lambda: self.app.show_tab("monitor")),
             ("Find the cause of a problem", "root cause from everything recorded", lambda: self.app.show_tab("rca")),
-            ("Tools", "speed test, switch details, ports, Wi-Fi, DNS...", lambda: self.app.show_tab("tools")),
+            ("Internet speed test", "speed and quality of the internet line", lambda: self._tool("speed")),
             ("Setup and router login", "one-time settings, updates, phone app", lambda: self.app.show_tab("setup")),
         ]
+        sec_col = {s[0]: s[2] for s in nd_tabs.SECTIONS}
+        page_sec = {p: s[0] for s in nd_tabs.SECTIONS for p, _ in s[4]}
+        tile_page = ["devices", "problems", "usage", "slow", "devices", "inventory", "t_website", "t_guard", "binding",
+                     "monitor", "rca", "t_speed", "setup"]
         for i, (title, sub, fn) in enumerate(actions):
+            colr = sec_col.get(page_sec.get(tile_page[i] if i < len(tile_page) else "", ""), ACCENT)
             f = tk.Frame(grid, bg=CARD, highlightbackground="#e3e6eb", highlightthickness=1, padx=12, pady=9,
                          cursor="hand2")
             f.grid(row=i // 4, column=i % 4, sticky="nsew", padx=(0 if i % 4 == 0 else 10, 0), pady=(0, 10))
             grid.columnconfigure(i % 4, weight=1, uniform="a")
-            t = tk.Label(f, text=title, font=(FONT, 11, "bold"), bg=CARD, fg=ACCENT, anchor="w", justify="left")
+            tk.Frame(f, bg=colr, height=3).pack(fill="x", pady=(0, 4))  # the colour of the section it opens
+            t = tk.Label(f, text=title, font=(FONT, 11, "bold"), bg=CARD, fg=colr, anchor="w", justify="left")
             t.pack(anchor="w")
             s = tk.Label(f, text=sub, font=(FONT, 9), bg=CARD, fg=MUTE, anchor="w", justify="left", wraplength=250)
             s.pack(anchor="w")
             for w in (f, t, s):
                 w.bind("<Button-1>", lambda e, fn=fn: fn())
-                w.bind("<Enter>", lambda e, f=f: f.configure(highlightbackground=ACCENT))
+                w.bind("<Enter>", lambda e, f=f, c=colr: f.configure(highlightbackground=c))
                 w.bind("<Leave>", lambda e, f=f: f.configure(highlightbackground="#e3e6eb"))
 
         tk.Label(b, text="Setup checklist", font=(FONT, 13, "bold"), bg=BG, fg=INK).pack(anchor="w", pady=(10, 2))
@@ -100,7 +107,6 @@ class HomeTab:
         self.refresh()
 
     def _tool(self, key):
-        self.app.show_tab("tools")
         try:
             self.app.tools.show(key)
         except Exception:
