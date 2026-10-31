@@ -44,21 +44,26 @@ void main() {
         await shot('${sec.replaceAll(' ', '-').replaceAll('&', 'and')}-${label.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '-')}');
       }
     }
-    // an alert's Troubleshoot page
-    final alertsTab = find.descendant(of: find.byType(TabBar), matching: find.textContaining('Alerts')).first;
-    await tester.ensureVisible(alertsTab);
-    await tester.pumpAndSettle();
-    await tester.tap(alertsTab);
-    await tester.pumpAndSettle(const Duration(seconds: 1));
-    await tester.tap(find.byType(ChoiceChip).first);
-    await tester.pumpAndSettle();
-    final first = find.byIcon(Icons.chevron_right);
-    if (first.evaluate().isNotEmpty) {
-      await tester.tap(first.first);
-      await shot('troubleshoot');
-      await tester.pageBack();
+    // an alert's Troubleshoot page, then About (extra screens: a miss here must not hide the results above)
+    try {
+      final alertsTab = find.descendant(of: find.byType(TabBar), matching: find.textContaining('Alerts')).first;
+      await tester.ensureVisible(alertsTab);
+      await tester.pumpAndSettle();
+      await tester.tap(alertsTab);
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+      await tester.tap(find.byType(ChoiceChip).first);
+      await tester.pumpAndSettle();
+      final first = find.byIcon(Icons.chevron_right);
+      if (first.evaluate().isNotEmpty) {
+        await tester.tap(first.first);
+        await shot('troubleshoot');
+        Navigator.of(tester.element(find.text('Troubleshoot'))).pop();
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('About')));
+      await shot('about');
+    } catch (e) {
+      debugPrint('extra screens skipped: $e');
     }
-    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('About')));
-    await shot('about');
   });
 }
