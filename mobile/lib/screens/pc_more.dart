@@ -362,7 +362,7 @@ class _InventoryTabState extends State<InventoryTab> {
           Checkbox(value: _onlyAttention, onChanged: (v) => setState(() => _onlyAttention = v ?? false)),
           const Flexible(child: Text('Needs attention')),
           const Spacer(),
-          Text('${rows.length}', style: t.bodySmall),
+          Text('${rows.length} devices', style: t.bodySmall),
         ]),
         if (_maps(widget.s['inventory']).isEmpty)
           const Card(child: ListTile(title: Text('No inventory from the PC yet (Network Doctor 3.14 or newer on the PC).'))),

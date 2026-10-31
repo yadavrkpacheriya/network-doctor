@@ -178,8 +178,10 @@ void main() {
     testWidgets('summary shows cards and checklist', (tester) async {
       await tester.pumpWidget(wrap(SummaryTab(s: snap, onRefresh: noop, goTo: (_) {})));
       expect(find.text('2'), findsOneWidget);
-      expect(find.text('Router login'), findsOneWidget);
       expect(find.text('1 of 2'), findsOneWidget);
+      expect(find.text('No open alerts'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('Router login'), 200);
+      expect(find.text('Router login'), findsOneWidget);
     });
     testWidgets('usage shows apps, people and advice', (tester) async {
       await tester.pumpWidget(wrap(UsageTab(s: snap, onRefresh: noop)));
