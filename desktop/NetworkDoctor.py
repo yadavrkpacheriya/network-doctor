@@ -388,6 +388,11 @@ class App(tk.Tk):
                     self.state("zoomed")
                 except Exception:
                     pass
+        if core.IS_WIN and getattr(sys, "frozen", False):
+            try:  # the window and taskbar use the exe's own icon (the same logo as the phone app)
+                self.iconbitmap(default=sys.executable)
+            except Exception:
+                pass
         st = ttk.Style(self)
         for th in (("vista", "winnative", "clam") if core.IS_WIN else ("aqua", "clam") if core.IS_MAC else ("clam",)):
             try:

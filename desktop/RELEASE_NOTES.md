@@ -1,6 +1,7 @@
 ## Network Doctor 3.17.1
 
 - **Microsoft Store package.** Every release now also has `NetworkDoctor-Store.msix`, the package type the Microsoft Store accepts, with Network Doctor's Store identity (Pacheriya.NetworkDoctor) and its logos.
+- **Same logo as the phone app** on the Windows program, its window and taskbar, and in the Microsoft Store.
 - **The Store copy behaves the way the Store requires.** It starts as a normal user (press "Restart as Administrator" for the full tests) and it never updates itself; the Microsoft Store installs new versions. The normal download (`NetworkDoctor.exe`) keeps updating itself at 15:00 as before.
 
 ## Network Doctor 3.17.0
