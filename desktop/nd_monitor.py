@@ -373,8 +373,18 @@ def service_port(rport, lport):
     return (rport, False) if rport <= lport else (lport, True)
 
 
-def classify(remote, port, proto, info, inbound=False):
+NAME_APP = None  # set by the app: NAME_APP(lan_ip, remote_ip) -> app from the DNS name (usage catalogue) or None
+
+
+def classify(remote, port, proto, info, inbound=False, lan=None):
     """Returns (app_name, risk) where risk is None or (severity, text)."""
+    if not inbound and lan and NAME_APP and port not in P2P_PORTS:
+        try:
+            named = NAME_APP(lan, remote)
+        except Exception:
+            named = None
+        if named:
+            return named, RISK_PORTS.get(port)
     if inbound:
         name = core.PORTS.get(port) or PORT_APP.get(port) or f"port {port}"
         if port in P2P_PORTS:
@@ -1498,7 +1508,7 @@ def analyse_device(d, mon, orgs):
     rem.sort(key=lambda x: -(x[1][0] + x[1][1]))
     for idx, ((remote, svc, proto, inbound), (up, down, n, first, last)) in enumerate(rem):
         info = orgs.get(remote) if idx < 60 else orgs.cache_peek(remote)
-        app, risk = classify(remote, svc, proto, info, inbound)
+        app, risk = classify(remote, svc, proto, info, inbound, ip)
         th = threats.get(remote)
         if th:
             if th[1] == "tor":

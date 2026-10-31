@@ -940,8 +940,13 @@ class UsageTab:
         for c in (US.WORK, US.NEUTRAL, US.PERSONAL):
             ttk.Button(cat, text=US.CAT_LABEL[c], command=lambda c=c: self.set_cat(c)).pack(side="left", padx=3)
         ttk.Button(cat, text="Built-in rule", command=lambda: self.set_cat(None)).pack(side="left", padx=3)
-        ttk.Label(cat, text="  (your choice is remembered and applied to the history too)", foreground="#667085").pack(
-            side="left")
+        ttk.Label(cat, text="  for").pack(side="left")
+        self.var_for = tk.StringVar(value="Everyone")
+        self.cb_for = ttk.Combobox(cat, textvariable=self.var_for, state="readonly", width=18)
+        self.cb_for.pack(side="left", padx=4)
+        ttk.Button(cat, text="App list (all apps and their websites)...", command=lambda: AppListDialog(self)).pack(
+            side="left", padx=8)
+        ttk.Label(cat, text="(remembered, and applied to the history too)", foreground="#667085").pack(side="left")
         pw = ttk.PanedWindow(parent, orient="vertical")
         pw.pack(fill="both", expand=True)
         up, down = ttk.PanedWindow(pw, orient="horizontal"), ttk.PanedWindow(pw, orient="horizontal")
@@ -952,9 +957,9 @@ class UsageTab:
         up.add(b, weight=1)
         down.add(c, weight=1)
         down.add(d, weight=1)
-        self.tv_apps = UI["make_tree"](a, ("cat", "bytes", "mins", "devs"), ("Category", "Traffic", "Active time",
-                                                                              "Devices"), (100, 90, 85, 60),
-                                       first=("App", 190))
+        self.tv_apps = UI["make_tree"](a, ("group", "cat", "bytes", "mins", "devs"),
+                                       ("Group", "Category", "Traffic", "Active time", "Devices"),
+                                       (120, 95, 85, 80, 55), first=("App", 190))
         self.tv_devs = UI["make_tree"](b, ("dept", "bytes", "work", "personal", "score", "top"),
                                        ("Dept", "Traffic", "Productive", "Unproductive", "Productivity",
                                         "Top unproductive"), (90, 80, 85, 90, 80, 150), first=("Device / user", 170))
@@ -977,6 +982,7 @@ class UsageTab:
         for k, v in sorted(names.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower()):
             self.devkeys[f"{v.get('name') or k}  {v.get('ip', '')}"] = k
         self.cb_dev.configure(values=list(self.devkeys))
+        self.cb_for.configure(values=["Everyone"] + self.departments())
         dev = self.devkeys.get(self.var_dev.get())
         s = store.summary(days, dev)
         self.last = s
@@ -993,8 +999,9 @@ class UsageTab:
             tv.delete(*tv.get_children())
         self.rows_apps, self.rows_sites = {}, {}
         for x in s["apps"]:
-            iid = self.tv_apps.insert("", "end", text=x["app"], values=(lab[x["cat"]], fb(x["bytes"]), self._m(x["minutes"]),
-                                                                         x["devices"]), tags=(x["cat"],))
+            iid = self.tv_apps.insert("", "end", text=x["app"], values=(x.get("group", ""), lab[x["cat"]], fb(x["bytes"]),
+                                                                         self._m(x["minutes"]), x["devices"]),
+                                      tags=(x["cat"],))
             self.rows_apps[iid] = x
         for x in s["devices"]:
             self.tv_devs.insert("", "end", text=x["name"], iid="dev:" + x["dev"],
@@ -1035,15 +1042,26 @@ class UsageTab:
             self.var_dev.set(next((k for k, v in self.devkeys.items() if v == key), "All devices"))
             self.refresh()
 
+    def departments(self):
+        depts = {t.get("dept") for t in T.tags_of(self.app.db).values() if t.get("dept")}
+        if self.app.usage:
+            depts |= {v.get("dept") for v in self.app.usage.names().values() if v.get("dept")}
+        return sorted(depts)
+
+    def dept_choice(self):
+        v = self.var_for.get()
+        return "" if v in ("", "Everyone") else v
+
     def set_cat(self, cat):
         sa = [self.rows_apps[i] for i in self.tv_apps.selection() if i in self.rows_apps]
         ss = [self.rows_sites[i] for i in self.tv_sites.selection() if i in self.rows_sites]
         if not sa and not ss:
             messagebox.showinfo(APP, "Select an app or a website in the lists first.")
             return
+        dept = self.dept_choice()
         for x in sa:
-            self.app.usage.set_category("app", x["app"], cat)
-        for x in ss:
+            self.app.usage.set_category("app", x["app"], cat, dept)
+        for x in ss:  # a website's choice is for everyone; per department, choose its app
             self.app.usage.set_category("site", x["site"], cat)
         self.refresh()
 
@@ -1090,3 +1108,88 @@ class UsageTab:
             for x in s["sites"]:
                 w.writerow([x["site"], x["app"], lab[x["cat"]], round(x["bytes"] / 1048576, 1), x["visits"]])
         self.app.var_status.set(f"Usage saved: {p}")
+
+
+class AppListDialog(tk.Toplevel):
+    """Every app Network Doctor knows, the websites that belong to it, and its category (per department too)."""
+
+    def __init__(self, tab):
+        super().__init__(tab.app)
+        self.tab, self.store = tab, tab.app.usage
+        self.US = tab.US
+        self.title("App list - which websites belong to which app")
+        self.geometry("1150x640")
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill="x")
+        ttk.Label(top, text="Search:").pack(side="left")
+        self.var_q = tk.StringVar()
+        e = ttk.Entry(top, textvariable=self.var_q, width=24)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self.fill())
+        ttk.Label(top, text="   Selected app is:").pack(side="left")
+        for c in (self.US.WORK, self.US.NEUTRAL, self.US.PERSONAL):
+            ttk.Button(top, text=self.US.CAT_LABEL[c], command=lambda c=c: self.set(c)).pack(side="left", padx=2)
+        ttk.Button(top, text="Built-in", command=lambda: self.set(None)).pack(side="left", padx=2)
+        ttk.Label(top, text=" for").pack(side="left")
+        self.var_for = tk.StringVar(value=tab.var_for.get() or "Everyone")
+        ttk.Combobox(top, textvariable=self.var_for, state="readonly", width=18,
+                     values=["Everyone"] + tab.departments()).pack(side="left", padx=4)
+        ttk.Button(top, text="Export (Excel CSV)", command=self.export).pack(side="right")
+        ttk.Label(self, text="An app is recognised by the end of the website name it uses (m.facebook.com ends in "
+                             "facebook.com). Facebook, Instagram, WhatsApp and Messenger are separate apps even though "
+                             "they run on the same company's servers. 'For' a department: e.g. WhatsApp Productive for "
+                             "Sales, Neutral for everyone else.", wraplength=1100, foreground="#667085",
+                  padding=(8, 0)).pack(anchor="w")
+        fr = ttk.Frame(self, padding=8)
+        fr.pack(fill="both", expand=True)
+        self.tv = UI["make_tree"](fr, ("group", "cat", "builtin", "depts", "domains"),
+                                  ("Group", "Category now", "Built-in", "Per department", "Websites (endings)"),
+                                  (150, 105, 95, 190, 560), first=("App", 210))
+        self.fill()
+
+    def fill(self):
+        q = self.var_q.get().strip().lower()
+        lab = self.US.CAT_LABEL
+        tv = self.tv
+        tv.delete(*tv.get_children())
+        self.rows = {}
+        for x in sorted(self.store.app_list(), key=lambda r: (r["group"], r["app"].lower())):
+            if q and q not in (x["app"] + " " + x["group"] + " " + " ".join(x["domains"])).lower():
+                continue
+            now = x["chosen"] or x["builtin"]
+            iid = tv.insert("", "end", text=x["app"], tags=(now,),
+                            values=(x["group"], lab[now] + (" *" if x["chosen"] else ""), lab[x["builtin"]],
+                                    ", ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
+                                    ", ".join(x["domains"])))
+            self.rows[iid] = x
+        tv.tag_configure("personal", foreground="#c2410c")
+        tv.tag_configure("work", foreground="#1d4ed8")
+
+    def set(self, cat):
+        sel = [self.rows[i] for i in self.tv.selection() if i in self.rows]
+        if not sel:
+            messagebox.showinfo(APP, "Select one or more apps (Ctrl / Shift + click).", parent=self)
+            return
+        v = self.var_for.get()
+        dept = "" if v in ("", "Everyone") else v
+        for x in sel:
+            self.store.set_category("app", x["app"], cat, dept)
+        self.fill()
+        self.tab.refresh()
+
+    def export(self):
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        p = filedialog.asksaveasfilename(parent=self, initialdir=core.REPORT_DIR, initialfile="app-list.csv",
+                                         defaultextension=".csv", filetypes=[("Excel CSV", "*.csv")])
+        if not p:
+            return
+        import csv
+        lab = self.US.CAT_LABEL
+        with open(p, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["App", "Group", "Category now", "Built-in", "Per department", "Websites (endings)"])
+            for x in sorted(self.store.app_list(), key=lambda r: (r["group"], r["app"].lower())):
+                w.writerow([x["app"], x["group"], lab[x["chosen"] or x["builtin"]], lab[x["builtin"]],
+                            "; ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
+                            " ".join(x["domains"])])
+        self.tab.app.var_status.set(f"App list saved: {p}")

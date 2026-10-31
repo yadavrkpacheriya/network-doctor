@@ -120,6 +120,7 @@ class Usage(unittest.TestCase):
         self.assertEqual(U.site_of("mail.google.com"), "mail.google.com")
         self.assertEqual(U.classify("teams.microsoft.com")[1], U.WORK)
         self.assertEqual(U.classify("googlevideo.com"), ("YouTube", U.PERSONAL))
+        self.assertEqual(U.classify("dropbox.com")[0], "Dropbox")  # 'x.com' must not match inside it
         self.assertEqual(U.classify("", "", 6881)[1], U.PERSONAL)
         self.assertEqual(U.classify("unknown.example")[0], "unknown.example")
         self.assertEqual(U.productivity(30, 10), 75)
@@ -135,7 +136,7 @@ class Usage(unittest.TestCase):
         apps = {a["app"]: a for a in sm["apps"]}
         self.assertEqual(apps["YouTube"]["bytes"], 24_000_000)
         self.assertEqual(apps["YouTube"]["cat"], U.PERSONAL)
-        self.assertEqual(apps["Microsoft 365"]["cat"], U.WORK)
+        self.assertEqual(apps["Microsoft Teams"]["cat"], U.WORK)
         dev = sm["devices"][0]
         self.assertEqual(dev["name"], "ACC-PC")
         self.assertEqual(dev["dept"], "Accounts")
@@ -161,7 +162,7 @@ class Usage(unittest.TestCase):
         site = next(x for x in sm["sites"] if x["site"] == "flipkart.com")
         self.assertEqual(site["visits"], 1)
         self.assertEqual(site["cat"], U.PERSONAL)
-        self.assertEqual(self.s.ip_name["104.1.1.1"], "www.flipkart.com")
+        self.assertEqual(self.s.name_for("192.168.0.40", "104.1.1.1"), ("www.flipkart.com", False))
 
     def test_learning_finds_peak_habit_and_heavy_device(self):
         import datetime as dt
@@ -200,3 +201,56 @@ class DnsAnswers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AppCatalogue(unittest.TestCase):
+    def setUp(self):
+        self.s = U.UsageStore(os.path.join(tempfile.mkdtemp(), "usage.db"))
+        self.s.set_devices([{"mac": "AA:00:00:00:00:01", "ip": "192.168.0.40", "name": "SALES-1", "online": True},
+                            {"mac": "AA:00:00:00:00:02", "ip": "192.168.0.41", "name": "ACC-1", "online": True}],
+                           {"AA:00:00:00:00:01": {"dept": "Sales"}, "AA:00:00:00:00:02": {"dept": "Accounts"}})
+
+    def test_meta_apps_are_told_apart(self):
+        for name, app in (("mmg.whatsapp.net", "WhatsApp"), ("web.whatsapp.com", "WhatsApp"),
+                          ("scontent-del1-1.cdninstagram.com", "Instagram"),
+                          ("instagram.fdel1-1.fna.fbcdn.net", "Instagram"),
+                          ("star-mini.c10r.facebook.com", "Facebook"), ("www.messenger.com", "Messenger"),
+                          ("rr2---sn-ci5gup-qxa6.googlevideo.com", "YouTube"), ("music.youtube.com", "YouTube Music"),
+                          ("doc-0k-6g-docs.googleusercontent.com", "Google Drive / Docs"),
+                          ("drive.google.com", "Google Drive / Docs"), ("mail.google.com", "Gmail"),
+                          ("meet.google.com", "Google Meet"), ("teams.microsoft.com", "Microsoft Teams"),
+                          ("services.gst.gov.in", "GST portal"), ("www.flipkart.com", "Flipkart"),
+                          ("api.dream11.com", "Fantasy / real-money games"), ("chatgpt.com", "ChatGPT")):
+            self.assertEqual(U.classify(name)[0], app, name)
+        self.assertEqual(U.classify("", "Meta Platforms Ireland Ltd")[0],
+                         "Meta (Facebook / Instagram / WhatsApp - name not known)")
+        self.assertEqual(len({d for _, _, _, ds in U.CATALOG for d in ds}),
+                         sum(len(ds) for _, _, _, ds in U.CATALOG), "a domain is listed under two apps")
+
+    def test_shared_front_end_is_not_guessed(self):
+        self.s.learn_names([("142.250.1.1", "mail.google.com"), ("142.250.1.1", "www.youtube.com")])
+        self.s.add_flow("192.168.0.41", "142.250.1.1", 443, 6, 1000, False)
+        self.assertEqual([a["app"] for a in self.s.summary(1)["apps"]], ["Google (shared address)"])
+
+    def test_device_own_lookup_wins(self):
+        self.s.learn_names([("142.250.1.1", "mail.google.com"), ("142.250.1.1", "www.youtube.com")])
+        self.s.dns_seen("192.168.0.41", "mail.google.com", ["142.250.1.1"])
+        self.s.add_flow("192.168.0.41", "142.250.1.1", 443, 6, 1000, False)
+        self.assertEqual([a["app"] for a in self.s.summary(1)["apps"]], ["Gmail"])
+
+    def test_whatsapp_is_work_for_sales_only(self):
+        self.s.learn_names([("157.240.1.60", "mmg.whatsapp.net")])
+        self.s.add_flow("192.168.0.40", "157.240.1.60", 443, 6, 1000, False)
+        self.s.add_flow("192.168.0.41", "157.240.1.60", 443, 6, 1000, False)
+        self.s.set_category("app", "WhatsApp", U.WORK, dept="Sales")
+        cats = {(a["app"], a["cat"]) for a in self.s.summary(1)["apps"]}
+        self.assertEqual(cats, {("WhatsApp", U.WORK), ("WhatsApp", U.NEUTRAL)})
+        self.s.add_flow("192.168.0.40", "157.240.1.60", 443, 6, 1000, False)  # new traffic follows it too
+        sales = self.s.summary(1, dev="AA:00:00:00:00:01")["apps"]
+        self.assertEqual([(a["cat"], a["bytes"]) for a in sales], [(U.WORK, 2000)])
+        self.s.set_category("app", "WhatsApp", U.PERSONAL)  # everyone else; Sales keeps its own choice
+        cats = {(a["app"], a["cat"]) for a in self.s.summary(1)["apps"]}
+        self.assertEqual(cats, {("WhatsApp", U.WORK), ("WhatsApp", U.PERSONAL)})
+        self.assertEqual(self.s.category_of("WhatsApp", "Sales"), U.WORK)
+        lst = {x["app"]: x for x in self.s.app_list()}
+        self.assertEqual(lst["WhatsApp"]["depts"], {"Sales": U.WORK})

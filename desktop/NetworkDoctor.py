@@ -56,7 +56,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.11.1"
+VERSION = "3.12.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -932,6 +932,7 @@ class App(tk.Tk):
         self.mon = M.Monitor(lan, self.gw, self.lip, self.threat, self.orgs)
         if self.usage:
             self.mon.traffic.sink = self.usage.add_flow
+            M.NAME_APP = self.usage.app_for
         self._feed_monitor()
         self.mon.start()
         self.ev_seen = 0
@@ -1124,7 +1125,7 @@ class App(tk.Tk):
                 app_c = Counter()
                 for n, ((remote, svc, proto, inbound), v) in enumerate(rem[:300]):
                     info = self.orgs.get(remote) if n < 5 else self.orgs.cache_peek(remote)
-                    app_c[M.classify(remote, svc, proto, info, inbound)[0]] += v[0] + v[1]
+                    app_c[M.classify(remote, svc, proto, info, inbound, ip)[0]] += v[0] + v[1]
                 main = app_c.most_common(1)[0][0] if app_c else ""
                 bad = [k for k, v in threats.items() if v[1] != "tor" and not v[2]]
                 risk = ("MALWARE: " + bad[0]) if bad else (sorted(risks)[0] if risks else "")

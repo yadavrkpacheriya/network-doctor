@@ -1,4 +1,14 @@
-## Network Doctor 3.11.1
+## Network Doctor 3.12.0
+
+**Apps told apart: WhatsApp, Instagram, Facebook, YouTube, Google Drive, Gmail and 126 more.**
+
+- **New app catalogue: 133 apps, 776 website addresses.** Each address goes to its own app - WhatsApp (whatsapp.net), Instagram (cdninstagram.com), Facebook, Messenger, YouTube (googlevideo.com), Google Drive, Gmail, Google Meet, Teams, Outlook, OneDrive, Indian OTT, games, shopping, GST / income tax / GeM portals, banks, Tally, Zoho, AI tools and more. Before, everything on Meta's servers showed as "Facebook".
+- **Usage > App list**: every app with its group (Social media, Messaging, Video, Office...), its category and its website addresses. Search, change the category, export to Excel.
+- **Category per department.** Example: WhatsApp *Productive* for Sales, *Neutral* for everyone else. Choose the department in "for" before pressing Productive / Neutral / Unproductive.
+- **Honest when unsure.** Google and Meta use some addresses for several apps (login and page servers). When the router cannot say which app a device used there, the traffic shows as "Google (shared address)" / "Meta (shared address)" instead of a guess. The big traffic (video, WhatsApp media, Instagram pictures) uses app-own addresses and is always named correctly. For exact per-user app names on every address, send all DNS through this PC: Tools > Network guard > "All DNS through this PC" with the website firewall running.
+- The Live monitor's "Main app" column uses the same catalogue.
+
+### Also in this version (first prepared as 3.11.1)
 
 - **Fixed: "Security validation failure: invalid originating onefile parent process (PID not found)" after an update.** The update itself was installed, but the restarted app stopped with this message; it had to be started by hand. The new copy is now started with a clean environment. The same applies to "Restart as Administrator".
 - **Fixed: "Apply router settings now" failed on RouterOS 6 with "expected end of command (line 10 column 118)".** A fallback for very old RouterOS used a word that 6.43+ and 7 do not know, and the router refuses a whole script when one word is unknown. If the router ever refuses a script again, the message shows the exact line.
