@@ -416,6 +416,9 @@ class BindingTab:
         ttk.Checkbutton(top, text="Strict mode: devices with a hand-typed IP cannot use the network",
                         variable=self.var_strict).pack(side="left", padx=10)
         ttk.Checkbutton(top, text="Block randomized MACs", variable=self.var_block).pack(side="left")
+        self.var_rebind = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="Moved devices: bind their NEW IP", variable=self.var_rebind).pack(side="left",
+                                                                                                  padx=(10, 0))
         ttk.Label(top, text="Bridge name:").pack(side="left", padx=(10, 2))
         self.var_bridge = tk.StringVar(value="bridge")
         ttk.Entry(top, textvariable=self.var_bridge, width=10).pack(side="left")
@@ -435,6 +438,7 @@ class BindingTab:
         ttk.Button(bar, text="Copy commands", command=lambda: self.copy(self.apply)).pack(side="left")
         ttk.Button(bar, text="Copy UNDO commands", command=lambda: self.copy(self.undo)).pack(side="left", padx=6)
         ttk.Button(bar, text="Save as .rsc file", command=self.save).pack(side="left")
+        ttk.Button(bar, text="Forget binding of selected", command=self.forget).pack(side="left", padx=6)
         self.var_sum = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.var_sum, foreground="#667085").pack(side="left", padx=10)
         self.txt = UI["text_box"](b)
@@ -444,6 +448,8 @@ class BindingTab:
     def refresh(self):
         app = self.app
         tags = T.tags_of(app.db)
+        with core.DB_LOCK:
+            binds = dict(app.db.get("bindings") or {})
         self.cands = T.binding_candidates(app.devices, app.issues, app.gw)
         tv = self.tv
         tv.delete(*tv.get_children())
@@ -456,12 +462,44 @@ class BindingTab:
             typ = app.ip_type_of(d)
             note = c["why"] or ("this PC - always bound (keeps your WinBox access in strict mode)" if d.get("self")
                                 else "manual IP: bind it, then switch the device to automatic" if "tatic" in typ else "")
+            b = binds.get(d["mac"])
+            if b and b.get("ip") and b["ip"] != d["ip"]:
+                user = self._ip_user(b["ip"], d["mac"])
+                note = (f"BOUND to {b['ip']} but now on {d['ip']}. " +
+                        (f"{b['ip']} is now used by {user} - tick 'Moved devices: bind their NEW IP'." if user else
+                         "Commands keep " + b["ip"] + " (paste them, then renew the device's IP), or tick 'Moved "
+                         "devices: bind their NEW IP'.")) + (" " + note if note else "")
+            elif b:
+                note = f"bound to {b['ip']} ({b.get('time', '')})" + (" - " + note if note else "")
             iid = tv.insert("", "end", values=("☑" if d["mac"] in self.checked and c["ok"] else ("☐" if c["ok"] else "—"),
                                                t.get("name") or d.get("name") or "-", t.get("dept", ""), d["ip"], d["mac"],
                                                typ, note), tags=() if c["ok"] else ("warning",))
             self.rows[iid] = c
         self.var_sum.set(f"{len(self.checked & {c['dev']['mac'] for c in self.cands if c['ok']})} of "
                          f"{sum(1 for c in self.cands if c['ok'])} bindable devices ticked")
+
+    def _ip_user(self, ip, mac):
+        """Name / MAC of another online device using ip, or ''."""
+        for d in self.app.devices:
+            if d.get("online") and d.get("mac") != mac and ip in (d.get("ips") or {d.get("ip")}):
+                return d.get("name") or d.get("mac") or ip
+        return ""
+
+    def forget(self):
+        sel = [self.rows[i]["dev"]["mac"] for i in self.tv.selection() if i in self.rows]
+        with core.DB_LOCK:
+            b = self.app.db.get("bindings") or {}
+            gone = [m for m in sel if m in b]
+            for m in gone:
+                del b[m]
+        if not gone:
+            messagebox.showinfo(APP, "Select (highlight) one or more bound devices in the list first.")
+            return
+        core.save_db(self.app.db)
+        self.refresh()
+        self.app.var_status.set(f"Forgot {len(gone)} binding(s). Network Doctor no longer warns about them. To also "
+                                "remove the reservation on the router, use 'Copy UNDO commands' or delete the lease "
+                                "in WinBox > IP > DHCP Server > Leases.")
 
     def toggle(self, ev):
         iid = self.tv.identify_row(ev.y)
@@ -484,6 +522,20 @@ class BindingTab:
 
     def make(self):
         rows = [c["dev"] for c in self.cands if c["ok"] and c["dev"]["mac"] in self.checked]
+        # A bound device that shows up on another IP keeps its reserved IP (that is what the warning asks for),
+        # unless the user chose to move the binding, or the reserved IP is now taken by another device.
+        with core.DB_LOCK:
+            binds = dict(self.app.db.get("bindings") or {})
+        kept = []
+        if not self.var_rebind.get():
+            out = []
+            for d in rows:
+                b = binds.get(d["mac"])
+                if b and b.get("ip") and b["ip"] != d["ip"] and not self._ip_user(b["ip"], d["mac"]):
+                    d = dict(d, ip=b["ip"])
+                    kept.append(d)
+                out.append(d)
+            rows = out
         if not rows:
             messagebox.showinfo(APP, "Tick at least one device.")
             return
@@ -512,7 +564,9 @@ class BindingTab:
         t.insert("end", self.undo)
         t.configure(state="disabled")
         self.var_sum.set(f"Commands for {len(rows)} devices ready - Copy and paste them in WinBox > New Terminal. "
-                         "Network Doctor will warn if a bound device later shows up on another IP.")
+                         "Network Doctor will warn if a bound device later shows up on another IP." +
+                         (f" {len(kept)} moved device(s) keep their reserved IP - renew their IP after pasting."
+                          if kept else ""))
 
     def copy(self, text):
         if not text:

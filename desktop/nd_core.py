@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.10.0"
+VERSION = "3.10.1"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 if getattr(sys, "frozen", False):
@@ -390,10 +390,90 @@ def ssdp_discover(lip, wait=4):
 
 
 def nonunicast_rx():
+    """Broadcast + multicast packets received (netstat -e 'Non-unicast'). Fallback only: see bcast_mcast_rx."""
     if not IS_WIN:
         return None
     m = re.search(r"Non-unicast packets\s+(\d+)\s+(\d+)", run(["netstat", "-e"], 10))
     return int(m.group(1)) if m else None
+
+
+# Broadcast and multicast counted separately. netstat's 'Non-unicast' adds them together, but multicast (CCTV / NVR
+# streams, mDNS, SSDP, IPv6, IPTV) is not a loop sign: on offices with cameras it alone passes the storm limit, and
+# the "unplug cables to find the loop" advice then never makes the warning go away.
+NU_PS = ("$b=0;$m=0;foreach($s in (Get-NetAdapterStatistics -ErrorAction SilentlyContinue)){"
+         "$b+=[uint64]$s.ReceivedBroadcastPackets;$m+=[uint64]$s.ReceivedMulticastPackets};\"$b $m\"")
+
+
+def bcast_mcast_rx():
+    """(broadcast, multicast) packets received on all adapters, or None when Windows cannot split them."""
+    if not IS_WIN:
+        return None
+    m = re.search(r"(\d+)\s+(\d+)", run(["powershell", "-NoProfile", "-NonInteractive", "-Command", NU_PS], 20))
+    if not m or (m.group(1) == "0" and m.group(2) == "0"):  # some drivers do not fill these counters
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def nu_snapshot():
+    """('split', broadcast, multicast) or ('sum', broadcast+multicast, None) or None."""
+    bm = bcast_mcast_rx()
+    if bm:
+        return ("split",) + bm
+    n = nonunicast_rx()
+    return ("sum", n, None) if n is not None else None
+
+
+def nu_rates(tests, s0, s1, secs):
+    """Fills tests['bcast_pps'] (+ 'mcast_pps', or 'bcast_mixed' when only the total was available)."""
+    if not s0 or not s1 or s0[0] != s1[0] or s1[1] < s0[1]:
+        return
+    secs = max(secs, 1)
+    tests["bcast_pps"] = round((s1[1] - s0[1]) / secs, 1)
+    if s0[0] == "split":
+        tests["mcast_pps"] = round(max(0, s1[2] - s0[2]) / secs, 1)
+    else:
+        tests["bcast_mixed"] = True
+
+
+class NuCounter:
+    """One hidden PowerShell that prints the broadcast / multicast counters every second (for the live monitor,
+    where starting PowerShell every 2 s would cost too much CPU)."""
+
+    def __init__(self):
+        self.val, self.t, self.p = None, 0.0, None
+
+    def start(self):
+        if not IS_WIN:
+            return
+        try:
+            self.p = subprocess.Popen(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "while($true){" + NU_PS + ";[Console]::Out.Flush();Start-Sleep -Seconds 1}"],
+                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+                creationflags=0x08000000)
+        except Exception:
+            self.p = None
+            return
+        threading.Thread(target=self._read, daemon=True, name="nu-counter").start()
+
+    def _read(self):
+        try:
+            for line in self.p.stdout:
+                m = re.match(r"\s*(\d+)\s+(\d+)", line)
+                if m and (m.group(1) != "0" or m.group(2) != "0"):
+                    self.val, self.t = (int(m.group(1)), int(m.group(2))), time.time()
+        except Exception:
+            pass
+
+    def read(self):
+        return self.val if self.val and time.time() - self.t < 5 else None
+
+    def stop(self):
+        try:
+            if self.p:
+                self.p.kill()
+        except Exception:
+            pass
 
 
 def gateway_monitor(gw, count, result):
@@ -780,13 +860,11 @@ def scan(subnet, opts, progress, stop):
     if gw:
         mon_t = threading.Thread(target=gateway_monitor, args=(gw, 30, mon), daemon=True)
         mon_t.start()
-    b0, t0 = nonunicast_rx(), time.time()
+    b0, t0 = nu_snapshot(), time.time()
     for _ in range(10):
         chk()
         time.sleep(0.5)
-    b1 = nonunicast_rx()
-    if b0 is not None and b1 is not None:
-        tests["bcast_pps"] = round((b1 - b0) / max(time.time() - t0, 1), 1)
+    nu_rates(tests, b0, nu_snapshot(), time.time() - t0)
 
     # 2. live sweep
     progress(8, f"Finding live devices in {net} (ARP + ping)...")
@@ -1061,7 +1139,8 @@ def analyse(raw, devices, db):
         if not d["mac"]:
             continue
         prev = db["ip_owner"].get(d["ip"])
-        if prev and prev["mac"] != d["mac"]:
+        # A phone that changes its private (randomized) MAC is the same phone, not another device taking the IP.
+        if prev and prev["mac"] != d["mac"] and not is_random_mac(prev["mac"]):
             prev_now = by_mac.get(prev["mac"])
             if prev_now is None or prev_now["ip"] == d["ip"]:
                 flips.append(f"{d['ip']}: was {prev['mac']} ({prev.get('name', '')}) on {prev['time']}, now {label_of(d)}")
@@ -1136,7 +1215,21 @@ def analyse(raw, devices, db):
     # ---- loops / storms / stability
     loop = False
     bp = t.get("bcast_pps")
-    if bp is not None:
+    mixed = bool(t.get("bcast_mixed"))
+    if bp is not None and mixed:
+        # Only the total of broadcast + multicast was available: a high value may be cameras, not a loop.
+        bad = bp > 300
+        if bad:
+            loop = loop or bp > 3000
+            add("critical" if bp > 3000 else "warning", f"Very high broadcast / multicast traffic ({bp}/second)",
+                "This PC receives hundreds of broadcast or multicast packets per second (Windows could not tell the two "
+                "apart here). Broadcasts point to a network loop; multicast usually comes from CCTV cameras / NVRs "
+                "streaming in multicast or from IPTV, copied to every port by switches without IGMP snooping.",
+                "1) Turn on IGMP snooping (MikroTik: /interface bridge set [find] igmp-snooping=yes) and set cameras / "
+                "NVR to unicast streaming, then re-scan. 2) If the number stays high, unplug switch-to-switch cables "
+                "one by one; when it drops, you found the loop.")
+        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} broadcast + multicast per second"))
+    elif bp is not None:
         bad = bp > 300
         if bad:
             loop = loop or bp > 1000
@@ -1145,7 +1238,17 @@ def analyse(raw, devices, db):
                 "connecting a switch back to itself or two switches linked twice) or a faulty device.",
                 "Unplug switch-to-switch cables one by one and re-scan; when the number drops, you found the loop. "
                 "Use switches with loop protection / STP.")
-        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} per second received"))
+        checks.append(("Broadcast level", "fail" if bad else "pass", f"{bp} broadcasts per second received"))
+    mp = t.get("mcast_pps")
+    if mp is not None:
+        bad = mp > 1000
+        if bad:
+            add("warning", f"Very high multicast traffic ({mp}/second)",
+                "Not a loop. Multicast this high usually comes from CCTV cameras / an NVR streaming in multicast, or "
+                "IPTV. Switches without IGMP snooping copy it to every port, which slows Wi-Fi, old PCs and printers.",
+                "Set the cameras / NVR to unicast streaming (or turn multicast off). Turn on IGMP snooping: MikroTik "
+                "/interface bridge set [find] igmp-snooping=yes, and on managed switches. Then re-scan.")
+        checks.append(("Multicast level", "warn" if bad else "pass", f"{mp} per second received (cameras, mDNS, IPv6)"))
     g = t.get("gw_ping") or {}
     if g.get("loss") is not None:
         bad = g["loss"] >= 5 or (g.get("avg") or 0) > 30 or (g.get("max") or 0) > 300
@@ -1337,7 +1440,7 @@ def local_lease_seconds(lip):
 # ==========================================================================
 # quick health check (runs every few minutes between full scans)
 # ==========================================================================
-QUICK_TITLES = re.compile(r"conflict|rogue dhcp|dhcp is given|broadcast|loop|unstable|duplicate replies|extra router",
+QUICK_TITLES = re.compile(r"conflict|rogue dhcp|dhcp is given|broadcast|multicast|loop|unstable|duplicate replies|extra router",
                           re.I)
 
 
@@ -1367,13 +1470,11 @@ def quick_check(subnet, known_ips, opts, stop=None):
         mon_t = threading.Thread(target=gateway_monitor, args=(gw, 12, mon), daemon=True)
         mon_t.start()
     # broadcast level over 6 s (loop / storm)
-    b0, t0 = nonunicast_rx(), time.time()
+    b0, t0 = nu_snapshot(), time.time()
     for _ in range(12):
         chk()
         time.sleep(0.5)
-    b1 = nonunicast_rx()
-    if b0 is not None and b1 is not None and b1 >= b0:
-        tests["bcast_pps"] = round((b1 - b0) / max(time.time() - t0, 1), 1)
+    nu_rates(tests, b0, nu_snapshot(), time.time() - t0)
     # IP conflicts on the known devices
     ips = [ip for ip in known_ips if ip and ip != lip]
     try:

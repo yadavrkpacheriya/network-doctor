@@ -478,14 +478,18 @@ def binding_issues(devices, db):
             for ip in d.get("ips") or [d.get("ip")]:
                 by_ip.setdefault(ip, []).append(d)
     for mac, b in binds.items():
-        name = tags.get(mac, {}).get("name") or mac
         me = next((d for d in devices if d.get("mac") == mac and d.get("online")), None)
+        name = tags.get(mac, {}).get("name") or (me or {}).get("name") or mac
         if me and me.get("ip") != b["ip"] and b["ip"] not in (me.get("ips") or []):
             out.append({"sev": "warning", "title": f"Bound device {name} is on {me['ip']} instead of {b['ip']}",
                         "detail": "Its IP was reserved on the router, but the device uses another address. Either the "
-                                  "binding commands were not pasted yet, or the device has a hand-typed IP.",
-                        "fix": "Paste the binding commands from the IP-MAC binding tab, then set the device to "
-                               "automatic (DHCP) and renew its IP (PC fix script or 'ipconfig /renew').",
+                                  "binding commands were not pasted (or were pasted on another router), or the device "
+                                  "has a hand-typed IP, or it has not renewed its IP since.",
+                        "fix": f"Keep {b['ip']}: IP-MAC binding tab > tick it > Make router commands (they keep "
+                               f"{b['ip']}) > paste in WinBox, then set the device to automatic (DHCP) and renew its "
+                               f"IP ('ipconfig /renew', or unplug / re-plug it). Want {me['ip']} instead: tick "
+                               "'Moved devices: bind their NEW IP' before Make router commands. Not needed any more: "
+                               "select it and 'Forget binding of selected'.",
                         "items": [f"{name} / {mac}: reserved {b['ip']}, now {me['ip']}"]})
         for other in by_ip.get(b["ip"], []):
             if other.get("mac") and other["mac"] != mac:

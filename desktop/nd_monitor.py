@@ -816,6 +816,9 @@ class Monitor:
         self.lease_time = None
         self.self_mac = None  # this PC: its own DHCP test requests are not reported as problems
         self.neighbors = {}   # MikroTik switches / APs / routers announcing themselves (MNDP): mac -> info
+        self.nu = None                           # broadcast / multicast counter (Windows)
+        self.mcast_total = self.mcast_pps = None
+        self.bcast_mixed = False                 # True when only broadcast + multicast together is known
 
     # ---- events
     def event(self, sev, source, text, kind=None, data=None):
@@ -852,6 +855,8 @@ class Monitor:
         for rx in (getattr(self, "rx_flow", None), getattr(self, "rx_log", None), getattr(self, "rx_mndp", None)):
             if rx:
                 rx.stop()
+        if self.nu:
+            self.nu.stop()
         self.event("info", "Monitor", "Live monitor stopped")
 
     # ---- receivers
@@ -912,9 +917,25 @@ class Monitor:
             self.event(sev, f"Router {addr}", short[:220], kind, d)
 
     # ---- local sampler (every 2 s)
+    def _read_nu(self):
+        """(source, broadcast count): broadcast only when Windows can split it from multicast."""
+        bm = self.nu.read() if self.nu else None
+        if bm:
+            self.mcast_total = bm[1]
+            return "split", bm[0]
+        n = core.nonunicast_rx()
+        return ("sum", n) if n is not None else (None, None)
+
     def _sampler(self):
-        prev = core.nonunicast_rx()
+        self.nu = core.NuCounter()
+        self.nu.start()
+        for _ in range(6):  # give the counter process time to print its first line
+            if not self.running or self.nu.read() or not core.IS_WIN:
+                break
+            time.sleep(0.5)
+        src, prev = self._read_nu()
         prev_t = time.time()
+        prev_m = self.mcast_total
         fails = hi = 0
         last_echo = 0
         while self.running:
@@ -926,12 +947,15 @@ class Monitor:
                 m = re.search(r"time[=<]\s*([\d.]+)", out)
                 if m and re.search(r"ttl", out, re.I):
                     ms = float(m.group(1))
-            cur = core.nonunicast_rx()
+            src_now, cur = self._read_nu()
             now = time.time()
             pps = None
-            if cur is not None and prev is not None and cur >= prev:
+            if cur is not None and prev is not None and cur >= prev and src_now == src:
                 pps = (cur - prev) / max(now - prev_t, 0.5)
-            prev, prev_t = cur, now
+                self.bcast_mixed = src_now == "sum"
+                if src_now == "split" and prev_m is not None and self.mcast_total is not None:
+                    self.mcast_pps = max(0, self.mcast_total - prev_m) / max(now - prev_t, 0.5)
+            src, prev, prev_t, prev_m = src_now, cur, now, self.mcast_total
             with self.lock:
                 if pps is None and self.bcast_windows and now - self.bcast_windows[-1][0] < 5:
                     pps = self.bcast_windows[-1][1] / 2.0
@@ -942,9 +966,10 @@ class Monitor:
                     self._state["storm"] = True
                     top = self.top_broadcasters(10)
                     tops = ", ".join(f"{m} ({n})" for m, n in top[:3])
+                    what = "broadcasts + multicast/s (Windows cannot split them here)" if self.bcast_mixed else "broadcasts/s"
                     self.event("critical" if pps > 1000 else "warning", "Monitor",
-                               f"Broadcast storm: {pps:.0f} broadcasts/s" + (f" - top senders {tops}" if tops else ""),
-                               "storm", {"pps": pps, "top": top})
+                               f"Broadcast storm: {pps:.0f} {what}" + (f" - top senders {tops}" if tops else ""),
+                               "storm", {"pps": pps, "top": top, "mixed": self.bcast_mixed})
                 elif hi == 0 and self._state["storm"] and pps < STORM_PPS / 2:
                     self._state["storm"] = False
                     self.event("info", "Monitor", f"Broadcast level back to normal ({pps:.0f}/s)", "storm_end")
@@ -997,7 +1022,7 @@ class Monitor:
                             if tok in raw:
                                 self.echo_tokens[tok] += 1
                         return
-                    if dst == "ff:ff:ff:ff:ff:ff" or (dst and int(dst[0:2], 16) & 1):
+                    if dst == "ff:ff:ff:ff:ff:ff":
                         win[src] += 1
                     if STP is not None and p.haslayer(STP) and (int(p[STP].bpduflags or 0) & 0x01):
                         self.counts["stp_tc_seen"] += 1
@@ -1123,7 +1148,8 @@ class Monitor:
         loss = (100 * (len(g) - len(ok)) / len(g)) if g else 0
         pps = g[-1][1] if g and g[-1][1] is not None else None
         return {"flows": st(self.last_flow, self.flow_rx), "syslog": st(self.last_syslog, self.syslog_rx),
-                "sniffer": self.sniffer_state, "bcast": pps, "gw": bool(self.gw),
+                "sniffer": self.sniffer_state, "bcast": pps, "mcast": self.mcast_pps, "bcast_mixed": self.bcast_mixed,
+                "gw": bool(self.gw),
                 "gw_avg": (sum(ok) / len(ok)) if ok else None, "gw_max": max(ok) if ok else None, "gw_loss": loss,
                 "runtime": int(now - self.started) if self.started else 0}
 
@@ -1374,11 +1400,7 @@ def rca_network(mon, devices, issues, db):
     if not mon or not mon.running:
         missing.append("Live Monitor is not running. Start it and leave it running until the problem happens again.")
     else:
-        if not mon.last_syslog:
-            missing.append("Router log is not arriving - port up/down (e.g. ether2) can only be seen with it. "
-                           "See Setup tab (one-time router setting).")
-        if not mon.last_flow:
-            missing.append("Traffic data (NetFlow) is not arriving - per-device bandwidth needs it. See Setup tab.")
+        missing += feed_notes(mon, (db or {}).get("feeds_seen") or {})
         if mon.sniffer_state != "running":
             missing.append("Packet sniffer is off - install Npcap and build with Scapy for the loop echo test and "
                            "the list of devices sending broadcasts.")
@@ -1387,6 +1409,47 @@ def rca_network(mon, devices, issues, db):
                            "need time to show up.")
     finds.sort(key=lambda f: -f["score"])
     return finds, missing
+
+
+def feed_notes(mon, seen, now=None):
+    """What to tell the user about the router log and NetFlow feeds. seen = {"syslog"/"flow": {"ts", "lip"}} from
+    earlier runs, so a router that is set up but quiet is not reported as missing, and a changed PC IP is named."""
+    now = now or time.time()
+    out = []
+    ran = now - mon.started if mon.started else 0
+    fw = ("Setup > Allow in Windows Firewall (Network Doctor running as Administrator)" if core.IS_WIN else
+          "allow UDP {port} in this computer's firewall")
+    for key, label, last, port, rx, need in (
+            ("syslog", "Router log", mon.last_syslog, mon.syslog_port, getattr(mon, "rx_log", None),
+             "port up/down (e.g. ether2) can only be seen with it"),
+            ("flow", "Traffic data (NetFlow)", mon.last_flow, mon.flow_port, getattr(mon, "rx_flow", None),
+             "per-device bandwidth needs it")):
+        if rx is not None and getattr(rx, "error", None):
+            out.append(f"{label} cannot be received: {rx.error}. Close the other program that uses UDP {port} "
+                       "(another copy of Network Doctor, a syslog server), then restart Network Doctor.")
+            continue
+        h = seen.get(key) or {}
+        if h.get("lip") and mon.lip and h["lip"] != mon.lip and (not last or now - last > 300):
+            out.append(f"{label} stopped arriving because this PC's IP changed from {h['lip']} to {mon.lip}; the "
+                       "router still sends to the old IP. Setup > Copy router commands and paste them in WinBox "
+                       "again, and bind this PC's IP in the IP-MAC binding tab so it does not change again.")
+            continue
+        newest = max(last or 0, h.get("ts") or 0)
+        if newest:
+            # The router only logs when something happens, so a quiet log is normal for days.
+            # NetFlow arrives every minute while there is any traffic.
+            if now - newest < (7 * 86400 if key == "syslog" else 300):
+                continue
+            when = time.strftime("%d %b %H:%M", time.localtime(newest))
+            out.append(f"{label} stopped arriving (last received {when}). Check the router still sends to "
+                       f"{mon.lip} UDP {port} and {fw.format(port=port)}.")
+            continue
+        if ran < 120:
+            continue  # give the router two minutes after the monitor starts
+        out.append(f"{label} is not arriving - {need}. On the router: Setup > Copy router commands, paste them in "
+                   f"WinBox (they send to {mon.lip} UDP {port}). Already done? Then {fw.format(port=port)}, and "
+                   "check this PC still has that IP.")
+    return out
 
 
 # ==========================================================================
@@ -1496,13 +1559,18 @@ def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan
     return f"""# One-time setting on the MikroTik (WinBox > New Terminal). The router only SENDS data to this PC;
 # Network Doctor never logs in to it. Any NetFlow/syslog capable router or managed switch works the same way.
 
+# Safe to paste again (for example after this PC got a new IP): the old Network Doctor settings are replaced.
+# Keep this PC on a fixed IP (IP-MAC binding tab ticks it for you), otherwise the router keeps sending to the old IP.
+
 # 1) Traffic data per device (bandwidth, apps, dangerous sites)
 /ip traffic-flow set enabled=yes interfaces=all active-flow-timeout=1m inactive-flow-timeout=15s
-/ip traffic-flow target add dst-address={lip} port={flow_port} version=9
-#    older RouterOS:  /ip traffic-flow target add address={lip}:{flow_port} version=9
+:do {{/ip traffic-flow target remove [find where port={flow_port}]}} on-error={{}}
+:do {{/ip traffic-flow target add dst-address={lip} port={flow_port} version=9}} on-error={{/ip traffic-flow target add address={lip}:{flow_port} version=9}}
 #    if bandwidth ever looks doubled:  /ip traffic-flow set interfaces=bridge,{wan}
 
 # 2) Router log (port up/down such as ether2, loops, DHCP vs static, IP conflicts, password attacks)
+:do {{/system logging remove [find where action=netdoctor]}} on-error={{}}
+:do {{/system logging action remove [find where name=netdoctor]}} on-error={{}}
 /system logging action add name=netdoctor target=remote remote={lip} remote-port={syslog_port}
 /system logging add topics=interface action=netdoctor
 /system logging add topics=dhcp action=netdoctor
@@ -1511,6 +1579,8 @@ def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan
 /system logging add topics=error action=netdoctor
 /system logging add topics=warning action=netdoctor
 /system logging add topics=account action=netdoctor
+# test message - Network Doctor shows "Router log: receiving" within a few seconds if everything is right
+:log warning "Network Doctor router log test"
 
 # 3) Recommended loop protection. {wan} is assumed to be the INTERNET port - change it if yours is different.
 #    Do this outside busy hours: switching the bridge to RSTP pauses the LAN for 2-3 seconds.

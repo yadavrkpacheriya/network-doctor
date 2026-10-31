@@ -54,7 +54,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.10.0"
+VERSION = "3.10.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -770,8 +770,8 @@ class App(tk.Tk):
     def start_monitor(self):
         if self.mon and self.mon.running:
             return
-        if core.IS_WIN and core.is_admin():
-            self.firewall(quiet=True)
+        if core.IS_WIN and core.is_admin():  # in the background: netsh + PowerShell take a few seconds
+            threading.Thread(target=self.firewall, kwargs={"quiet": True}, daemon=True).start()
         try:
             lan = str(ipaddress.ip_network(self.var_net.get().strip(), strict=False))
         except ValueError:
@@ -823,18 +823,34 @@ class App(tk.Tk):
             pass
         self.after(2000, self._tick)
 
+    def _note_feeds(self, mon):
+        """Remembers that the router log / NetFlow arrived (and at which PC IP), at most every 10 minutes."""
+        changed = False
+        with core.DB_LOCK:
+            seen = self.db.setdefault("feeds_seen", {})
+            for k, last in (("syslog", mon.last_syslog), ("flow", mon.last_flow)):
+                h = seen.get(k) or {}
+                if last and (last - h.get("ts", 0) > 600 or h.get("lip") != mon.lip):
+                    seen[k] = {"ts": last, "lip": mon.lip}
+                    changed = True
+        if changed:
+            core.save_db(self.db)
+
     def _tick_once(self):
         mon = self.mon
         if not mon:
             return
         fs = mon.feed_status()
+        self._note_feeds(mon)
         self.mon_labels["flows"].set(fs["flows"])
         self.mon_labels["syslog"].set(fs["syslog"])
         self.mon_labels["sniffer"].set(fs["sniffer"])
         b = f"{fs['bcast']:.0f}" if fs["bcast"] is not None else "?"
         g = (f"{fs['gw_avg']:.0f} ms avg, {fs['gw_max']:.0f} max" if fs["gw_avg"] is not None else
              "not answering" if fs["gw"] else "no router found")
-        self.mon_labels["health"].set(f"broadcasts {b}/s  |  router {g}, loss {fs['gw_loss']:.0f}%")
+        mc = f"  |  multicast {fs['mcast']:.0f}/s" if fs.get("mcast") is not None else ""
+        bl = "broadcast+multicast" if fs.get("bcast_mixed") else "broadcasts"
+        self.mon_labels["health"].set(f"{bl} {b}/s{mc}  |  router {g}, loss {fs['gw_loss']:.0f}%")
         rt = fs["runtime"]
         self.var_mon.set(f"Live monitor: {'ON' if mon.running else 'stopped'} {rt // 3600}h{rt % 3600 // 60:02d}m"
                          + (f" | {fs['bcast']:.0f} bc/s" if fs["bcast"] is not None else ""))
@@ -1318,18 +1334,29 @@ class App(tk.Tk):
             if not quiet:
                 messagebox.showinfo(APP, "Restart as Administrator first (button at top right).")
             return
+        # Always re-create the rules, so ports added in newer versions are included.
         name = "Network Doctor receivers"
-        if name not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"], 10):
-            core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in", "action=allow",
-                      "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT},5678,8788"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=in", "action=allow",
+                  "protocol=UDP", f"localport={M.FLOW_PORT},{M.SYSLOG_PORT},5678,8788", "profile=any"], 10)
         tname = "Network Doctor LAN (phone link, PC reports, speed test)"
-        if tname not in core.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={tname}"], 10):
-            core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={tname}", "dir=in", "action=allow",
-                      "protocol=TCP", f"localport=8787,{NT.LAN_PORT}", "remoteip=localsubnet"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={tname}"], 10)
+        core.run(["netsh", "advfirewall", "firewall", "add", "rule", f"name={tname}", "dir=in", "action=allow",
+                  "protocol=TCP", f"localport=8787,{NT.LAN_PORT}", "remoteip=localsubnet", "profile=any"], 10)
+        # Clicking Cancel in Windows' "allow this app" prompt silently adds BLOCK rules for the exe. A block rule
+        # wins over every allow rule, so the router log / NetFlow / phone link never arrive. Remove those.
+        exe = sys.executable.replace("'", "''")
+        removed = core.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            f"$r=Get-NetFirewallApplicationFilter -Program '{exe}' -ErrorAction SilentlyContinue | "
+                            "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+                            "Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'}; "
+                            "$n=@($r).Count; if($n){$r | Remove-NetFirewallRule}; $n"], 30).strip()
         if not quiet:
+            extra = (f"\n\nAlso removed {removed} Windows rule(s) that were BLOCKING Network Doctor (created when "
+                     "Windows asked to allow the app and Cancel was clicked)." if removed.isdigit() and int(removed) else "")
             messagebox.showinfo(APP, f"Windows Firewall now allows the router feeds (UDP {M.FLOW_PORT}, {M.SYSLOG_PORT}) "
                                      f"and, from the office network only, the phone link / PC reports / LAN speed test "
-                                     f"(TCP 8787, {NT.LAN_PORT}).")
+                                     f"(TCP 8787, {NT.LAN_PORT})." + extra)
 
     def forget_offline(self):
         off = [d["mac"] for d in self.devices if not d["online"] and d["mac"]]

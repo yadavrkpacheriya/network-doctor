@@ -1,3 +1,16 @@
+## Network Doctor 3.10.1
+
+**Warnings that did not go away after following their advice are fixed.**
+
+- **Broadcast storm / loop warnings caused by cameras.** Windows' counter added broadcast and multicast together, so CCTV / NVR streams, mDNS and IPv6 traffic were reported as a "broadcast storm (probable loop)" - and unplugging cables never fixed it. Network Doctor now counts broadcasts and multicast separately. A loop is only suspected for real broadcasts; heavy multicast gets its own warning with the fix that works (IGMP snooping, cameras on unicast).
+- **"Router log / NetFlow is not arriving".**
+  - The router commands can now be pasted again safely (before, a second paste failed and the router kept sending to the old PC IP). They end with a test message, so the Live monitor shows "receiving" within seconds.
+  - If this PC's IP changed, the note now says so and what to do.
+  - A router that is set up but has had nothing to log is no longer reported as missing.
+  - **Allow in Windows Firewall** also removes the hidden rules Windows adds when "Cancel" is clicked in its "allow this app" prompt - those blocked the router data even with the allow rule in place.
+- **"Bound device ... is on IP X instead of Y".** The IP-MAC binding tab shows which devices moved and keeps their reserved IP when you make the commands again. New: **Moved devices: bind their NEW IP** and **Forget binding of selected**. The warning shows the device name instead of only its MAC.
+- **"IP address now used by a different device"** no longer counts phones that changed their private (randomized) MAC.
+
 ## Network Doctor 3.10.0
 
 **Updates now install by themselves.**
