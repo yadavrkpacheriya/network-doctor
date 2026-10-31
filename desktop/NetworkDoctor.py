@@ -61,7 +61,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.18.1"
+VERSION = "3.18.2"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1144,14 +1144,19 @@ class App(tk.Tk):
         rt = fs["runtime"]
         self.var_mon.set(f"Live monitor: {'ON' if mon.running else 'stopped'} {rt // 3600}h{rt % 3600 // 60:02d}m"
                          + (f" | {fs['bcast']:.0f} bc/s" if fs["bcast"] is not None else ""))
-        # events
-        for e in mon.events_since(self.ev_seen):
+        # events - capped per tick so an event storm (broadcast loop, ARP flood) cannot freeze the UI;
+        # any backlog is drained on a follow-up that lets Tk process clicks/repaints in between.
+        EV_PER_TICK = 150
+        evs = mon.events_since(self.ev_seen)
+        for e in evs[:EV_PER_TICK]:
             self.ev_seen = e["seq"]
             if e["sev"] == "debug":
                 continue
             self.te.insert("", 0, text=M.tstr(e["t"]), values=(e["sev"].upper(), e["src"], e["text"]),
                            tags=(e["sev"],))
             self._event_alert(e)
+        if len(evs) > EV_PER_TICK:
+            self.after(1, lambda: self._tick_once() if self.mon else None)
         kids = self.te.get_children()
         if len(kids) > 1500:
             self.te.delete(*kids[1500:])
@@ -1948,13 +1953,35 @@ class App(tk.Tk):
         """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""
         try:
             e = self.alert_log.add(sev, text, source, self.lip, self.gw)
-            self.alert_log.save()
-            self._refresh_alerts()
+            self._alerts_touched()  # debounced save + UI refresh: a burst saves/refreshes once, not per event
             self._auto_fix(e)
             if core.IS_PRO and getattr(self, "defense", None):
                 self._defense_consider(e)
         except Exception:
             pass
+
+    def _alerts_touched(self):
+        """Mark the alert log changed and flush (save to disk + rebuild the Alerts tab) once, shortly
+        after. Doing this per event during a storm rebuilt the whole Alerts tab hundreds of times and
+        froze the UI (the alert window stopped responding)."""
+        if threading.current_thread() is not threading.main_thread():
+            self.q.put(("call", self._alerts_touched))
+            return
+        self._alerts_dirty = True
+        if not getattr(self, "_alerts_flush_pending", False):
+            self._alerts_flush_pending = True
+            self.after(400, self._flush_alerts)
+
+    def _flush_alerts(self):
+        self._alerts_flush_pending = False
+        if not getattr(self, "_alerts_dirty", False):
+            return
+        self._alerts_dirty = False
+        try:
+            self.alert_log.save()
+        except Exception:
+            pass
+        self._refresh_alerts()
 
     AUTO_FIX_AFTER = 5
 
@@ -2065,8 +2092,7 @@ class App(tk.Tk):
         """Log an alert WITHOUT re-running the defense engine (avoids a loop)."""
         try:
             self.alert_log.add(sev, text, source, self.lip, self.gw)
-            self.alert_log.save()
-            self._refresh_alerts()
+            self._alerts_touched()  # debounced save + refresh (see _record_alert)
         except Exception:
             pass
 
