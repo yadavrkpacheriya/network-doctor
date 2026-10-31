@@ -187,7 +187,7 @@ void main() {
       await tester.pumpWidget(wrap(UsageTab(s: snap, onRefresh: noop)));
       expect(find.text('YouTube'), findsWidgets);
       expect(find.text('38%'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Busiest hours: 15:00'), 300);
+      await tester.scrollUntilVisible(find.text('Busiest hours: 15:00'), 300, scrollable: find.byType(Scrollable).first);
       expect(find.text('Busiest hours: 15:00'), findsOneWidget);
       await tester.tap(find.text('7 days'));
       await tester.pump();
