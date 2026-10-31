@@ -126,6 +126,39 @@ class PcLink {
     return ((jsonDecode(r.body) as Map)['result'] ?? '').toString();
   }
 
+  /// The PC the dashboard is showing (device pages use it for the "Office PC actions").
+  static PairedPc? current;
+  static int apiLevel = 1;
+
+  /// Runs an action on the PC (tag, bind, block, fix an alert, ping, slow-site check...).
+  /// Answers {ok, message} or {ok, job} for long work (see [waitJob]).
+  static Future<Map<String, dynamic>> action(PairedPc pc, String action, [Map<String, dynamic> args = const {}]) async {
+    final r = await _send(
+        () => http.post(pc.uri('/api/action'),
+            headers: {'X-ND-Token': pc.token, 'Content-Type': 'application/json'},
+            body: jsonEncode({'action': action, 'args': args})),
+        'reach the PC');
+    if (r.statusCode == 404) {
+      throw PcError('The PC app is too old for this - update Network Doctor on the PC (3.16 or newer).');
+    }
+    if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
+    if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
+    return Map<String, dynamic>.from(jsonDecode(utf8.decode(r.bodyBytes)) as Map);
+  }
+
+  /// Polls a background job on the PC until it is finished (or [limit] passes).
+  static Future<Map<String, dynamic>> waitJob(PairedPc pc, String id,
+      {Duration limit = const Duration(minutes: 3), void Function(Map<String, dynamic>)? onTick}) async {
+    final end = DateTime.now().add(limit);
+    while (DateTime.now().isBefore(end)) {
+      final j = await action(pc, 'job', {'id': id});
+      onTick?.call(j);
+      if (j['done'] == true || j['ok'] == false && j['message'] != null) return j;
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    return {'done': true, 'ok': false, 'text': 'The PC is still working on it - look again in a minute.'};
+  }
+
   static Future<http.Response> _send(Future<http.Response> Function() f, String what) async {
     try {
       return await f().timeout(const Duration(seconds: 8));

@@ -1,3 +1,19 @@
+## Network Doctor 3.16.0
+
+**The phone app can now do what the PC does.** Phone app 1.6.0 with PC 3.16.0:
+
+- **Alerts** on the phone: open / all, priority, time, how often. Tap one for **Troubleshoot**: what it means, the fix, **Fix it automatically** (the PC applies it on the router), tick-off steps, Re-check and Mark fixed.
+- **Network map**: router → ports / switches / access points → devices, problems in red / orange; many devices on one port as a compact grid.
+- **Health**: the PC's health checks, watched devices and **Check now**.
+- **Tools & commands**:
+  - **Slow website?** Pick the user (type a name, IP or MAC) and the website; the PC finds the cause.
+  - **Ping / traceroute from the PC.**
+  - **Network guard**: block torrents, all DNS through the router, block rogue DHCP, block randomized MACs.
+  - **Router commands**: run any library command on the router; the phone asks for the IP / port / speed it needs and asks before changing anything.
+  - **Other brands, antivirus, drivers**: the whole command library to copy.
+- **Device page → Office PC actions**: Tag (name, department, location), Ping and Traceroute from the PC, **Bind IP**, **Block internet** / Unblock, **Wake (WOL)**.
+- Safe by design: only a phone paired with the PC's 6-digit code can act, only on the office LAN; the router login never leaves the PC; every change on the router asks first on the phone and is written to the PC's health log.
+
 ## Network Doctor 3.15.0
 
 **Every device has a name, readable website names, filters in Usage, a map in rows, and repeated alerts fix themselves.**

@@ -16,6 +16,9 @@ Endpoints (port 8787):
   POST /api/pair   {"code","phone"}-> {"token"}
   GET  /api/state                  -> full snapshot           (header X-ND-Token)
   POST /api/scan                   -> starts a scan on the PC (header X-ND-Token)
+  POST /api/action {"action","args"} -> runs an action on the PC (tag, bind, block, fix an alert, ping, slow-site
+                                     check, router command...) and answers {"ok","message"} or {"job": id}
+                                     (poll with action "job"; header X-ND-Token)
   POST /api/report                 -> a PC fix script reports its name / MACs (header X-ND-Report)
 """
 
@@ -31,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HTTP_PORT = 8787
 DISCOVERY_PORT = 8788
 DISCOVER_MSG = b"NETWORK-DOCTOR-DISCOVER"
-API_VERSION = 1
+API_VERSION = 2  # 2: /api/action (the phone can act, not only look)
 
 
 def _lan_only(ip):
@@ -185,6 +188,19 @@ class ShareServer:
                 return self._send(h, 200, snap)
             if path == "/api/scan" and method == "POST":
                 return self._send(h, 200, {"result": self.command_fn("scan")})
+            if path == "/api/action" and method == "POST":
+                try:
+                    n = int(h.headers.get("Content-Length", "0"))
+                    req = json.loads(h.rfile.read(min(n, 16384)).decode("utf-8") or "{}")
+                    if not isinstance(req, dict):
+                        raise ValueError
+                except Exception:
+                    return self._send(h, 400, {"error": "bad request"})
+                res = self.command_fn(str(req.get("action", "")), req.get("args") or {})
+                if not isinstance(res, dict):
+                    res = {"ok": True, "message": str(res)}
+                self._cache = (0, None)  # the next /api/state shows the change
+                return self._send(h, 200, res)
             return self._send(h, 404, {"error": "unknown request"})
         except Exception as e:
             return self._send(h, 500, {"error": f"{type(e).__name__}: {e}"})

@@ -8,6 +8,7 @@ import 'package:network_doctor/net/snmp.dart' as snmp;
 import 'package:network_doctor/net/tools.dart';
 import 'package:network_doctor/net/update.dart';
 import 'package:network_doctor/screens/about_screen.dart';
+import 'package:network_doctor/screens/pc_actions.dart';
 import 'package:network_doctor/screens/pc_more.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -203,6 +204,62 @@ void main() {
       await tester.tap(find.text('SALES-PC'));
       await tester.pumpAndSettle();
       expect(find.byWidgetPredicate((w) => w is SelectableText && w.data == 'OptiPlex 7090'), findsOneWidget);
+    });
+  });
+
+  group('Office PC actions', () {
+    Widget wrap(Widget w) => MaterialApp(home: Scaffold(body: w));
+    final snap = <String, dynamic>{
+      'alerts': [
+        {
+          'id': '1', 't': 1790000000, 'prio': 2, 'prio_text': 'P2 - fix today', 'status': 'open', 'count': 5,
+          'text': 'conflict by ARP response for 192.168.0.70', 'title': 'IP 192.168.0.70 is typed by hand',
+          'why': 'Static IP inside the DHCP range', 'fix': 'Reserve the IP',
+          'steps': ['Press Reserve', 'Re-check'], 'fixes': ['Reserve 192.168.0.70 for this device'], 'pc_fixes': [],
+        },
+        {'id': '2', 't': 1790000000, 'prio': 3, 'prio_text': 'P3', 'status': 'fixed', 'text': 'old', 'fix': 'x'},
+      ],
+      'map': {
+        'label': 'Internet', 'children': [
+          {'label': 'Router', 'kind': 'router', 'sub': '192.168.0.1', 'children': [
+            {'label': 'ether2', 'kind': 'port', 'children': [
+              for (var i = 0; i < 8; i++) {'label': 'Camera .$i', 'sub': '192.168.0.$i', 'children': []},
+            ]},
+          ]},
+        ],
+      },
+      'checks': [
+        {'name': 'DHCP', 'result': 'OK - router gives IPs', 'detail': 'fine'},
+      ],
+      'devices': [],
+      'commands': [
+        {'i': 0, 'group': 'MikroTik router', 'where': 'Router', 'name': 'DHCP leases', 'cmd': '/ip dhcp-server lease print', 'use': ''},
+      ],
+    };
+
+    testWidgets('alerts list opens troubleshoot with steps and fix button', (tester) async {
+      await tester.pumpWidget(wrap(AlertsTab(s: snap, onRefresh: () async {})));
+      expect(find.text('IP 192.168.0.70 is typed by hand'), findsOneWidget);
+      expect(find.text('old'), findsNothing); // fixed alerts hidden under "Open"
+      await tester.tap(find.text('IP 192.168.0.70 is typed by hand'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reserve 192.168.0.70 for this device'), findsOneWidget);
+      expect(find.text('1. Press Reserve'), findsOneWidget);
+    });
+
+    testWidgets('map shows router, port and a device grid', (tester) async {
+      await tester.pumpWidget(wrap(MapTab(s: snap, onRefresh: () async {})));
+      expect(find.text('Router'), findsOneWidget);
+      await tester.tap(find.text('ether2'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Camera .3'), findsOneWidget);
+    });
+
+    testWidgets('health and tools build', (tester) async {
+      await tester.pumpWidget(wrap(HealthTab(s: snap, onRefresh: () async {})));
+      expect(find.text('DHCP'), findsOneWidget);
+      await tester.pumpWidget(wrap(PcToolsTab(s: snap)));
+      expect(find.text('Slow website? Find the cause'), findsOneWidget);
     });
   });
 
