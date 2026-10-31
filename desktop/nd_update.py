@@ -25,7 +25,7 @@ import urllib.request
 REPO = "yadavrkpacheriya/network-doctor"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
-SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py"]
+SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py", "nd_routeros.py", "nd_usage.py"]
 UA = {"User-Agent": "NetworkDoctor-updater", "Accept": "application/vnd.github+json"}
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
@@ -58,6 +58,11 @@ def check(current_version, timeout=15):
             raise UpdateError("GitHub is limiting requests right now - try again in an hour.")
         raise UpdateError(f"GitHub answered {e.code}.")
     except Exception as e:
+        if "getaddrinfo" in str(e) or "11001" in str(e) or "Name or service" in str(e):
+            raise UpdateError("Could not reach GitHub: this PC cannot look up internet names (DNS), and the public "
+                              "DNS servers 1.1.1.1 / 8.8.8.8 did not answer either. Check that this PC has internet "
+                              "and that its DNS server (ipconfig /all) is the office router - a second Wi-Fi router "
+                              "handing out its own DNS causes this. Network Doctor tries again in 6 hours.")
         raise UpdateError(f"Could not reach GitHub ({e}).")
     tag = data.get("tag_name", "")
     if parse_version(tag) <= parse_version(current_version):

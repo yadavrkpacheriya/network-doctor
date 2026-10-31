@@ -1,4 +1,30 @@
-## Network Doctor 3.10.1
+## Network Doctor 3.11.0
+
+**Usage and productivity, inventory, network guard, and direct router control.**
+
+- **New Usage tab + dashboard.** Which device used which app and website, how much and when, with history for 120 days.
+  - Every app / site is Productive, Neutral or Unproductive. Common ones are built in (YouTube, Instagram, OTT, games, shopping vs Microsoft 365, Google Workspace, Tally, GST / government portals, banking...). Change any of them with one click; the history follows.
+  - Productivity per device / user = productive active time compared with unproductive active time.
+  - **Open dashboard** makes an interactive page: traffic per day / hour, apps, websites, busy hours per weekday, devices and users, filters for period, department and device.
+  - **The advisor learns this office's pattern**: the busiest hours and which apps fill them day after day, devices far above their normal, one device eating the line, updates / backups during office hours - each with what to do.
+  - Website names come from the router's DNS cache (router login in Setup) or the website firewall. Bandwidth comes from NetFlow.
+- **Router login (optional, Setup).** With a MikroTik user saved (password encrypted for this Windows user), Network Doctor can:
+  - **Apply on router** for IP-MAC binding, the network guard and the router settings - no more copy / paste or .rsc files.
+  - **Run on router** in the Commands tab and show the output.
+  - read the DHCP host names and the DNS cache.
+- **IP-MAC binding: choose the IP.** Double-click a device (or *Set IP of selected...*) and type the IP you want. It is checked: same network, not the router, not used or reserved by another device.
+- **New tool: Network guard.** Stops a second router from giving out its own IP / DNS, sends all DNS through the office router (or the website firewall), and blocks randomized MACs so every phone keeps one identity and one history. With UNDO.
+- **New tool: Inventory.** Every device ever seen, with IP, MAC, maker, host name, type, department, location, first / last seen - plus model, serial number, CPU, RAM, disk, Windows version and user from the PC script. Tag from the list, export to Excel.
+- **More devices found.**
+  - Several networks can be scanned at once, e.g. `192.168.0.0/24, 192.168.1.0/24` for cameras on their own range.
+  - A second ARP round catches sleeping phones.
+  - The router's own device list is read over SNMP; the router commands now switch this on, read-only and only for this PC.
+- **Update error "getaddrinfo failed" fixed.** When this PC's DNS does not answer, Network Doctor asks public DNS servers itself.
+- **Commands fixed.** Reserve IP (failed when a dynamic lease existed), Block / Unblock a device (failed with an empty firewall), Limit speed (named by IP now; new *Turn off FastTrack* command because FastTrack skips speed limits).
+- **.rsc files.** Plain ASCII, with progress messages and a separate undo file. The message says how to import them: WinBox > Files, then `/import file-name=... verbose=yes`. Double-clicking a .rsc on the PC does nothing.
+- **Live monitor.** It can be stopped and started again at once; before, the restart could not receive NetFlow / the router log ("UDP 2055 busy"). Devices on all scanned networks count as office devices.
+
+### Also in this version (first prepared as 3.10.1)
 
 **Warnings that did not go away after following their advice are fixed.**
 

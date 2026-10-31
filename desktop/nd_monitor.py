@@ -520,7 +520,14 @@ class UdpReceiver(threading.Thread):
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
             if reuse:  # share the port with WinBox, which also listens for neighbour announcements
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind(("0.0.0.0", port))
+            for attempt in range(8):  # a monitor that was just stopped can hold the port for a moment
+                try:
+                    self.sock.bind(("0.0.0.0", port))
+                    break
+                except OSError:
+                    if attempt == 7:
+                        raise
+                    time.sleep(0.4)
             self.sock.settimeout(1)
         except Exception as e:
             self.sock = None
@@ -544,6 +551,10 @@ class UdpReceiver(threading.Thread):
     def stop(self):
         self.running = False
         try:
+            self.sock.shutdown(socket.SHUT_RDWR)  # wakes the receiving thread so the port is free at once
+        except Exception:
+            pass
+        try:
             self.sock.close()
         except Exception:
             pass
@@ -559,9 +570,13 @@ class TrafficStore:
     """remotes key = (remote_ip, service_port, proto, inbound); value = [up, down, flows, first, last]."""
 
     def __init__(self, lan, threat, orgs, on_event):
-        self.lan = ipaddress.ip_network(lan, strict=False)
-        self.lo, self.hi = int(self.lan.network_address), int(self.lan.broadcast_address)
+        # lan: one network or several separated by commas (cameras / NVR on their own range count as office)
+        nets = core.parse_nets(lan) if isinstance(lan, str) else [ipaddress.ip_network(lan, strict=False)]
+        self.lan = nets[0]
+        self.ranges = [(int(n.network_address), int(n.broadcast_address)) for n in nets]
+        self.lo, self.hi = self.ranges[0]
         self.threat, self.orgs, self.on_event = threat, orgs, on_event
+        self.sink = None  # usage history: sink(lan, remote, port, proto, nbytes, up, org_text)
         self.lock = threading.Lock()
         self.dev = {}
         self.nat = OrderedDict()
@@ -572,7 +587,7 @@ class TrafficStore:
 
     def in_lan(self, ip):
         n = _ip_int(ip)
-        return n is not None and self.lo <= n <= self.hi
+        return n is not None and any(lo <= n <= hi for lo, hi in self.ranges)
 
     def _d(self, ip):
         d = self.dev.get(ip)
@@ -638,6 +653,12 @@ class TrafficStore:
             r[4] = now
         if new:
             self._check(lan, remote, svc, proto, inbound)
+        if self.sink and not inbound:
+            try:
+                info = self.orgs.get(remote) if self.orgs else {}
+                self.sink(lan, remote, svc, proto, b, up, f"{info.get('ptr', '')} {info.get('org', '')}".strip())
+            except Exception:
+                pass
 
     def _check(self, lan, remote, svc, proto, inbound):
         hit = self.threat.check(remote)
@@ -1557,7 +1578,7 @@ def local_pc_apps():
 
 def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan="ether1"):
     return f"""# One-time setting on the MikroTik (WinBox > New Terminal). The router only SENDS data to this PC;
-# Network Doctor never logs in to it. Any NetFlow/syslog capable router or managed switch works the same way.
+# Paste in WinBox, or Setup > Apply router settings now (router login). Any NetFlow/syslog capable router or managed switch works the same way.
 
 # Safe to paste again (for example after this PC got a new IP): the old Network Doctor settings are replaced.
 # Keep this PC on a fixed IP (IP-MAC binding tab ticks it for you), otherwise the router keeps sending to the old IP.
@@ -1582,7 +1603,13 @@ def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan
 # test message - Network Doctor shows "Router log: receiving" within a few seconds if everything is right
 :log warning "Network Doctor router log test"
 
-# 3) Recommended loop protection. {wan} is assumed to be the INTERNET port - change it if yours is different.
+# 3) Let Network Doctor read the router's device list (read-only SNMP, only from this PC). This finds sleeping
+#    phones and cameras on other IP ranges that do not answer a scan.
+/snmp set enabled=yes
+:do {{/snmp community remove [find where name=netdoctor]}} on-error={{}}
+:do {{/snmp community add name=netdoctor addresses={lip}/32 read-access=yes write-access=no}} on-error={{}}
+
+# 4) Recommended loop protection. {wan} is assumed to be the INTERNET port - change it if yours is different.
 #    Do this outside busy hours: switching the bridge to RSTP pauses the LAN for 2-3 seconds.
 /interface ethernet set [find where name!={wan}] loop-protect=on
 /interface bridge set [find] protocol-mode=rstp

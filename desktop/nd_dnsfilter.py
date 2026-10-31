@@ -158,6 +158,36 @@ def blocked_reply(query, qtype, end):
 # ==========================================================================
 # the server
 # ==========================================================================
+def answer_ips(msg):
+    """IPv4 addresses in the answer section of a DNS reply."""
+    try:
+        qd, an = struct.unpack("!HH", msg[4:8])
+        off = 12
+        for _ in range(qd):
+            off = _skip(msg, off) + 4
+        out = []
+        for _ in range(an):
+            off = _skip(msg, off)
+            typ, _c, _t, ln = struct.unpack("!HHIH", msg[off:off + 10])
+            off += 10
+            if typ == 1 and ln == 4:
+                out.append(socket.inet_ntoa(msg[off:off + 4]))
+            off += ln
+        return out
+    except (struct.error, IndexError, OSError):
+        return []
+
+
+def _skip(msg, off):
+    while True:
+        ln = msg[off]
+        if ln == 0:
+            return off + 1
+        if ln & 0xC0 == 0xC0:
+            return off + 2
+        off += ln + 1
+
+
 class DnsFilter:
     def __init__(self, upstream=None, blocked=(), allowed=(), safe_search=False, host="0.0.0.0", port=53):
         # "ip" or (ip, port); never this PC itself, or every question would loop back here
@@ -175,6 +205,7 @@ class DnsFilter:
         self.top_blocked = collections.Counter()
         self.recent = collections.deque(maxlen=300)  # (time, client, name, "blocked" / "safe" / "ok")
         self._safe_ips = {}
+        self.on_answer = None  # on_answer(client_ip, name, [ipv4...]) after each allowed look-up (usage history)
 
     def start(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -231,6 +262,11 @@ class DnsFilter:
             try:
                 self.sock.sendto(reply, client)
             except OSError:
+                pass
+        if self.on_answer and what == "ok":
+            try:
+                self.on_answer(ip, name, answer_ips(reply) if reply else [])
+            except Exception:
                 pass
 
     def _safe(self, target, qtype):
