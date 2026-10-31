@@ -2100,3 +2100,14 @@ class SectionNav:
         self.last[sec] = key
         if self.on_change:
             self.on_change(key)
+
+
+# Pro build: add the advanced-security pages into the existing coloured sections.
+if core.IS_PRO:
+    _PRO_PAGES = {
+        "security_s": [("defense", "Auto-defense"), ("vuln", "Security check"), ("expose", "Internet exposure")],
+        "fix_s": [("capture", "Packet capture")],
+        "setup_s": [("accounts", "Users & sign-in"), ("audit", "Audit log")],
+    }
+    for _s in SECTIONS:
+        _s[4].extend(_PRO_PAGES.get(_s[0], []))

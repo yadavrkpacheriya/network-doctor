@@ -49,7 +49,10 @@ class PhoneActions(unittest.TestCase):
         self.assertEqual(code, 200)
         code, r = self.post("/api/action", {"action": "tag", "args": {"mac": "AA", "name": "PC"}}, r["token"])
         self.assertEqual((code, r["message"]), (200, "did tag"))
-        self.assertEqual(self.calls[-1], ("tag", {"mac": "AA", "name": "PC"}))
+        name, got = self.calls[-1]
+        self.assertEqual(name, "tag")
+        self.assertEqual(got["mac"], "AA")
+        self.assertEqual(got["name"], "PC")  # share server also injects _auth / _ip
 
 
 if __name__ == "__main__":
