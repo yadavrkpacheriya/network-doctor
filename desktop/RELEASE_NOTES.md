@@ -1,3 +1,46 @@
+## Network Doctor 3.14.0
+
+**Alerts with priority, fixes and one-click Troubleshoot; Inventory tab with full PC details, torrent blocking, real website names, commands for other brands, and updates every day at 15:00.**
+
+- **New tab: Alerts** (right after Home) - no more screenshots of the alert window.
+  - Every warning and problem is kept with its time, **priority** (P1 fix now, P2 fix today, P3 this week, P4 information), the device and the **fix**. The same alert within 15 minutes is counted instead of repeated.
+  - **Troubleshoot** (also on the alert pop-up): explains the alert, fixes it with one click where commands can (on the router after asking, or on this PC), and gives numbered steps with tick boxes for what needs hands on a cable, a switch or a device. Re-check and Mark fixed buttons.
+  - Examples: "conflict by ARP response" reserves that IP for the device on the router; a torrent alert blocks torrents; a DVR reachable from the internet closes its port forward and UPnP; a loop turns on loop protection; a rogue DHCP server is blocked.
+  - Alerts close by themselves when a later check finds the problem gone.
+  - **Export** to Excel (CSV) or a report (HTML) with the fixes and steps; Copy puts the selected alerts and fixes on the clipboard.
+  - The alert pop-up now shows the priority and the fix under each line.
+  - The phone app shows the open alerts with priority, fix and steps.
+- **New tab: Inventory** (right after Devices).
+  - Every device and PC: IP, MAC, maker, host name, user, department, status.
+  - For each PC: RAM (and the RAM sticks), SSD / HDD, CPU, graphics, monitors, keyboard, mouse, printers, antivirus (on / off, up to date), Windows Firewall, driver problems, last Windows update, BIOS and the installed programs.
+  - **Needs attention** column and filters: driver problems, 4 GB RAM or less, HDD without SSD, disk almost full, antivirus off or out of date, no Windows update for 60+ days.
+  - Click a PC to see all its details. Buttons: **Driver download page** (Dell / Lenovo / HP ... using the serial no.), Copy serial no., Copy details, Driver commands.
+  - The Network Doctor PC adds its own details by itself (once a day). Other PCs: **Get PC details (script) > Inventory only (changes nothing)**, run it once on each PC.
+- **PC names for Windows PCs** that hide them (for example a PC asking for a user name and password when you open its shared folders). The scan reads the computer name, domain and Windows version from the file-sharing service, without logging in.
+- **Torrents.**
+  - When a torrent download is found, the alert has a **Block torrents...** button.
+  - Network guard has a new option: block torrent traffic and torrent websites on the MikroTik (rules placed above FastTrack so they really work; Undo removes everything).
+  - The website firewall has a "Torrent sites" category.
+- **Main website column** in the Live monitor (and on the phone): youtube.com, web.whatsapp.com, sheets.google.com ... instead of "Google services" or "UDP 20115", so you can judge work or not.
+- **Commands for other brands** (Commands tab, choose the brand / type at the top, or search):
+  - Switches and routers: Cisco IOS, TP-Link JetStream / Omada, D-Link, HP / Aruba, Ubiquiti UniFi / EdgeRouter, Netgear, Huawei.
+  - Firewalls: FortiGate, Sophos, pfSense / OPNsense, Seqrite UTM.
+  - Find a MAC's port, port speed and errors, loop protection, VLANs, DHCP snooping (stops rogue DHCP), and syslog / SNMP / NetFlow to Network Doctor.
+  - Antivirus: Windows Defender (status, update, scan, threats), Quick Heal / Seqrite, K7, ESET and others.
+  - Windows Firewall: on / off, allow a port, allow ping, file sharing, block rules, reset.
+  - Drivers and updates: devices with driver problems, winget update of all programs, Dell Command Update, Lenovo System Update, HP Support Assistant, Windows Update repair, system file repair.
+  - Printers: list, clear a stuck queue, add a printer by IP.
+- **Automatic updates every day at 15:00.** The PC app checks at 15:00 (or at start-up if the PC was off at 15:00) and installs by itself (Setup > New versions). If there is no internet at 15:00 it tries again every 30 minutes.
+- **Phone app 1.4.0.**
+  - Checks for an update every day at 15:00 and shows an Update button. Android asks you to tap Install.
+  - Inventory shows the new PC details and a "Needs attention" filter.
+  - Top bandwidth users show the main website and app.
+  - Open alerts with priority, fix and steps on the Summary page.
+- **Faster and light on the network.**
+  - Usage history has extra indexes, so the Usage tab stays fast with months of data.
+  - Monitoring only reads what the router already sends (NetFlow / syslog / its DNS cache every 3 minutes); nothing is added to the internet line.
+  - The speed test and the "busy line" test in Slow website? run only when you press them.
+
 ## Network Doctor 3.13.0
 
 **New Home screen, "Slow website?" check, phone names, and a phone app with usage and inventory.**

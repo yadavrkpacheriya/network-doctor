@@ -505,7 +505,10 @@ class _MonitorTab extends StatelessWidget {
             child: ListTile(
               dense: true,
               title: Text('${(x['name'] ?? '').toString().isEmpty ? x['ip'] : x['name']}'),
-              subtitle: Text('${x['ip']}  ·  last 10 min ${fmtBytes(x['last10'] as num?)}'),
+              subtitle: Text('${x['ip']}  ·  last 10 min ${fmtBytes(x['last10'] as num?)}'
+                  '${'${x['site'] ?? ''}'.isEmpty ? '' : '\n${x['site']}'}'
+                  '${'${x['app'] ?? ''}'.isEmpty ? '' : '  ·  ${x['app']}'}'
+                  '${'${x['risk'] ?? ''}'.isEmpty ? '' : '\n⚠ ${x['risk']}'}'),
               trailing: Text('↓ ${fmtRate((x['down_bps'] as num?)?.toDouble())}\n↑ ${fmtRate((x['up_bps'] as num?)?.toDouble())}',
                   textAlign: TextAlign.right),
             ),

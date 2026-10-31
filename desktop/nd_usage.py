@@ -575,6 +575,13 @@ class UsageStore:
                        " PRIMARY KEY (day, hour, dev, site))")
             db.execute("CREATE TABLE IF NOT EXISTS devices (dev TEXT PRIMARY KEY, name TEXT, ip TEXT, dept TEXT,"
                        " last TEXT)")
+            # per-device views (Usage tab, a person's day) stay fast with months of history
+            for t in ("usage", "active", "visits"):
+                db.execute(f"CREATE INDEX IF NOT EXISTS {t}_dev_day ON {t} (dev, day)")
+            try:
+                db.execute("PRAGMA journal_mode=WAL")  # the UI reads while the monitor writes
+            except sqlite3.DatabaseError:
+                pass
 
     # ---- inputs
     def set_devices(self, devices, tags=None):

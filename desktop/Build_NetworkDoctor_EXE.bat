@@ -22,7 +22,7 @@ echo.
 if not exist nd_core.py (echo nd_core.py is missing - put all 3 .py files in this folder & pause & exit /b)
 if not exist nd_monitor.py (echo nd_monitor.py is missing - put all 3 .py files in this folder & pause & exit /b)
 echo Building NetworkDoctor.exe ...
-python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow %EXTRA% NetworkDoctor.py
+python -m PyInstaller --noconfirm --onefile --windowed --uac-admin --name NetworkDoctor --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts %EXTRA% NetworkDoctor.py
 if exist dist\NetworkDoctor.exe (
   copy /y dist\NetworkDoctor.exe . >nul
   rmdir /s /q build >nul 2>nul

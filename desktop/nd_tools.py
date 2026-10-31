@@ -11,6 +11,7 @@ import re
 import socket
 import struct
 import time
+import urllib.parse
 
 import nd_core as core
 
@@ -455,6 +456,14 @@ def rogue_candidates(devices, raw, gw_ip):
     return out
 
 
+TORRENT_SITES = ["thepiratebay", "1337x", "1377x", "yts", "yify", "rarbg", "torrentz2", "limetorrents", "torlock",
+                 "torrentgalaxy", "eztv", "nyaa", "kickass", "kickasstorrents", "zooqle", "magnetdl", "torrentdownloads",
+                 "tamilrockers", "tamilblasters", "movierulz", "filmyzilla", "filmywap", "9xmovies", "bolly4u",
+                 "khatrimaza", "worldfree4u", "skymovieshd", "vegamovies", "katmoviehd", "mkvcinemas", "ibomma",
+                 "isaimini", "moviesda", "tamilyogi", "fitgirl-repacks", "skidrowreloaded", "igg-games",
+                 "utorrent", "bittorrent", "qbittorrent", "tixati", "vuze", "bitcomet", "frostwire"]
+
+
 def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
     """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random. Returns (apply_text, undo_text)."""
     ts = time.strftime("%Y-%m-%d %H:%M")
@@ -499,6 +508,29 @@ def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
         a.append('/ip firewall filter add chain=input in-interface=!' + bridge + ' protocol=udp dst-port=53 '
                  'action=drop comment="ND guard: no DNS from internet"')
         u.append(':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}')
+    if opts.get("torrent"):
+        a += ["# 4) Block torrents (BitTorrent): torrent ports, the torrent handshake / DHT / tracker signatures and",
+              "#    torrent websites. Put at the TOP of the forward chain, before FastTrack, or they never see the traffic.",
+              ':do {/ip firewall filter remove [find where comment~"^ND guard: torrent"]} on-error={}']
+        rules = [
+            "protocol=tcp dst-port=6881-6999,51413 action=drop",
+            "protocol=udp dst-port=6881-6999,51413 action=drop",
+            'protocol=tcp content="BitTorrent protocol" action=drop',
+            'protocol=udp content="d1:ad2:id20:" action=drop',
+            'protocol=tcp content="info_hash=" action=drop',
+            'protocol=udp content="BitTorrent protocol" action=drop',
+        ]
+        for r in reversed(rules):  # each one goes to the very top, so add them in reverse order
+            a.append(f':do {{/ip firewall filter add chain=forward {r} comment="ND guard: torrent" '
+                     f'place-before=([/ip firewall filter find]->0)}} '
+                     f'on-error={{/ip firewall filter add chain=forward {r} comment="ND guard: torrent"}}')
+        sites = "|".join(re.escape(x) for x in TORRENT_SITES)
+        a += [':do {/ip dns static remove [find where comment~"^ND guard: torrent"]} on-error={}',
+              f'/ip dns static add regexp="(^|\\\\.)({sites})\\\\.[a-z.]+\\$" address=127.0.0.1 '
+              'comment="ND guard: torrent sites"',
+              "#    Torrent websites are blocked for devices that use the router's DNS - tick 'All DNS through the "
+              "router' too."]
+        u += [':do {/ip dns static remove [find where comment~"^ND guard: torrent"]} on-error={}']
     if opts.get("random"):
         a += ["# 3) Devices with a randomized (private) MAC get no network: every phone / laptop must use its real",
               "#    MAC on the office Wi-Fi, so its history and reservations stay with one device.",
@@ -506,6 +538,9 @@ def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
               'action=drop comment="ND guard: random MAC"',
               "/interface bridge filter add chain=forward src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 "
               'action=drop comment="ND guard: random MAC"']
+    fclean = ':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}'
+    if fclean not in u:
+        u.append(fclean)
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
@@ -534,8 +569,14 @@ def write_rsc(path, apply_text, undo_text):
 
 
 HW_FIELDS = (("maker", "Maker"), ("model", "Model"), ("serial", "Serial no."), ("cpu", "CPU"), ("ram_gb", "RAM GB"),
-             ("disk_gb", "Disk C: GB"), ("disk_free_gb", "Free GB"), ("os_build", "Windows build"),
-             ("domain", "Domain / workgroup"), ("logged_on", "Logged-on user"), ("last_boot", "Last start"))
+             ("ram_detail", "RAM sticks"), ("disks", "Disks (SSD / HDD)"), ("disk_gb", "Disk C: GB"),
+             ("disk_free_gb", "Free GB"), ("gpu", "Graphics"), ("monitors", "Monitors"), ("keyboards", "Keyboard"),
+             ("mice", "Mouse"), ("printers", "Printers"), ("antivirus", "Antivirus"), ("firewall", "Windows Firewall"),
+             ("driver_problems", "Driver problems"), ("os_name", "Windows"), ("os_build", "Windows build"),
+             ("last_update", "Last Windows update"), ("bios", "BIOS"), ("domain", "Domain / workgroup"),
+             ("logged_on", "Logged-on user"), ("last_boot", "Last start"), ("software_count", "Programs installed"),
+             ("software", "Programs"))
+HW_LONG = {"software": 14000, "driver_problems": 1500, "printers": 800, "disks": 600, "monitors": 400}
 
 
 def clean_hw(hw):
@@ -547,7 +588,7 @@ def clean_hw(hw):
         v = hw.get(k)
         if v is None or v == "":
             continue
-        v = str(v).strip()[:80]
+        v = str(v).strip()[:HW_LONG.get(k, 200)]
         m = re.match(r"^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})", v) if k in ("installed", "last_boot") else None
         if m:
             v = f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}"
@@ -563,7 +604,9 @@ INV_COLS = (("name", "Name", 150), ("ip", "IP", 110), ("mac", "MAC", 135), ("ven
             ("location", "Location", 110), ("status", "Status", 120), ("first_seen", "First seen", 115),
             ("os", "Windows", 150), ("model", "Model", 140), ("serial", "Serial no.", 110), ("cpu", "CPU", 180),
             ("ram_gb", "RAM GB", 60), ("disk_gb", "Disk GB", 60), ("disk_free_gb", "Free GB", 60),
-            ("user", "User", 130), ("router_port", "Router port", 80), ("notes", "Notes", 200))
+            ("user", "User", 130), ("disks", "Disks", 170), ("antivirus", "Antivirus", 160),
+            ("printers", "Printers", 160), ("flag_text", "Needs attention", 200), ("router_port", "Router port", 80),
+            ("notes", "Notes", 200))
 
 
 def inventory_rows(devices, db, leases=None):
@@ -611,13 +654,90 @@ def _inv_row(mac, d, h, t, rep, lease):
            "vendor": d.get("vendor") or h.get("vendor", ""), "category": d.get("category") or h.get("category", ""),
            "host": (lease or {}).get("host-name") or host or (d.get("names") or {}).get("netbios", ""),
            "dept": t.get("dept", ""), "location": t.get("location", ""), "status": status,
-           "first_seen": d.get("first_seen") or h.get("first_seen", ""), "os": (r or {}).get("os", ""),
+           "first_seen": d.get("first_seen") or h.get("first_seen", ""), "os": (r or {}).get("os", "") or d.get("os", ""),
            "user": hw.get("logged_on") or (r or {}).get("user", ""), "router_port": t.get("router_port", ""),
            "notes": t.get("notes", ""), "online": online, "random": core.is_random_mac(mac) if mac else False,
            "report_time": (r or {}).get("time", "")}
+    for k, _ in HW_FIELDS:
+        if not row.get(k):
+            row[k] = hw.get(k, "")
     for k in ("model", "serial", "cpu", "ram_gb", "disk_gb", "disk_free_gb"):
         row[k] = hw.get(k, "")
+    if not row.get("vendor") and hw.get("maker"):
+        row["vendor"] = hw.get("maker")
+    row["flags"] = inv_flags(row)
+    row["flag_text"] = ", ".join(row["flags"])
     return row
+
+
+def _num(v):
+    try:
+        return float(str(v).split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def inv_flags(r):
+    """Things an IT engineer should look at on this PC (only from what the PC reported)."""
+    out = []
+    if r.get("driver_problems"):
+        out.append("driver problem")
+    ram = _num(r.get("ram_gb"))
+    if ram is not None and 0 < ram <= 4.5:
+        out.append("low RAM")
+    disks = str(r.get("disks") or "")
+    if disks and "HDD" in disks and "SSD" not in disks:
+        out.append("HDD (no SSD)")
+    free, size = _num(r.get("disk_free_gb")), _num(r.get("disk_gb"))
+    if free is not None and size and (free < 15 or free / size < 0.1):
+        out.append("disk almost full")
+    av = str(r.get("antivirus") or "")
+    if r.get("model") and (not av or "OFF" in av or "OUT OF DATE" in av):
+        out.append("antivirus off / old" if av else "no antivirus")
+    fw = str(r.get("firewall") or "")
+    if "off" in fw.lower():
+        out.append("firewall off")
+    lu = str(r.get("last_update") or "")[:10]
+    try:
+        if lu and time.time() - time.mktime(time.strptime(lu, "%Y-%m-%d")) > 60 * 86400:
+            out.append("no Windows update for 60+ days")
+    except ValueError:
+        pass
+    return out
+
+
+INV_FILTERS = {"Needs attention (any)": lambda r: bool(r.get("flags")),
+               "Driver problems": lambda r: "driver problem" in r.get("flags", []),
+               "Low RAM (4 GB or less)": lambda r: "low RAM" in r.get("flags", []),
+               "HDD, no SSD": lambda r: "HDD (no SSD)" in r.get("flags", []),
+               "Disk almost full": lambda r: "disk almost full" in r.get("flags", []),
+               "Antivirus off / out of date": lambda r: any(f.startswith(("antivirus", "no antivirus"))
+                                                             for f in r.get("flags", [])),
+               "Windows not updated 60+ days": lambda r: any("Windows update" in f for f in r.get("flags", [])),
+               "Printers": lambda r: "rinter" in str(r.get("category", ""))}
+
+
+def driver_page(maker, serial, model=""):
+    """The maker's driver download page for this PC (Dell / Lenovo / HP use the serial number)."""
+    m = (maker or "").lower()
+    s = urllib.parse.quote((serial or "").strip())
+    if "dell" in m:
+        return (f"https://www.dell.com/support/home/en-in/product-support/servicetag/{s}/drivers" if s else
+                "https://www.dell.com/support/home/en-in?app=drivers")
+    if "lenovo" in m:
+        return f"https://pcsupport.lenovo.com/in/en/search?query={s}" if s else "https://pcsupport.lenovo.com/in/en/"
+    if "hp" in m or "hewlett" in m:
+        return "https://support.hp.com/in-en/drivers"
+    if "asus" in m:
+        return "https://www.asus.com/in/support/download-center/"
+    if "acer" in m:
+        return f"https://www.acer.com/in-en/support/drivers-and-manuals?search={s}"
+    if "msi" in m or "micro-star" in m:
+        return "https://www.msi.com/support/download"
+    if "gigabyte" in m:
+        return "https://www.gigabyte.com/Support"
+    q = urllib.parse.quote(f"{maker} {model} drivers".strip())
+    return f"https://www.bing.com/search?q={q}"
 
 
 def export_inventory_csv(path, rows):
@@ -729,6 +849,46 @@ if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Securit
 """
 
 
+
+# ---- PC details for the Network Doctor inventory (read only, changes nothing)
+HW_PS = r"""
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $osi = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
+    $mem = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
+    $ramDetail = ($mem | ForEach-Object { "$([math]::Round($_.Capacity / 1GB)) GB $($_.Speed) MHz" }) -join ', '
+    $disks = (@(Get-PhysicalDisk -ErrorAction SilentlyContinue) | ForEach-Object { "$($_.FriendlyName) ($($_.MediaType), $([math]::Round($_.Size / 1GB)) GB)" }) -join '; '
+    $gpu = (@(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue) | ForEach-Object { $_.Name }) -join '; '
+    $mons = (@(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID -ErrorAction SilentlyContinue) | ForEach-Object { ((($_.ManufacturerName | Where-Object { $_ -ne 0 }) | ForEach-Object { [char]$_ }) -join '') + ' ' + ((($_.UserFriendlyName | Where-Object { $_ -ne 0 }) | ForEach-Object { [char]$_ }) -join '') }) -join '; '
+    $kbd = (@(Get-CimInstance Win32_Keyboard -ErrorAction SilentlyContinue) | ForEach-Object { $_.Description } | Select-Object -Unique) -join '; '
+    $mouse = (@(Get-CimInstance Win32_PointingDevice -ErrorAction SilentlyContinue) | ForEach-Object { $_.Name } | Select-Object -Unique) -join '; '
+    $prn = (@(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue) | Where-Object { $_.Name -notmatch 'PDF|XPS|OneNote|Fax' } | ForEach-Object { $_.Name + $(if ($_.Default) { ' (default)' } else { '' }) }) -join '; '
+    $av = (@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue) | ForEach-Object { $st = '{0:X6}' -f $_.productState; $_.displayName + ' (' + $(if ($st.Substring(2,2) -in '10','11') { 'on' } else { 'OFF' }) + ', ' + $(if ($st.Substring(4,2) -eq '00') { 'up to date' } else { 'OUT OF DATE' }) + ')' }) -join '; '
+    $fw = (@(Get-NetFirewallProfile -ErrorAction SilentlyContinue) | ForEach-Object { $_.Name + ' ' + $(if ($_.Enabled) { 'on' } else { 'OFF' }) }) -join ', '
+    $drv = (@(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object { $_.ConfigManagerErrorCode -ne 0 }) | Select-Object -First 15 | ForEach-Object { "$($_.Name) (code $($_.ConfigManagerErrorCode))" }) -join '; '
+    $hot = Get-HotFix -ErrorAction SilentlyContinue | Sort-Object InstalledOn -Descending -ErrorAction SilentlyContinue | Select-Object -First 1
+    $sw = @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and -not $_.SystemComponent } | ForEach-Object { [string]$_.DisplayName } | Sort-Object -Unique)
+    $hw = @{ maker = [string]$cs.Manufacturer; model = [string]$cs.Model; serial = [string]$bios.SerialNumber;
+             cpu = [string]$cpu.Name; ram_gb = [math]::Round(([double]$cs.TotalPhysicalMemory) / 1GB, 1);
+             disk_gb = [math]::Round(([double]$disk.Size) / 1GB); disk_free_gb = [math]::Round(([double]$disk.FreeSpace) / 1GB);
+             os_build = [string]$osi.BuildNumber; os_version = [string]$osi.Version; os_name = [string]$osi.Caption;
+             installed = [string]$osi.InstallDate; last_boot = [string]$osi.LastBootUpTime;
+             domain = [string]$cs.Domain; logged_on = [string]$cs.UserName;
+             ram_detail = $ramDetail; disks = $disks; gpu = $gpu; monitors = $mons; keyboards = $kbd; mice = $mouse;
+             printers = $prn; antivirus = $av; firewall = $fw; driver_problems = $drv;
+             bios = [string]$bios.SMBIOSBIOSVersion; last_update = $(if ($hot) { [string]$hot.InstalledOn } else { '' });
+             software_count = $sw.Count; software = (($sw | Select-Object -First 400) -join '|') }
+"""
+
+
+def local_inventory_cmd():
+    """PowerShell that prints this PC's details as JSON (the Network Doctor PC lists itself without a script)."""
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            HW_PS + "\n$hw | ConvertTo-Json -Compress"]
+
+
 def pc_fix_script(opts, gw, gw_mac, report_url, report_key):
     """opts: random_off, renew, lock_gw, report (booleans); to_dhcp: "ask" / "yes" / "no".
     Use to_dhcp "yes" or "no" when the script runs unattended (login script), "ask" when a person runs it.
@@ -808,17 +968,7 @@ $ads = foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue))
         dhcp = [string](Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp }}
 }}
 if ($opt.Report -and $URL) {{
-    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-    $osi = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-    $bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
-    $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
-    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
-    $hw = @{{ maker = [string]$cs.Manufacturer; model = [string]$cs.Model; serial = [string]$bios.SerialNumber;
-             cpu = [string]$cpu.Name; ram_gb = [math]::Round(([double]$cs.TotalPhysicalMemory) / 1GB, 1);
-             disk_gb = [math]::Round(([double]$disk.Size) / 1GB); disk_free_gb = [math]::Round(([double]$disk.FreeSpace) / 1GB);
-             os_build = [string]$osi.BuildNumber; os_version = [string]$osi.Version;
-             installed = [string]$osi.InstallDate; last_boot = [string]$osi.LastBootUpTime;
-             domain = [string]$cs.Domain; logged_on = [string]$cs.UserName }}
+{HW_PS}
     $body = @{{ hostname = $env:COMPUTERNAME; user = "$env:USERDOMAIN\\$env:USERNAME";
                os = $osi.Caption; hw = $hw;
                adapters = @($ads); actions = @($done) }} | ConvertTo-Json -Depth 4
@@ -946,7 +1096,7 @@ COMMANDS = [
      "/interface ethernet disable {port}; :delay 3s; /interface ethernet enable {port}", "Camera / AP hanging."),
     ("MikroTik router", "Router", "Block a device (no internet, no other networks)",
      ':do {/ip firewall filter add chain=forward src-mac-address={mac} action=drop comment="ND block {mac}" '
-     'place-before=0} on-error={/ip firewall filter add chain=forward src-mac-address={mac} action=drop '
+     'place-before=([/ip firewall filter find]->0)} on-error={/ip firewall filter add chain=forward src-mac-address={mac} action=drop '
      'comment="ND block {mac}"}',
      "Cuts internet for a device that is attacking or misbehaving."),
     ("MikroTik router", "Router", "Unblock a device", '/ip firewall filter remove [find where comment="ND block {mac}"]', ""),
@@ -1018,11 +1168,257 @@ def fill(cmd, values):
     return re.sub(r"\{(\w+)\}", rep, cmd), sorted(set(missing))
 
 
-def command_values(d, gw, gw_mac):
+def command_values(d, gw, gw_mac, lip=""):
     d = d or {}
     t = d.get("tag") or {}
     mac = d.get("mac") or ""
+    hexm = mac.replace(":", "").lower()
     return {"ip": d.get("ip", ""), "mac": mac, "mac_dash": mac.replace(":", "-").lower(),
+            "mac_dot": ".".join(hexm[i:i + 4] for i in range(0, 12, 4)) if len(hexm) == 12 else "",
+            "lip": lip or "",
             "name": (t.get("name") or d.get("name") or "").replace('"', "'"), "gw": gw or "",
             "gw_mac": gw_mac or "", "gw_mac_dash": (gw_mac or "").replace(":", "-").lower(),
             "port": t.get("router_port", ""), "adapter": ""}
+
+
+# ---------------------------------------------------------------- other brands, antivirus, firewall, drivers
+# where: "This PC" = runs here (Run button); "Each PC" = run on the PC concerned; anything else = paste it in that
+# device's console (SSH / Telnet / serial / the web CLI). {vlan} {iface} {user} {pass} {community} ... are asked.
+PS = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "{}"'
+VENDOR_COMMANDS = [
+    # ---- drivers and updates (Windows)
+    ("Drivers & updates", "This PC", "Devices with a driver problem (yellow mark)",
+     "pnputil /enum-devices /problem",
+     "Lists every device Windows has a problem with (missing / failed driver). Same as the yellow marks in Device Manager."),
+    ("Drivers & updates", "This PC", "All installed driver packages",
+     "pnputil /enum-drivers", "Driver packages in the Windows driver store with version and date."),
+    ("Drivers & updates", "This PC", "Search Windows Update for missing drivers (scan)",
+     "UsoClient StartScan", "Starts a Windows Update scan, which also finds drivers. Open Settings > Windows Update after a minute."),
+    ("Drivers & updates", "This PC", "Open Windows Update",
+     "start ms-settings:windowsupdate", "Install pending updates and optional driver updates (Advanced options > Optional updates)."),
+    ("Drivers & updates", "This PC", "Programs with a newer version (winget)",
+     "winget upgrade", "Lists installed programs that have an update (Windows 10 / 11 with App Installer)."),
+    ("Drivers & updates", "This PC", "Update all programs (winget)",
+     "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+     "Updates Chrome, Zoom, 7-Zip, AnyDesk ... in one go. Run as administrator."),
+    ("Drivers & updates", "This PC", "Dell: install Dell Command Update",
+     "winget install --id Dell.CommandUpdate -e", "Dell's own driver / BIOS updater. Then use the next command."),
+    ("Drivers & updates", "This PC", "Dell: scan and apply all driver updates",
+     '"C:\\Program Files\\Dell\\CommandUpdate\\dcu-cli.exe" /applyUpdates -reboot=disable',
+     "Installs every Dell driver and BIOS update for this model (needs Dell Command Update)."),
+    ("Drivers & updates", "This PC", "Lenovo: install Lenovo System Update",
+     "winget install --id Lenovo.SystemUpdate -e", "Lenovo's driver / BIOS updater for ThinkPad, ThinkCentre, IdeaPad."),
+    ("Drivers & updates", "This PC", "HP: install HP Support Assistant",
+     "winget install --id HP.SupportAssistant -e", "HP's driver updater. Business PCs can use HP Image Assistant instead."),
+    ("Drivers & updates", "This PC", "PC maker, model and serial (for the driver page)",
+     PS.format("Get-CimInstance Win32_ComputerSystem | Select Manufacturer,Model; (Get-CimInstance Win32_BIOS).SerialNumber"),
+     "Dell service tag / Lenovo / HP serial number to type on the maker's driver page."),
+    ("Drivers & updates", "This PC", "Last Windows updates installed",
+     PS.format("Get-HotFix | Sort InstalledOn -Desc | Select -First 10"),
+     "When this PC was last updated. Older than 1-2 months = check Windows Update."),
+    ("Drivers & updates", "This PC", "Network card driver version",
+     PS.format("Get-NetAdapter | Select Name,InterfaceDescription,DriverVersion,DriverDate,LinkSpeed"),
+     "Old network drivers cause drops and slow Wi-Fi; compare with the maker's page."),
+    ("Drivers & updates", "This PC", "Reset Windows Update (when it is stuck)",
+     "net stop wuauserv && net stop bits && ren %windir%\\SoftwareDistribution SoftwareDistribution.old && net start bits && net start wuauserv",
+     "Fixes Windows Update errors / stuck downloads (admin). The old folder can be deleted later."),
+    ("Drivers & updates", "This PC", "Repair Windows system files",
+     "DISM /Online /Cleanup-Image /RestoreHealth && sfc /scannow",
+     "Repairs damaged Windows files (admin, 10-30 minutes). For crashes and updates that fail."),
+    # ---- printers
+    ("Printers", "This PC", "Printers installed and their ports",
+     PS.format("Get-Printer | Select Name,DriverName,PortName,Shared,PrinterStatus"),
+     "Which printer uses which IP / port and driver."),
+    ("Printers", "This PC", "Clear a stuck print queue",
+     "net stop spooler && del /q /f %windir%\\System32\\spool\\PRINTERS\\* && net start spooler",
+     "Jobs stuck in the queue, 'printing' forever (admin)."),
+    ("Printers", "This PC", "Add a network printer by IP",
+     PS.format("Add-PrinterPort -Name 'IP_{ip}' -PrinterHostAddress '{ip}'; Get-PrinterDriver | Select Name"),
+     "Creates the port for the printer at {ip}; then Add-Printer -Name 'Office' -DriverName '<name from the list>' -PortName 'IP_{ip}'."),
+    ("Printers", "This PC", "Is the printer's print port open? (9100)",
+     PS.format("Test-NetConnection {ip} -Port 9100"), "TcpTestSucceeded True = the printer accepts print jobs."),
+    # ---- antivirus
+    ("Antivirus", "This PC", "Which antivirus is installed and is it on?",
+     PS.format("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select displayName,productState,timestamp"),
+     "Every antivirus Windows knows (Defender, Quick Heal, K7, ESET, Seqrite ...). The PC details script decodes on / off and up to date."),
+    ("Antivirus", "This PC", "Windows Defender status",
+     PS.format("Get-MpComputerStatus | Select AMRunningMode,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated,QuickScanEndTime"),
+     "Real-time protection on? Signatures from today or yesterday?"),
+    ("Antivirus", "This PC", "Windows Defender: update signatures now", PS.format("Update-MpSignature"),
+     "Downloads the newest virus definitions."),
+    ("Antivirus", "This PC", "Windows Defender: quick scan", PS.format("Start-MpScan -ScanType QuickScan"),
+     "5-15 minutes. Results: Get-MpThreatDetection."),
+    ("Antivirus", "This PC", "Windows Defender: threats found", PS.format("Get-MpThreatDetection | Select -First 20"),
+     "What Defender found and removed / quarantined."),
+    ("Antivirus", "This PC", "Windows Defender: offline scan (restarts the PC)", PS.format("Start-MpWDOScan"),
+     "For malware that hides while Windows runs. The PC restarts and scans for ~15 minutes."),
+    ("Antivirus", "This PC", "Quick Heal / Seqrite: is the service running?",
+     PS.format("Get-Service | Where {$_.DisplayName -match 'Quick Heal|Seqrite'} | Select DisplayName,Status"),
+     "Status Running = protection active. Update from the Quick Heal / Seqrite window (or the Seqrite EPS console)."),
+    ("Antivirus", "This PC", "K7 / ESET / Kaspersky / McAfee: service status",
+     PS.format("Get-Service | Where {$_.DisplayName -match 'K7|ESET|Kaspersky|McAfee|Sophos|Trend|Bitdefender'} | Select DisplayName,Status"),
+     "Shows whether the third-party antivirus services are running."),
+    ("Antivirus", "This PC", "ESET: update and scan from the command line",
+     '"C:\\Program Files\\ESET\\ESET Security\\ecls.exe" /update && "C:\\Program Files\\ESET\\ESET Security\\ecls.exe" C:\\Users',
+     "ESET command-line scanner (path differs on older ESET versions)."),
+    # ---- Windows firewall
+    ("Windows Firewall", "This PC", "Firewall on / off for each network type",
+     "netsh advfirewall show allprofiles state", "Domain, Private, Public should normally all be ON."),
+    ("Windows Firewall", "This PC", "Turn the firewall ON (all profiles)", "netsh advfirewall set allprofiles state on",
+     "Admin. Someone turned it off 'to make something work' - turn it back on and allow only that program."),
+    ("Windows Firewall", "This PC", "Allow a TCP port in", 'netsh advfirewall firewall add rule name="Allow TCP {tcpport}" dir=in action=allow protocol=TCP localport={tcpport}',
+     "For a server program (ERP, Tally 9000, SQL 1433, RDP 3389) that other PCs must reach."),
+    ("Windows Firewall", "This PC", "Allow ping (ICMP) in",
+     'netsh advfirewall firewall add rule name="Allow ping" dir=in action=allow protocol=icmpv4:8,any',
+     "So Network Doctor and others can ping this PC."),
+    ("Windows Firewall", "This PC", "Turn on file and printer sharing",
+     'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes',
+     "Shared folders / printers on this PC not reachable from other PCs."),
+    ("Windows Firewall", "This PC", "Firewall rules that block",
+     PS.format("Get-NetFirewallRule -Action Block -Enabled True | Select DisplayName,Direction,Profile"),
+     "A block rule can stop a program even when the firewall 'allows' it elsewhere."),
+    ("Windows Firewall", "This PC", "Reset the firewall to Windows defaults", "netsh advfirewall reset",
+     "Removes all custom rules (admin). Last resort when rules are a mess."),
+    # ---- Cisco IOS / IOS-XE (Catalyst switches, ISR routers)
+    ("Cisco switch / router (IOS)", "Switch", "Which port is a MAC on?", "show mac address-table address {mac_dot}",
+     "The MAC in Cisco form xxxx.xxxx.xxxx. The port column tells where the device is plugged in."),
+    ("Cisco switch / router (IOS)", "Switch", "Port status, speed, duplex", "show interfaces status",
+     "a-full a-1000 = good. a-half or a-100 on a PC port = cable problem."),
+    ("Cisco switch / router (IOS)", "Switch", "Port errors (CRC = bad cable)", "show interfaces counters errors",
+     "CRC / FCS / Align errors that keep growing = replace the cable or the port."),
+    ("Cisco switch / router (IOS)", "Switch", "Neighbours (which switch is on which port)", "show cdp neighbors detail",
+     "LLDP instead: show lldp neighbors detail."),
+    ("Cisco switch / router (IOS)", "Switch", "Loop / spanning tree check", "show spanning-tree summary",
+     "Topology changes going up all the time = a loop or a port flapping. 'show spanning-tree detail | inc ieee|from' shows where."),
+    ("Cisco switch / router (IOS)", "Switch", "Shut / restart a port",
+     "configure terminal\ninterface {iface}\nshutdown\nno shutdown\nend",
+     "Restarts a port (e.g. Gi1/0/5). Leave out 'no shutdown' to keep it off."),
+    ("Cisco switch / router (IOS)", "Switch", "Put a port in a VLAN",
+     "configure terminal\ninterface {iface}\nswitchport mode access\nswitchport access vlan {vlan}\nend\nwrite memory",
+     "Access port for a PC / phone / camera in one VLAN."),
+    ("Cisco switch / router (IOS)", "Switch", "Stop loops: BPDU guard + storm control on PC ports",
+     "configure terminal\ninterface range {iface}\nspanning-tree portfast\nspanning-tree bpduguard enable\nstorm-control broadcast level 5\nend\nwrite memory",
+     "A port with a loop or a home router plugged in shuts itself down instead of taking the network down."),
+    ("Cisco switch / router (IOS)", "Switch", "DHCP snooping (stop rogue DHCP)",
+     "configure terminal\nip dhcp snooping\nip dhcp snooping vlan {vlan}\ninterface {iface}\nip dhcp snooping trust\nend\nwrite memory",
+     "{iface} = the uplink to the real router - only that port may answer DHCP."),
+    ("Cisco switch / router (IOS)", "Switch", "Send logs to Network Doctor (syslog)",
+     "configure terminal\nlogging host {lip}\nlogging trap warnings\nend\nwrite memory",
+     "Port up / down, loops and errors appear in the Live monitor."),
+    ("Cisco switch / router (IOS)", "Switch", "SNMP read access for Network Doctor",
+     "configure terminal\nsnmp-server community netdoctor RO\nend\nwrite memory",
+     "Lets Network Doctor read the MAC table and port traffic (community netdoctor)."),
+    ("Cisco switch / router (IOS)", "Router", "NetFlow to Network Doctor (Cisco router)",
+     "configure terminal\nflow exporter ND\n destination {lip}\n transport udp 2055\nflow monitor NDM\n exporter ND\n record netflow ipv4 original-input\ninterface {iface}\n ip flow monitor NDM input\nend",
+     "Per-device / per-site traffic in the Live monitor. {iface} = the LAN interface."),
+    ("Cisco switch / router (IOS)", "Switch", "Save the configuration", "write memory",
+     "Changes are lost at the next power cut without this."),
+    # ---- TP-Link JetStream / Omada (CLI similar to Cisco)
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Which port is a MAC on?", "show mac address-table address {mac}",
+     "MAC with colons. Web UI: MAC Address > Address Table."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Port status and speed", "show interface status",
+     "Check speed / duplex. Web UI: Switching > Port > Port Config."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Port errors", "show interface counters",
+     "Growing error / CRC counters = cable or port problem."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Loop detection on all ports",
+     "configure\nloopback-detection\ninterface range gigabitEthernet 1/0/1-24\nloopback-detection\nloopback-detection config process-mode port-based recovery-mode auto\nend\ncopy running-config startup-config",
+     "Blocks a port that has a loop and opens it again later. Web UI: Switching > Loopback Detection."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Put a port in a VLAN",
+     "configure\nvlan {vlan}\nexit\ninterface gigabitEthernet {iface}\nswitchport general allowed vlan {vlan} untagged\nswitchport pvid {vlan}\nend\ncopy running-config startup-config",
+     "{iface} like 1/0/5."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "DHCP snooping (stop rogue DHCP)",
+     "configure\nip dhcp snooping\nip dhcp snooping vlan {vlan}\ninterface gigabitEthernet {iface}\nip dhcp snooping trust\nend\ncopy running-config startup-config",
+     "{iface} = the uplink to the real router."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "Syslog to Network Doctor",
+     "configure\nlogging host index 1 {lip} 4\nend\ncopy running-config startup-config", "Port and loop events in the Live monitor."),
+    ("TP-Link switch (JetStream / Omada)", "Switch", "SNMP read access",
+     "configure\nsnmp-server\nsnmp-server community netdoctor read-only\nend\ncopy running-config startup-config",
+     "Network Doctor reads the MAC table and traffic. Omada-managed: set it in the Omada controller (Site > Services > SNMP)."),
+    ("TP-Link router (ER / Archer / Omada gateway)", "Router web page", "Reserve an IP / bind IP-MAC",
+     "Open http://{gw} > Network / Transmission > DHCP > Address Reservation (ER series: Preferences > IP-MAC Binding). Add MAC {mac} -> IP {ip}.",
+     "TP-Link routers have no command line for this - use the web page."),
+    ("TP-Link router (ER / Archer / Omada gateway)", "Router web page", "Block a website",
+     "Open http://{gw} > Firewall / Security > Access Control (ER series: Behavior Control > URL filtering). Add the domain.",
+     "Or point the office DNS to this PC's website firewall (Tools)."),
+    # ---- D-Link
+    ("D-Link switch (DGS / DES)", "Switch", "Which port is a MAC on?", "show fdb mac_address {mac_dash}",
+     "Newer DGS-1250/1510 (Cisco-like CLI): show mac-address-table address {mac_dash}."),
+    ("D-Link switch (DGS / DES)", "Switch", "Port status, speed, errors", "show ports\nshow error ports {iface}",
+     "Half duplex / 100M on a PC port or growing CRC errors = cable."),
+    ("D-Link switch (DGS / DES)", "Switch", "Loop detection on",
+     "enable loopdetect\nconfig loopdetect ports all state enabled\nconfig loopdetect recover_timer 60\nsave",
+     "Shuts a looping port and reopens it after 60 s."),
+    ("D-Link switch (DGS / DES)", "Switch", "Put a port in a VLAN",
+     "create vlan v{vlan} tag {vlan}\nconfig vlan v{vlan} add untagged {iface}\nsave", "{iface} = port number, e.g. 5."),
+    ("D-Link switch (DGS / DES)", "Switch", "Syslog + SNMP for Network Doctor",
+     "enable syslog\ncreate syslog host 1 ipaddress {lip} severity warning state enable\ncreate snmp community netdoctor view CommunityView read_only\nsave",
+     "Logs and MAC table for Network Doctor."),
+    # ---- HP / Aruba
+    ("HP / Aruba switch (ProCurve, AOS-S)", "Switch", "Which port is a MAC on?", "show mac-address {mac_dash}",
+     "MAC in xxxxxx-xxxxxx form also works."),
+    ("HP / Aruba switch (ProCurve, AOS-S)", "Switch", "Port status and errors", "show interfaces brief\nshow interfaces {iface}",
+     "Look at 'FCS Rx' and 'Drops'."),
+    ("HP / Aruba switch (ProCurve, AOS-S)", "Switch", "Loop protection",
+     "configure\nloop-protect 1-24\nloop-protect trap loop-detected\nwrite memory", "Blocks a looping port."),
+    ("HP / Aruba switch (ProCurve, AOS-S)", "Switch", "Syslog + SNMP",
+     "configure\nlogging {lip}\nsnmp-server community netdoctor operator\nwrite memory", "For Network Doctor."),
+    # ---- Ubiquiti
+    ("Ubiquiti (UniFi / EdgeRouter)", "Device SSH", "UniFi device: info and controller address", "info",
+     "SSH to the UniFi switch / AP. 'set-inform http://<controller>:8080/inform' adopts it."),
+    ("Ubiquiti (UniFi / EdgeRouter)", "Device SSH", "UniFi switch: which port is a MAC on?", "swctrl mac show | grep -i {mac}",
+     "Or the UniFi controller > Clients."),
+    ("Ubiquiti (UniFi / EdgeRouter)", "Router", "EdgeRouter: DHCP leases", "show dhcp leases", "Names and IPs of all devices."),
+    ("Ubiquiti (UniFi / EdgeRouter)", "Router", "EdgeRouter: NetFlow to Network Doctor",
+     "configure\nset system flow-accounting interface eth1\nset system flow-accounting netflow server {lip} port 2055\nset system flow-accounting netflow version 9\ncommit; save",
+     "eth1 = the LAN port. Per-device traffic in the Live monitor."),
+    # ---- Netgear
+    ("Netgear smart switch (GS / M4250)", "Switch", "Which port is a MAC on?", "show mac-addr-table {mac}",
+     "Smart (web-only) models: Switching > Address Table."),
+    ("Netgear smart switch (GS / M4250)", "Switch", "Port status", "show port all", "Speed / duplex for every port."),
+    ("Netgear smart switch (GS / M4250)", "Switch", "Loop / broadcast storm protection",
+     "configure\nstorm-control broadcast level 5\nkeepalive\nexit\nwrite memory", "Web UI: Security > Traffic Control > Storm Control."),
+    # ---- Huawei
+    ("Huawei switch (S series)", "Switch", "Which port is a MAC on?", "display mac-address {mac_dash}",
+     "Huawei MAC form xxxx-xxxx-xxxx."),
+    ("Huawei switch (S series)", "Switch", "Port status and errors", "display interface brief\ndisplay interface {iface}",
+     "Look at CRC and duplex."),
+    ("Huawei switch (S series)", "Switch", "Loop detection",
+     "system-view\nloopback-detect enable\ninterface {iface}\nloopback-detect enable\nreturn\nsave", ""),
+    ("Huawei switch (S series)", "Switch", "Syslog to Network Doctor",
+     "system-view\ninfo-center loghost {lip}\nreturn\nsave", ""),
+    # ---- firewalls
+    ("FortiGate firewall", "Firewall", "Who is using the internet now (top sessions)",
+     "diagnose sys top-summary\nget system performance status", "CPU, memory, sessions. GUI: Dashboard > FortiView Sources."),
+    ("FortiGate firewall", "Firewall", "Sessions of one device", "diagnose sys session filter src {ip}\ndiagnose sys session list",
+     "What the device {ip} is connected to. Clear the filter: diagnose sys session filter clear."),
+    ("FortiGate firewall", "Firewall", "DHCP leases", "execute dhcp lease-list", "Names / IPs / MACs."),
+    ("FortiGate firewall", "Firewall", "Test the internet from the firewall",
+     "execute ping 8.8.8.8\nexecute traceroute 8.8.8.8", ""),
+    ("FortiGate firewall", "Firewall", "Syslog to Network Doctor",
+     "config log syslogd setting\nset status enable\nset server {lip}\nend", "Traffic and security logs in the Live monitor."),
+    ("FortiGate firewall", "Firewall", "NetFlow to Network Doctor",
+     "config system netflow\nset collector-ip {lip}\nset collector-port 2055\nend\nconfig system interface\nedit {iface}\nset netflow-sampler both\nend",
+     "Per-device / per-site traffic. {iface} = LAN interface (e.g. internal / port1)."),
+    ("FortiGate firewall", "Firewall", "Block a device (address + deny policy)",
+     'config firewall address\nedit "ND-block-{ip}"\nset subnet {ip} 255.255.255.255\nnext\nend',
+     "Then add a deny policy for it at the top (GUI: Policy & Objects > Firewall Policy)."),
+    ("Sophos firewall (XG / XGS)", "Firewall", "Console: ping / traceroute / ARP",
+     "ping 8.8.8.8\ntraceroute 8.8.8.8\narp", "Device console (SSH, option 4 Device Console)."),
+    ("Sophos firewall (XG / XGS)", "Firewall", "Syslog to Network Doctor",
+     "Web admin: System services > Log settings > Add syslog server {lip} UDP 514, then tick the log types.", ""),
+    ("pfSense / OPNsense", "Firewall", "States (connections) of a device", "pfctl -ss | grep {ip}",
+     "Shell (option 8). What {ip} is connected to now."),
+    ("pfSense / OPNsense", "Firewall", "DHCP leases", "cat /var/dhcpd/var/db/dhcpd.leases | grep -A6 {ip}",
+     "GUI: Status > DHCP Leases."),
+    ("pfSense / OPNsense", "Firewall", "NetFlow / syslog to Network Doctor",
+     "GUI: pfSense - install softflowd, host {lip} port 2055; Status > System Logs > Settings > Remote log {lip}:514. OPNsense - Reporting > NetFlow.",
+     ""),
+    ("Seqrite / Quick Heal UTM", "Firewall", "Syslog to Network Doctor",
+     "Web admin: Logs & Reports > Settings > Syslog server {lip} port 514.", ""),
+    # ---- generic
+    ("Any switch / router", "Each device", "Find a device's switch port without a login",
+     "Network Doctor > Tools > Switch port finder (SNMP community netdoctor), or unplug-and-watch with 'ping -t {ip}'.",
+     "Works with any SNMP switch (Cisco, TP-Link, D-Link, HP, Netgear, Huawei)."),
+]
+for _c in VENDOR_COMMANDS:
+    COMMANDS.append(_c)

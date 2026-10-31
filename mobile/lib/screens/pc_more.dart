@@ -95,6 +95,37 @@ class SummaryTab extends StatelessWidget {
               feeds == 2 ? Colors.green.shade700 : Colors.orange.shade800, 5),
         ]),
         const SizedBox(height: 8),
+        Text('Open alerts (priority, fix, steps)', style: t.titleMedium),
+        if (_maps(s['alerts']).where((a) => a['status'] == 'open').isEmpty)
+          const Card(child: ListTile(dense: true, title: Text('No open alerts'))),
+        for (final a in _maps(s['alerts']).where((a) => a['status'] == 'open').take(25))
+          Card(
+            child: ExpansionTile(
+              dense: true,
+              leading: Icon(Icons.warning_amber_rounded,
+                  color: (a['prio'] as num? ?? 3) <= 1
+                      ? Colors.red.shade700
+                      : (a['prio'] as num? ?? 3) == 2
+                          ? Colors.orange.shade800
+                          : Colors.blue.shade700),
+              title: Text('${a['text']}', maxLines: 3, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${a['prio_text']} · '
+                  '${DateTime.fromMillisecondsSinceEpoch((((a['t'] as num?) ?? 0) * 1000).round()).toString().substring(0, 16)}'
+                  '${(a['count'] as num? ?? 1) > 1 ? ' · ${a['count']}×' : ''}\nFix: ${a['fix']}'),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              expandedCrossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final (i, step) in ((a['steps'] as List?) ?? const []).indexed)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text('${i + 1}. $step'),
+                  ),
+                const SizedBox(height: 4),
+                Text('Automatic fixes: PC app > Alerts > Troubleshoot.', style: t.bodySmall),
+              ],
+            ),
+          ),
+        const SizedBox(height: 8),
         Text('Setup checklist', style: t.titleMedium),
         if (checklist.isEmpty)
           const Card(child: ListTile(title: Text('Update Network Doctor on the PC to 3.13 or newer to see this.'))),
@@ -307,12 +338,14 @@ class InventoryTab extends StatefulWidget {
 class _InventoryTabState extends State<InventoryTab> {
   String _q = '';
   bool _onlyPcs = false;
+  bool _onlyAttention = false;
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     final rows = _maps(widget.s['inventory']).where((r) {
       if (_onlyPcs && '${r['model'] ?? ''}'.isEmpty) return false;
+      if (_onlyAttention && '${r['flag_text'] ?? ''}'.isEmpty) return false;
       if (_q.isEmpty) return true;
       return r.values.join(' ').toLowerCase().contains(_q.toLowerCase());
     }).toList();
@@ -325,19 +358,22 @@ class _InventoryTabState extends State<InventoryTab> {
         ),
         Row(children: [
           Checkbox(value: _onlyPcs, onChanged: (v) => setState(() => _onlyPcs = v ?? false)),
-          const Text('Only PCs with hardware details'),
+          const Flexible(child: Text('PCs with details')),
+          Checkbox(value: _onlyAttention, onChanged: (v) => setState(() => _onlyAttention = v ?? false)),
+          const Flexible(child: Text('Needs attention')),
           const Spacer(),
-          Text('${rows.length} devices', style: t.bodySmall),
+          Text('${rows.length}', style: t.bodySmall),
         ]),
         if (_maps(widget.s['inventory']).isEmpty)
-          const Card(child: ListTile(title: Text('No inventory from the PC yet (Network Doctor 3.13 or newer on the PC).'))),
+          const Card(child: ListTile(title: Text('No inventory from the PC yet (Network Doctor 3.14 or newer on the PC).'))),
         for (final r in rows.take(400))
           Card(
             child: ExpansionTile(
               leading: Icon(r['online'] == true ? Icons.circle : Icons.circle_outlined,
                   size: 12, color: r['online'] == true ? Colors.green.shade700 : Colors.grey),
               title: Text('${'${r['name'] ?? ''}'.isEmpty ? r['ip'] : r['name']}'),
-              subtitle: Text('${r['ip']} · ${r['category'] ?? ''}${'${r['dept'] ?? ''}'.isEmpty ? '' : ' · ${r['dept']}'}'),
+              subtitle: Text('${r['ip']} · ${r['category'] ?? ''}${'${r['dept'] ?? ''}'.isEmpty ? '' : ' · ${r['dept']}'}'
+                  '${'${r['flag_text'] ?? ''}'.isEmpty ? '' : '\n⚠ ${r['flag_text']}'}'),
               childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               expandedCrossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -345,7 +381,11 @@ class _InventoryTabState extends State<InventoryTab> {
                   ['MAC', 'mac'], ['Maker', 'vendor'], ['Host name', 'host'], ['Location', 'location'],
                   ['Status', 'status'], ['First seen', 'first_seen'], ['Windows', 'os'], ['Model', 'model'],
                   ['Serial no.', 'serial'], ['CPU', 'cpu'], ['RAM GB', 'ram_gb'], ['Disk GB', 'disk_gb'],
-                  ['Free GB', 'disk_free_gb'], ['User', 'user'],
+                  ['Free GB', 'disk_free_gb'], ['User', 'user'], ['RAM sticks', 'ram_detail'],
+                  ['Disks', 'disks'], ['Graphics', 'gpu'], ['Monitors', 'monitors'], ['Keyboard', 'keyboards'],
+                  ['Mouse', 'mice'], ['Printers', 'printers'], ['Antivirus', 'antivirus'], ['Firewall', 'firewall'],
+                  ['Drivers', 'driver_problems'], ['Last update', 'last_update'], ['BIOS', 'bios'],
+                  ['Programs', 'software_count'], ['Attention', 'flag_text'],
                 ])
                   if ('${r[f[1]] ?? ''}'.isNotEmpty)
                     Padding(

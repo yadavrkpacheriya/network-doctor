@@ -77,13 +77,26 @@ Future<AppUpdate?> checkForUpdate(String current) async {
   return best;
 }
 
-/// Automatic check at most once a day (the phone app has no other internet traffic).
+/// The daily check time: 15:00 on the phone's clock (same as the PC app).
+const dailyHour = 15;
+
+/// The most recent 15:00 that has already passed (today or yesterday).
+DateTime lastDaily(DateTime now) {
+  final t = DateTime(now.year, now.month, now.day, dailyHour);
+  return t.isAfter(now) ? DateTime(now.year, now.month, now.day - 1, dailyHour) : t;
+}
+
+/// True when there was no check since the most recent 15:00 (also when the phone was off at 15:00).
+bool dailyDue(int lastCheckMs, DateTime now) =>
+    lastCheckMs < lastDaily(now).millisecondsSinceEpoch;
+
+/// Automatic check once a day at 15:00 (the phone app has no other internet traffic).
 Future<AppUpdate?> dailyCheck(String current) async {
   try {
     final p = await SharedPreferences.getInstance();
     if (p.getBool('update_auto') == false) return null;
     final last = p.getInt('update_checked') ?? 0;
-    if (DateTime.now().millisecondsSinceEpoch - last < 20 * 3600 * 1000) return null;
+    if (!dailyDue(last, DateTime.now())) return null;
     return await checkForUpdate(current);
   } catch (_) {
     return null;

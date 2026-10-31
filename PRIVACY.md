@@ -34,7 +34,7 @@ You can pair the Android app with the Network Doctor PC app. The phone then read
 
 ## PC fix script reports
 
-If you use the optional PC fix script on office PCs, each PC sends its computer name, signed-in user name and network adapter MAC addresses to the Network Doctor PC app over your local network (TCP 8787). This needs a secret key built into the script; anything else is refused. The details are stored only on the Network Doctor PC, to name the devices.
+If you use the optional PC fix script on office PCs, each PC sends its computer name, signed-in user name and network adapter MAC addresses to the Network Doctor PC app over your local network (TCP 8787). This needs a secret key built into the script; anything else is refused. The details are stored only on the Network Doctor PC, to name the devices. With the hardware report on (or the "Inventory only" script), the PC also sends its maker, model, serial number, CPU, RAM, disks, graphics, monitors, keyboard, mouse, printers, antivirus and firewall status, driver problems, last Windows update, BIOS and the list of installed programs, for the Inventory tab. The Network Doctor PC reads the same details about itself once a day. None of this leaves your network.
 
 ## LAN speed test
 
@@ -44,7 +44,7 @@ When you tick *Receiver ON* in *Tools > LAN speed test*, the PC accepts speed te
 
 | Connection | Purpose | What is sent |
 |---|---|---|
-| GitHub (`api.github.com`, `github.com`) | Check for and download updates (Windows/Mac/Linux; Android once a day, can be switched off in About) | A request for the latest version; no personal data |
+| GitHub (`api.github.com`, `github.com`) | Check for and download updates (once a day at 15:00 on the PC and the phone; can be switched off in Setup / About) | A request for the latest version; no personal data |
 | Your MikroTik router - only when you save a router login in Setup | Read the device list, DHCP names and DNS cache; apply Network Doctor's own changes | The login stays on the PC, encrypted for the Windows user |
 | Public block-list sites (abuse.ch, Spamhaus, Emerging Threats, FireHOL, Tor Project) | Download lists of known malicious internet addresses | A normal download request; no personal data |
 | `rdap.org` and the regional internet registries | Look up which organisation owns an *internet* server your devices talk to | The internet server's public IP address only - never your own devices' details |

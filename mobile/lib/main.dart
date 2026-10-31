@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -8,7 +10,7 @@ import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/tools_screen.dart';
 
-const appVersion = '1.3.0';
+const appVersion = '1.4.0';
 
 void main() => runApp(const NetworkDoctorApp());
 
@@ -35,16 +37,36 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _tab = 0;
   AppUpdate? _update;
+  Timer? _updTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+    // the app may stay open past 15:00: look again every 10 minutes (only goes online once a day)
+    _updTimer = Timer.periodic(const Duration(minutes: 10), (_) => _check());
+  }
+
+  void _check() {
     dailyCheck(appVersion).then((u) {
       if (mounted && u != null) setState(() => _update = u);
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  @override
+  void dispose() {
+    _updTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override

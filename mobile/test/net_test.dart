@@ -116,6 +116,11 @@ void main() {
       expect(isNewer('1.10.0', '1.9.9'), isTrue);
       expect(isNewer('1.2.0', '1.2.0'), isFalse);
       expect(isNewer('mobile-v1.2.1', '1.3.0'), isFalse);
+      final at = DateTime(2026, 10, 31, 14, 59);
+      expect(lastDaily(at), DateTime(2026, 10, 30, 15));
+      expect(lastDaily(DateTime(2026, 10, 31, 15, 1)), DateTime(2026, 10, 31, 15));
+      expect(dailyDue(DateTime(2026, 10, 31, 10).millisecondsSinceEpoch, DateTime(2026, 10, 31, 15, 5)), isTrue);
+      expect(dailyDue(DateTime(2026, 10, 31, 15, 2).millisecondsSinceEpoch, DateTime(2026, 10, 31, 18)), isFalse);
       expect(parseVersion('1.3.0+5'), [1, 3, 0]);
     });
     test('newest Android release with an APK is picked', () {

@@ -706,7 +706,7 @@ class FixScriptDialog(tk.Toplevel):
         ttk.Checkbutton(f, text=f"Lock the router's MAC {self.gw_mac or '(scan first)'} - stops NetCut / ARP spoofing "
                                 "(use the Undo script if the router is ever replaced)",
                         variable=self.v["lock_gw"]).pack(anchor="w")
-        ttk.Checkbutton(f, text=f"Report the PC's name, user, MAC and hardware (model, serial, CPU, RAM, disk, Windows) "
+        ttk.Checkbutton(f, text=f"Report the PC's name, user, MAC and hardware (model, serial, CPU, RAM, SSD, printers, mouse, keyboard, antivirus, drivers) "
                                 f"to this Network Doctor ({app.lip}) - fills the Inventory and tags it on the map", variable=self.v["report"]).pack(anchor="w")
         ttk.Label(f, text="\nFor an unattended login script choose 'switch to automatic' or 'leave it' (nobody is "
                           "there to answer). Run from \\\\server\\share or a local copy - not a mapped drive letter, "
@@ -716,6 +716,15 @@ class FixScriptDialog(tk.Toplevel):
         bar.pack(fill="x", pady=(10, 0))
         ttk.Button(bar, text="Create scripts", style="Big.TButton", command=self.create).pack(side="right")
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right", padx=6)
+        ttk.Button(bar, text="Inventory only (changes nothing)", command=self.inventory_only).pack(side="left")
+
+    def inventory_only(self):
+        """Only read the PC details (RAM, SSD, printers, antivirus...) and report them; no network changes."""
+        for k in ("random_off", "renew", "lock_gw"):
+            self.v[k].set(False)
+        self.v["report"].set(True)
+        self.var_dhcp.set("no")
+        self.create()
 
     def create(self):
         app = self.app
@@ -753,8 +762,16 @@ class CommandsTab:
         self.cb = ttk.Combobox(top, textvariable=self.var_dev, width=46, state="readonly")
         self.cb.pack(side="left", padx=4)
         self.cb.bind("<<ComboboxSelected>>", lambda e: self.pick_dev())
-        ttk.Label(top, text="  {ip} {mac} {name} {port} in a command are filled from this device",
-                  foreground="#667085").pack(side="left")
+        ttk.Label(top, text="Brand / type:").pack(side="left", padx=(10, 0))
+        self.var_grp = tk.StringVar(value="All")
+        self.cb_grp = ttk.Combobox(top, textvariable=self.var_grp, width=34, state="readonly")
+        self.cb_grp.pack(side="left", padx=4)
+        self.cb_grp.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Find:").pack(side="left", padx=(6, 0))
+        self.var_cq = tk.StringVar()
+        ent = ttk.Entry(top, textvariable=self.var_cq, width=16)
+        ent.pack(side="left", padx=4)
+        ent.bind("<KeyRelease>", lambda e: self.refresh())
         ttk.Button(top, text="Delete my command", command=self.delete).pack(side="right")
         ttk.Button(top, text="Add my own command...", command=self.add).pack(side="right", padx=6)
         ttk.Button(top, text="PC fix script...", command=lambda: FixScriptDialog(app)).pack(side="right")
@@ -795,13 +812,25 @@ class CommandsTab:
         tv.delete(*tv.get_children())
         self.items = {}
         groups = {}
-        for c in self.all_commands():
+        allc = self.all_commands()
+        names = list(dict.fromkeys(c[0] for c in allc))
+        self.cb_grp.configure(values=["All"] + names)
+        want, q = self.var_grp.get(), self.var_cq.get().strip().lower()
+        for c in allc:
             cat = c[0]
+            if want not in ("All", "") and cat != want:
+                continue
+            if q and q not in " ".join(c).lower():
+                continue
             if cat not in groups:
                 groups[cat] = tv.insert("", "end", text=cat, open=True, tags=("cat",))
-            iid = tv.insert(groups[cat], "end", text=c[2], values=(c[1], c[3]))
+            iid = tv.insert(groups[cat], "end", text=c[2], values=(c[1], c[3].replace("\n", "  ;  ")))
             self.items[iid] = c
         self.show()
+
+    def select_group(self, name):
+        self.var_grp.set(name)
+        self.refresh()
 
     def pick_dev(self):
         self.app.selected_device = self.devmap.get(self.var_dev.get())
@@ -810,7 +839,7 @@ class CommandsTab:
     def values(self):
         app = self.app
         gwd = next((d for d in app.devices if d.get("ip") == app.gw and d.get("mac")), None)
-        return T.command_values(app.selected_device, app.gw, gwd["mac"] if gwd else "")
+        return T.command_values(app.selected_device, app.gw, gwd["mac"] if gwd else "", app.lip)
 
     def current(self):
         sel = self.tv.selection()
@@ -824,9 +853,12 @@ class CommandsTab:
         self.var_cmd.set(text)
         where = {"This PC": "Runs on this PC (Run button) - or copy it to another PC.",
                  "Router": "Run on router (router login in Setup) - or paste it in WinBox > New Terminal.",
-                 "Each PC": "Run on the PC concerned."}.get(c[1], "")
+                 "Each PC": "Run on the PC concerned."}.get(
+            c[1], "Paste it in that device's console (SSH / Telnet / serial) or follow it on its web page. "
+                  "Check the model's manual: commands differ a little between firmware versions.")
         self.var_use.set(f"{c[2]}\n{c[4]}\n{where}" + (f"\nStill to fill: {', '.join(missing)} (asked when you run it)"
-                                                       if missing else ""))
+                                                       if missing else "")
+                         + (f"\n\nPaste these lines one after the other:\n{text}" if "\n" in text else ""))
         can = c[1] == "This PC" and ((c[0] == "Mac") == core.IS_MAC or c[0] == "My commands")
         self.btn_run.configure(state="normal" if can else "disabled")
         self.btn_router.configure(state="normal" if c[1] == "Router" else "disabled")
@@ -1433,3 +1465,276 @@ class SlowTab:
         self.app.clipboard_clear()
         self.app.clipboard_append("\n".join(lines))
         self.app.var_status.set("Report copied.")
+
+
+# ---------------------------------------------------------------- alerts: history, priority, fixes, troubleshoot
+import nd_alerts as AL  # noqa: E402
+
+PRIO_COLORS = {1: "#b42318", 2: "#c4320a", 3: "#1d4ed8", 4: "#667085"}
+
+
+class AlertsTab:
+    """Every alert with time, priority, device and fix; Troubleshoot fixes it or walks you through it."""
+
+    def __init__(self, app, parent):
+        self.app = app
+        top = ttk.Frame(parent, padding=(0, 6))
+        top.pack(fill="x")
+        ttk.Label(top, text="Show:").pack(side="left")
+        self.var_show = tk.StringVar(value="Open alerts")
+        cb = ttk.Combobox(top, textvariable=self.var_show, state="readonly", width=16,
+                          values=["Open alerts", "All alerts", "Fixed"])
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Priority:").pack(side="left", padx=(8, 0))
+        self.var_prio = tk.StringVar(value="All")
+        cb = ttk.Combobox(top, textvariable=self.var_prio, state="readonly", width=20,
+                          values=["All"] + list(AL.PRIO.values()))
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Label(top, text="Find:").pack(side="left", padx=(8, 0))
+        self.var_q = tk.StringVar()
+        e = ttk.Entry(top, textvariable=self.var_q, width=18)
+        e.pack(side="left", padx=4)
+        e.bind("<KeyRelease>", lambda ev: self.refresh())
+        ttk.Button(top, text="Export to Excel (CSV)", command=lambda: self.export("csv")).pack(side="right")
+        ttk.Button(top, text="Export report (HTML)", command=lambda: self.export("html")).pack(side="right", padx=6)
+        self.var_sum = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self.var_sum, foreground="#5b21b6").pack(anchor="w")
+        act = ttk.Frame(parent, padding=(0, 6, 0, 0))
+        act.pack(fill="x", side="bottom")
+        ttk.Button(act, text="Troubleshoot", style="Big.TButton", command=self.troubleshoot).pack(side="left")
+        ttk.Button(act, text="Mark fixed", command=lambda: self.mark("fixed")).pack(side="left", padx=6)
+        ttk.Button(act, text="Re-open", command=lambda: self.mark("open")).pack(side="left")
+        ttk.Button(act, text="Copy", command=self.copy).pack(side="left", padx=6)
+        ttk.Label(act, text="Double-click an alert to troubleshoot it", foreground="#667085").pack(side="left", padx=8)
+        cols = ("prio", "device", "alert", "fix", "times", "status")
+        heads = ("Priority", "Device", "Alert", "Fix", "Times", "Status")
+        widths = (120, 170, 430, 420, 55, 110)
+        self.tv = UI["make_tree"](parent, cols, heads, widths, first=("Time", 140), selectmode="extended")
+        for p, c in PRIO_COLORS.items():
+            self.tv.tag_configure(f"p{p}", foreground=c)
+        self.tv.tag_configure("fixed", foreground="#12b76a")
+        self.tv.bind("<Double-1>", lambda e: self.troubleshoot())
+        self.rows = {}
+
+    def names(self):
+        return {d.get("ip"): (d.get("tag") or {}).get("name") or d.get("name") or "" for d in self.app.devices}
+
+    def items(self):
+        show, prio, q = self.var_show.get(), self.var_prio.get(), self.var_q.get().strip().lower()
+        out = []
+        for x in self.app.alert_log.recent(3000):
+            if show == "Open alerts" and x.get("status") != "open" or show == "Fixed" and x.get("status") != "fixed":
+                continue
+            if prio != "All" and AL.PRIO[x["prio"]] != prio:
+                continue
+            if q and q not in (x["text"] + x["fix"] + x.get("ip", "")).lower():
+                continue
+            out.append(x)
+        return out
+
+    def refresh(self):
+        tv = self.tv
+        sel = set(tv.selection())
+        tv.delete(*tv.get_children())
+        self.rows = {}
+        names = self.names()
+        xs = self.items()
+        xs.sort(key=lambda x: (x.get("status") != "open", x["prio"], -x["last"]))
+        for x in xs[:1500]:
+            dev = (names.get(x.get("ip")) or "-") + (f"  {x['ip']}" if x.get("ip") else "")
+            iid = tv.insert("", "end", iid=x["id"], text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
+                            values=(AL.PRIO[x["prio"]], dev, x["text"], x["fix"], x.get("count", 1),
+                                    x.get("status", "")),
+                            tags=("fixed",) if x.get("status") == "fixed" else (f"p{x['prio']}",))
+            self.rows[iid] = x
+        for i in sel:
+            if tv.exists(i):
+                tv.selection_add(i)
+        allx = self.app.alert_log.recent(3000)
+        op = [x for x in allx if x.get("status") == "open"]
+        self.var_sum.set(f"{len(op)} open  |  P1 fix now: {sum(x['prio'] == 1 for x in op)}  |  "
+                         f"P2 today: {sum(x['prio'] == 2 for x in op)}  |  {len(allx)} alerts kept  |  "
+                         "the same alert within 15 minutes is counted, not repeated")
+
+    def selected(self):
+        return [self.rows[i] for i in self.tv.selection() if i in self.rows]
+
+    def mark(self, status):
+        sel = self.selected()
+        if sel:
+            self.app.alert_log.set_status({x["id"] for x in sel}, status)
+            self.app.alert_log.save()
+            self.refresh()
+
+    def copy(self):
+        sel = self.selected() or self.items()[:30]
+        lines = [f"{time.strftime('%d-%b %H:%M', time.localtime(x['t']))}  {AL.PRIO[x['prio']]}  {x['text']}"
+                 f"\n    Fix: {x['fix']}" for x in sel]
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(lines))
+        self.app.var_status.set(f"Copied {len(sel)} alert(s) with their fixes.")
+
+    def export(self, kind):
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        ext = ".csv" if kind == "csv" else ".html"
+        p = filedialog.asksaveasfilename(initialdir=core.REPORT_DIR, defaultextension=ext,
+                                         initialfile=time.strftime(f"network-alerts-%Y%m%d-%H%M{ext}"),
+                                         filetypes=[("Excel CSV", "*.csv")] if kind == "csv" else [("Web page",
+                                                                                                    "*.html")])
+        if not p:
+            return
+        xs = self.selected() if len(self.selected()) > 1 else self.items()
+        (AL.export_csv if kind == "csv" else AL.export_html)(p, xs, self.names())
+        self.app.var_status.set(f"{len(xs)} alerts saved: {p}")
+        if kind == "html":
+            try:
+                import webbrowser
+                webbrowser.open("file:///" + p.replace("\\", "/"))
+            except Exception:
+                pass
+        else:
+            self.app.open_folder(os.path.dirname(p))
+
+    def troubleshoot(self, alert=None):
+        x = alert or (self.selected() or [None])[0]
+        if not x:
+            messagebox.showinfo(APP, "Select an alert first.")
+            return
+        TroubleshootWindow(self.app, x)
+
+    def open_latest(self):
+        xs = self.app.alert_log.recent(1, only_open=True)
+        if xs:
+            self.troubleshoot(xs[0])
+
+
+class TroubleshootWindow(tk.Toplevel):
+    """One alert: what it means, automatic fixes (router / this PC), numbered steps with tick boxes, re-check."""
+
+    def __init__(self, app, alert):
+        super().__init__(app)
+        self.app, self.alert = app, alert
+        r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw)
+        self.title("Troubleshoot - " + r["title"][:60])
+        self.geometry("820x640")
+        self.transient(app)
+        f = ttk.Frame(self, padding=14)
+        f.pack(fill="both", expand=True)
+        head = ttk.Frame(f)
+        head.pack(fill="x")
+        tk.Label(head, text=f" {r['prio_text']} ", bg=PRIO_COLORS[r["prio"]], fg="white",
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(head, text="  " + time.strftime("%d-%b-%Y %H:%M:%S", time.localtime(alert["t"]))
+                  + (f"   ({alert.get('count', 1)} times, last "
+                     f"{time.strftime('%H:%M', time.localtime(alert['last']))})" if alert.get("count", 1) > 1 else ""),
+                  foreground="#667085").pack(side="left")
+        ttk.Label(f, text=r["title"], font=("Segoe UI", 13, "bold"), wraplength=780, justify="left").pack(
+            anchor="w", pady=(8, 2))
+        ttk.Label(f, text=alert["text"], foreground="#667085", wraplength=780, justify="left").pack(anchor="w")
+        ttk.Label(f, text=r["why"], wraplength=780, justify="left").pack(anchor="w", pady=(8, 0))
+        ttk.Label(f, text="Fix: " + r["fix"], font=("Segoe UI", 10, "bold"), wraplength=780, justify="left").pack(
+            anchor="w", pady=(6, 6))
+        if r["auto"] or r.get("app"):
+            box = ttk.LabelFrame(f, text="Fix it automatically", padding=8)
+            box.pack(fill="x", pady=(0, 6))
+            for a in r["auto"]:
+                where = {"router": "on the router", "router_read": "reads the router", "pc": "on this PC"}.get(
+                    a["where"], "")
+                ttk.Button(box, text=f"{a['label']}  ({where})", style="Big.TButton",
+                           command=lambda a=a: self.run(a)).pack(anchor="w", pady=2)
+            if r.get("app"):
+                ttk.Button(box, text=r["app"][0], command=lambda: self.go(r["app"][1])).pack(anchor="w", pady=2)
+            ttk.Label(box, text="Router fixes need the router login (Setup) and ask before changing anything. "
+                                "Without a login, 'Show commands' gives them to paste in WinBox > New Terminal.",
+                      foreground="#667085", wraplength=760, justify="left").pack(anchor="w")
+            if any(a["where"] == "router" for a in r["auto"]):
+                ttk.Button(box, text="Show commands", command=self.show_cmds).pack(anchor="w", pady=(4, 0))
+        sb = ttk.LabelFrame(f, text="Step by step (tick each step when done)", padding=8)
+        sb.pack(fill="both", expand=True)
+        self.ticks = []
+        for i, s in enumerate(r["steps"], 1):
+            v = tk.BooleanVar(value=False)
+            ttk.Checkbutton(sb, text=f"{i}.  {s}", variable=v).pack(anchor="w", pady=2)
+            self.ticks.append(v)
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(8, 0))
+        self.var_res = tk.StringVar(value="")
+        ttk.Button(bar, text="Close", command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="Mark fixed", command=self.fixed).pack(side="right", padx=6)
+        ttk.Button(bar, text="Re-check now", command=self.recheck).pack(side="right")
+        ttk.Button(bar, text="Copy steps", command=self.copy).pack(side="left")
+        ttk.Label(bar, textvariable=self.var_res, foreground="#027a48").pack(side="left", padx=8)
+
+    def script(self, a):
+        cmd = a["cmd"]
+        if cmd in ("@torrent_guard", "@dhcp_guard"):
+            key = "torrent" if cmd == "@torrent_guard" else "dhcp"
+            cmd = T.guard_commands({key: True}, [], self.app.lip, "bridge")[0]
+        return cmd
+
+    def run(self, a):
+        if a["where"] == "pc":
+            if not core.IS_WIN:
+                messagebox.showinfo(APP, f"Run this on a Windows PC:\n\n{a['cmd']}")
+                return
+            try:
+                subprocess.Popen(f"cmd /k {a['cmd']}", creationflags=0x00000010)
+                self.var_res.set("Started in a new window on this PC.")
+            except Exception as e:
+                messagebox.showerror(APP, str(e))
+            return
+        if a["where"] == "router_read":
+            self.app.router_cli(a["cmd"], a["label"])
+            return
+
+        def done(err):
+            if not err:
+                self.var_res.set(f"Done: {a['label']}. Re-check in a few minutes.")
+                self.app.alert_log.set_status({self.alert["id"]}, "fixed", "automatic fix: " + a["label"])
+                self.app.alert_log.save()
+                self.app.alerts_tab.refresh()
+        if not self.app.router_apply(self.script(a), a["label"], done):
+            self.show_cmds()
+
+    def show_cmds(self):
+        txt = "\n\n".join(f"# {a['label']}\n{self.script(a)}" for a in self.r["auto"] if a["where"] == "router")
+        w = tk.Toplevel(self)
+        w.title("Commands - paste in WinBox > New Terminal")
+        w.geometry("760x420")
+        t = UI["text_box"](w)
+        t.configure(state="normal")
+        t.insert("1.0", txt)
+        ttk.Button(w, text="Copy", command=lambda: (self.app.clipboard_clear(), self.app.clipboard_append(txt))).pack(
+            anchor="e", padx=8, pady=6)
+
+    def go(self, where):
+        self.destroy()
+        self.app.deiconify()
+        if where == "rca":
+            self.app.show_tab("rca")
+            self.app.run_rca()
+        else:
+            self.app.show_tab(where)
+
+    def recheck(self):
+        self.var_res.set("Checking the network again... (results in Problems and here)")
+        try:
+            self.app.start_quick(manual=True)
+        except TypeError:
+            self.app.start_quick()
+
+    def fixed(self):
+        self.app.alert_log.set_status({self.alert["id"]}, "fixed")
+        self.app.alert_log.save()
+        self.app.alerts_tab.refresh()
+        self.destroy()
+
+    def copy(self):
+        r = self.r
+        txt = (f"{r['prio_text']}: {r['title']}\n{self.alert['text']}\n\n{r['why']}\n\nFix: {r['fix']}\n"
+               + "\n".join(f"{i}. {s}" for i, s in enumerate(r["steps"], 1)))
+        self.app.clipboard_clear()
+        self.app.clipboard_append(txt)
+        self.var_res.set("Copied.")

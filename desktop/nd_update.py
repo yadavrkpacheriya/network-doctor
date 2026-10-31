@@ -25,7 +25,7 @@ import urllib.request
 REPO = "yadavrkpacheriya/network-doctor"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
-SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py", "nd_routeros.py", "nd_usage.py", "nd_home.py", "nd_slow.py"]
+SOURCE_FILES = ["NetworkDoctor.py", "nd_core.py", "nd_monitor.py", "nd_update.py", "nd_share.py", "nd_tools.py", "nd_tabs.py", "nd_net.py", "nd_toolstab.py", "nd_snmp.py", "nd_plugins.py", "nd_linux.py", "nd_dnsfilter.py", "nd_routeros.py", "nd_usage.py", "nd_home.py", "nd_slow.py", "nd_smbinfo.py", "nd_alerts.py"]
 UA = {"User-Agent": "NetworkDoctor-updater", "Accept": "application/vnd.github+json"}
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
@@ -40,6 +40,24 @@ class UpdateError(Exception):
 def parse_version(v):
     nums = re.findall(r"\d+", v or "")
     return tuple(int(x) for x in nums[:4]) or (0,)
+
+
+DAILY_HOUR = 15  # automatic update check every day at 15:00 (local time)
+
+
+def last_daily(now=None, hour=DAILY_HOUR):
+    """Epoch seconds of the most recent hh:00 that has already passed (today or yesterday)."""
+    now = time.time() if now is None else now
+    lt = time.localtime(now)
+    t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, 0, 0, 0, 0, -1))
+    if t > now:
+        t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - 1, hour, 0, 0, 0, 0, -1))
+    return t
+
+
+def daily_due(last_check, now=None, hour=DAILY_HOUR):
+    """True when no check happened since the most recent 15:00 (also catches a PC that was off at 15:00)."""
+    return (last_check or 0) < last_daily(now, hour)
 
 
 def is_frozen():
