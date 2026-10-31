@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           pip install pyinstaller
-          python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
+          python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor --icon store/NetworkDoctor.ico \
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts \
             NetworkDoctor.py
       - name: Run the exe self-test (every page + phone link)
@@ -38,6 +38,14 @@ jobs:
           if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Error "self-test did not finish" }
           Get-Content screens\selftest.txt
           if ($p.ExitCode -ne 0) { Write-Error "self-test reported errors" }
+      - name: Build the Microsoft Store package (proves the .msix builds)
+        shell: pwsh
+        run: |
+          pip install pillow
+          New-Item -ItemType Directory -Force dist-store | Out-Null
+          Copy-Item dist\NetworkDoctor.exe dist-store\
+          ./store/build_msix.ps1 -Version (Select-String -Path NetworkDoctor.py -Pattern '^VERSION = "([0-9.]+)"').Matches[0].Groups[1].Value
+          Get-Item dist\NetworkDoctor-Store.msix | Format-List Name, Length
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

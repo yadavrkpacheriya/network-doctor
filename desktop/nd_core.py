@@ -46,9 +46,11 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.17.0"
+VERSION = "3.17.1"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
+# Installed from the Microsoft Store (MSIX): Windows keeps it under ...\WindowsApps\ and the Store updates it
+IS_STORE = IS_WIN and "\\windowsapps\\" in (getattr(sys, "executable", "") or "").lower()
 if getattr(sys, "frozen", False):
     HERE = os.path.dirname(sys.executable)
 else:

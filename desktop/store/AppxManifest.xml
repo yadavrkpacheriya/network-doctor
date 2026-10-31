@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Microsoft Store package of Network Doctor. Identity values come from Partner Center > Product identity.
+     __VERSION__ is filled in by build_msix.ps1 (x.y.z.0 - the Store needs the last number to be 0). -->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="Pacheriya.NetworkDoctor"
+            Publisher="CN=6CCAB418-CC0A-4B85-9032-8A67923E523F"
+            Version="__VERSION__"
+            ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Network Doctor</DisplayName>
+    <PublisherDisplayName>Pacheriya</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Network scanner, monitor and troubleshooter for office networks.</Description>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="NetworkDoctor" Executable="NetworkDoctor.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Network Doctor"
+                          Description="Finds every device, problem and cause on your office network and helps fix it."
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="allowElevation" />
+  </Capabilities>
+</Package>
