@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../net/model.dart';
 import '../net/probe.dart';
 import 'common.dart';
+import 'pc_actions.dart';
 
 /// One device: details, ping with live graph, open in browser.
 class DeviceScreen extends StatelessWidget {
@@ -51,6 +52,10 @@ class DeviceScreen extends StatelessWidget {
           ),
           OutlinedButton.icon(onPressed: () => copyText(context, d.ip), icon: const Icon(Icons.copy), label: const Text('Copy IP')),
         ]),
+        if (d.fromPc) ...[
+          const SizedBox(height: 12),
+          PcDeviceActions(ip: d.ip, mac: d.mac, name: d.name),
+        ],
         const SizedBox(height: 16),
         row('IP address', d.allIps.length > 1 ? d.allIps.join(', ') : d.ip),
         row('Status', d.status),

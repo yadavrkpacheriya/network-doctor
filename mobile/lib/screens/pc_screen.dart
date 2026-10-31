@@ -8,6 +8,7 @@ import '../net/model.dart';
 import '../net/pc_link.dart';
 import '../net/probe.dart';
 import 'common.dart';
+import 'pc_actions.dart';
 import 'pc_more.dart';
 
 /// "Office PC": pair with the Network Doctor PC app and show its results.
@@ -246,6 +247,7 @@ class _PcDashboardState extends State<PcDashboard> {
   @override
   void initState() {
     super.initState();
+    PcLink.current = widget.pc;
     _load();
     _timer = Timer.periodic(const Duration(seconds: 6), (_) => _load());
   }
@@ -289,7 +291,7 @@ class _PcDashboardState extends State<PcDashboard> {
   Widget build(BuildContext context) {
     final s = _s;
     return DefaultTabController(
-      length: 6,
+      length: 10,
       child: Builder(builder: (ctx) => Scaffold(
         appBar: AppBar(
           title: Text(widget.pc.name, overflow: TextOverflow.ellipsis),
@@ -314,11 +316,15 @@ class _PcDashboardState extends State<PcDashboard> {
           ],
           bottom: const TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [
             Tab(text: 'Summary'),
+            Tab(text: 'Alerts'),
             Tab(text: 'Problems'),
             Tab(text: 'Devices'),
+            Tab(text: 'Map'),
             Tab(text: 'Usage'),
             Tab(text: 'Inventory'),
             Tab(text: 'Monitor'),
+            Tab(text: 'Health'),
+            Tab(text: 'Tools & commands'),
           ]),
         ),
         body: Column(children: [
@@ -333,18 +339,26 @@ class _PcDashboardState extends State<PcDashboard> {
             child: s == null
                 ? Center(child: _err.isEmpty ? const CircularProgressIndicator() : const SizedBox.shrink())
                 : TabBarView(children: [
-                    SummaryTab(s: s, onRefresh: _load, goTo: (i) => DefaultTabController.of(ctx).animateTo(i)),
+                    SummaryTab(s: s, onRefresh: _load, goTo: (i) => DefaultTabController.of(ctx).animateTo(_tabFor(i))),
+                    AlertsTab(s: s, onRefresh: _load),
                     _ProblemsTab(s: s, onRefresh: _load),
                     _devicesTab(s),
+                    MapTab(s: s, onRefresh: _load),
                     UsageTab(s: s, onRefresh: _load),
                     InventoryTab(s: s, onRefresh: _load),
                     _MonitorTab(s: s, onRefresh: _load),
+                    HealthTab(s: s, onRefresh: _load),
+                    PcToolsTab(s: s),
                   ]),
           ),
         ]),
       )),
     );
   }
+
+  /// Summary cards were written for the old tab order (0 summary, 1 problems, 2 devices, 3 usage, 4 inventory,
+  /// 5 monitor).
+  int _tabFor(int old) => const [0, 2, 3, 5, 6, 7][old.clamp(0, 5)];
 
   Widget _devicesTab(Map<String, dynamic> s) {
     final devs = ((s['devices'] as List?) ?? const [])

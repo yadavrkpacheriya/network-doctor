@@ -58,7 +58,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.15.0"
+VERSION = "3.16.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2394,13 +2394,213 @@ class App(tk.Tk):
                 self.share.forget(tok)
         self._share_label()
 
-    def _remote_cmd(self, name):
+    # ---------------------------------------------------------------- phone app actions (phone-link thread)
+    def _job(self, title, fn):
+        """Runs fn() -> text in the background; the phone polls with action 'job'."""
+        jobs = self.__dict__.setdefault("phone_jobs", {})
+        jid = f"{int(time.time() * 1000)}"
+        jobs[jid] = {"id": jid, "title": title, "done": False, "ok": None, "text": "", "t": time.time()}
+
+        def work():
+            try:
+                text = fn()
+                jobs[jid].update(done=True, ok=True, text=str(text or "done")[:20000])
+            except Exception as e:
+                jobs[jid].update(done=True, ok=False, text=f"{type(e).__name__}: {e}"[:2000])
+        threading.Thread(target=work, daemon=True).start()
+        for k in [k for k, v in jobs.items() if time.time() - v["t"] > 3600]:
+            jobs.pop(k, None)
+        return {"ok": True, "job": jid, "message": title + " started"}
+
+    def _router_job(self, title, script):
+        c = self.router_client(ask=False)
+        if not c:
+            return {"ok": False, "message": "No router login is saved on the PC (Setup > Router login)."}
+
+        def run():
+            with c:
+                err = c.run_script(script)
+            self._health_log("Router", "warning" if err else "info", f"{title} (from the phone): {err or 'applied'}")
+            if err:
+                raise RuntimeError("the router refused it: " + err)
+            return f"{title}: applied on the router."
+        return self._job(title, run)
+
+    def _dev_by(self, args):
+        mac = core.norm_mac(str(args.get("mac") or "")) if args.get("mac") else ""
+        ip = str(args.get("ip") or "")
+        for d in list(self.devices):
+            if mac and d.get("mac") == mac or not mac and ip and d.get("ip") == ip:
+                return d
+        return None
+
+    def _remote_cmd(self, name, args=None):
+        """Actions the paired phone app may run. Always answers a dict {ok, message[, job]}."""
+        a = args if isinstance(args, dict) else {}
+        try:
+            return self._remote(name, a)
+        except Exception as e:
+            return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+    def _remote(self, name, a):
+        ipre = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
         if name == "scan":
             if getattr(self, "scanning", False):
                 return "a scan is already running"
             self.q.put(("remote_scan",))
             return "scan started"
-        return "unknown command"
+        if name == "job":
+            j = (self.__dict__.get("phone_jobs") or {}).get(str(a.get("id")))
+            return dict(j, ok=True) if j else {"ok": False, "message": "unknown job"}
+        if name == "quick":
+            self.q.put(("call", lambda: self.start_quick(manual=True)))
+            return {"ok": True, "message": "Quick check started on the PC"}
+        if name in ("ping", "trace"):
+            ip = str(a.get("ip", ""))
+            if not ipre.match(ip):
+                return {"ok": False, "message": "not an IP address"}
+            if name == "ping":
+                cmd = ["ping", "-n", "8", ip] if core.IS_WIN else ["ping", "-c", "8", ip]
+            else:
+                cmd = ["tracert", "-d", "-w", "700", "-h", "15", ip] if core.IS_WIN else ["traceroute", "-n", ip]
+            return self._job(f"{'Ping' if name == 'ping' else 'Traceroute'} {ip} from the PC", lambda: core.run(cmd, 90))
+        if name == "wol":
+            mac = core.norm_mac(str(a.get("mac", "")))
+            pre = int(self.net.split("/")[1]) if "/" in (self.net or "") else 24
+            m, sent = NT.wake_on_lan(mac, self.lip, pre, a.get("ip"))
+            return {"ok": True, "message": f"Magic packet for {m} sent to {', '.join(sent)}"}
+        if name == "tag":
+            mac = core.norm_mac(str(a.get("mac", "")))
+            if not mac:
+                return {"ok": False, "message": "this device has no MAC address"}
+            vals = {k: str(a[k])[:60] for k in ("name", "dept", "location", "notes") if k in a}
+
+            def do():
+                T.set_tag(self.db, mac, **vals)
+                self.after_tags_changed()
+            self.q.put(("call", do))
+            return {"ok": True, "message": "Saved on the PC"}
+        if name == "alert_status":
+            self.alert_log.set_status({str(a.get("id"))}, "fixed" if a.get("status") == "fixed" else "open",
+                                      "marked on the phone")
+            self.alert_log.save()
+            self._refresh_alerts()
+            return {"ok": True, "message": "Alert updated"}
+        if name == "alert_fix":
+            x = self.alert_log.get(str(a.get("id")))
+            if not x:
+                return {"ok": False, "message": "alert not found"}
+            r = AL.explain(x["text"], x["sev"], self.lip, self.gw)
+            fixes = [f for f in r["auto"] if f["where"] in ("router", "router_read")]
+            n = int(a.get("n", 0))
+            if not 0 <= n < len(fixes):
+                return {"ok": False, "message": "no automatic fix for this alert"}
+            f = fixes[n]
+            cmd = f["cmd"]
+            if cmd in ("@torrent_guard", "@dhcp_guard"):
+                cmd = T.guard_commands({"torrent" if "torrent" in cmd else "dhcp": True}, [], self.lip, "bridge")[0]
+            if f["where"] == "router_read":
+                c = self.router_client(ask=False)
+                if not c:
+                    return {"ok": False, "message": "No router login is saved on the PC."}
+
+                def read():
+                    with c:
+                        return c.run_cli(cmd)
+                return self._job(f["label"], read)
+            res = self._router_job(f["label"], cmd)
+            if res.get("ok"):
+                self.alert_log.set_status({x["id"]}, "fixed", "fixed from the phone: " + f["label"])
+                self.alert_log.save()
+                self._refresh_alerts()
+            return res
+        if name == "block":
+            d = self._dev_by(a)
+            mac = (d or {}).get("mac") or core.norm_mac(str(a.get("mac", "")))
+            if not mac:
+                return {"ok": False, "message": "device not found"}
+            if a.get("on", True):
+                rule = f'chain=forward src-mac-address={mac} action=drop comment="ND phone block {mac}"'
+                script = (f':do {{ /ip firewall filter add {rule} place-before=([/ip firewall filter find]->0) }} '
+                          f'on-error={{ /ip firewall filter add {rule} }}')
+                return self._router_job(f"Block internet of {(d or {}).get('name') or mac}", script)
+            return self._router_job(f"Unblock {(d or {}).get('name') or mac}",
+                                    f'/ip firewall filter remove [find where comment="ND phone block {mac}"]')
+        if name == "bind":
+            devs = [self._dev_by({"mac": m}) for m in (a.get("macs") or [])]
+            devs = [d for d in devs if d and d.get("mac") and d.get("ip")]
+            if not devs:
+                return {"ok": False, "message": "no device to bind"}
+            apply, _undo = T.binding_commands(devs, T.tags_of(self.db), False, False, "bridge")
+            res = self._router_job(f"IP-MAC binding ({len(devs)} device(s))", apply)
+            if res.get("ok"):
+                with core.DB_LOCK:
+                    b = self.db.setdefault("bindings", {})
+                    for d in devs:
+                        b[d["mac"]] = {"ip": d["ip"], "time": core.now_s()}
+                core.save_db(self.db)
+            return res
+        if name == "guard":
+            opt = str(a.get("opt", ""))
+            if opt not in ("torrent", "dns", "dhcp", "random"):
+                return {"ok": False, "message": "unknown guard option"}
+            script = T.guard_commands({opt: True}, [], self.lip, "bridge")[0]
+            return self._router_job({"torrent": "Block torrents", "dns": "All DNS through the router",
+                                     "dhcp": "Block rogue DHCP", "random": "Block randomized MACs"}[opt], script)
+        if name == "router_cmd":
+            i = int(a.get("i", -1))
+            if not 0 <= i < len(T.COMMANDS) or T.COMMANDS[i][1] != "Router":
+                return {"ok": False, "message": "not a router command"}
+            d = self._dev_by(a)
+            gwd = next((x for x in self.devices if x.get("ip") == self.gw and x.get("mac")), None)
+            vals = T.command_values(d, self.gw, gwd["mac"] if gwd else "", self.lip)
+            vals.update({k: str(v) for k, v in (a.get("values") or {}).items() if re.fullmatch(r"\w+", k)})
+            text, missing = T.fill(T.COMMANDS[i][3], vals)
+            if missing:
+                return {"ok": False, "message": "fill in: " + ", ".join(missing), "missing": missing}
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC."}
+
+            def run():
+                with c:
+                    if re.search(r"\b(add|set|remove|disable|enable)\b", text):
+                        err = c.run_script(text)
+                        if err:
+                            raise RuntimeError(err)
+                        return "applied:\n" + text
+                    return c.run_cli(text) or "(no output)"
+            return self._job(T.COMMANDS[i][2], run)
+        if name == "slow":
+            import nd_slow as S
+            url = S.norm_url(str(a.get("url", "")))
+            if not url:
+                return {"ok": False, "message": "type a website"}
+            dev = self._dev_by(a)
+            mbps = float(a.get("mbps") or self._settings().get("line_mbps") or 100)
+            ctx = {"gw": self.gw, "lip": self.lip, "mon": self.mon, "usage": self.usage, "db": self.db,
+                   "raw": self.raw, "issues": list(self.issues), "devices": list(self.devices),
+                   "router": self.router_client(ask=False), "line_mbps": mbps}
+
+            def run():
+                m = S.measure(url, dev, ctx)
+                m["gw"] = self.gw
+                out = []
+                for f in S.judge(m):
+                    out.append(f"■ {f['title']}  ({f['conf']})")
+                    out += ["   · " + e for e in f.get("evidence", [])[:6]]
+                    out += ["   → " + x for x in f.get("fixes", [])[:6]]
+                    out.append("")
+                return "\n".join(out) or "No problem found."
+            return self._job(f"Slow website check: {url}", run)
+        if name == "set_category":
+            if not self.usage:
+                return {"ok": False, "message": "usage history is off"}
+            self.usage.set_category(str(a.get("kind", "app")), str(a.get("value", "")), a.get("cat") or None,
+                                    str(a.get("dept", "")) or "")
+            self._usage_snap_cache = None
+            return {"ok": True, "message": "Category saved"}
+        return {"ok": False, "message": f"unknown action '{name}'"}
 
     def _snapshot(self):
         """Everything the phone app shows. Runs on the phone-link thread: reads data only, never Tk."""
@@ -2431,10 +2631,40 @@ class App(tk.Tk):
                 "watch": [{"name": v.get("name"), "ip": v.get("ip"), "down": bool(v.get("down_since")),
                            "rtt": v.get("rtt"), "downs": v.get("downs", 0)} for v in list(self.watch_state.values())]}
         snap["checklist"] = list(getattr(self, "_checklist_cache", []))
-        snap["alerts"] = [{"t": x["t"], "last": x["last"], "prio": x["prio"], "prio_text": AL.PRIO[x["prio"]],
-                           "text": x["text"], "fix": x["fix"], "status": x.get("status", ""), "count": x.get("count", 1),
-                           "steps": AL.explain(x["text"], x["sev"])["steps"]}
-                          for x in self.alert_log.recent(60)]
+        alerts = []
+        for x in self.alert_log.recent(80):
+            r = AL.explain(x["text"], x["sev"], self.lip, self.gw)
+            alerts.append({"id": x["id"], "t": x["t"], "last": x["last"], "prio": x["prio"],
+                           "prio_text": AL.PRIO[x["prio"]], "text": x["text"], "title": r["title"], "why": r["why"],
+                           "fix": x["fix"], "status": x.get("status", ""), "count": x.get("count", 1),
+                           "steps": r["steps"], "ip": x.get("ip", ""),
+                           "fixes": [f["label"] for f in r["auto"] if f["where"] in ("router", "router_read")],
+                           "pc_fixes": [f["label"] + ": " + f["cmd"] for f in r["auto"] if f["where"] == "pc"]})
+        snap["alerts"] = alerts
+        snap["router_login"] = bool(RO.from_settings(self._settings(), self.gw))
+        snap["phone_api"] = 2
+        try:
+            bad, ports = self.map.problems()
+            root = T.build_map(list(self.devices), self.db, self.gw, bad, ports)
+
+            def node(n, depth=0):
+                d = n.get("dev") or {}
+                return {"label": n.get("label", ""), "sub": n.get("sub", ""), "kind": n.get("kind", ""),
+                        "bad": n.get("bad") or n.get("child_bad") or "", "ip": d.get("ip", ""), "mac": d.get("mac", ""),
+                        "children": [node(c, depth + 1) for c in n.get("children", [])] if depth < 8 else []}
+            snap["map"] = node(root)
+        except Exception:
+            snap["map"] = None
+        if not getattr(self, "_cmd_lib", None):
+            self._cmd_lib = [{"i": i, "group": c[0], "where": c[1], "name": c[2], "cmd": c[3], "use": c[4]}
+                             for i, c in enumerate(T.COMMANDS)]
+        snap["commands"] = self._cmd_lib
+        try:
+            import nd_slow
+            snap["slow_sites"] = [{"label": a, "url": b} for a, b in nd_slow.COMMON_SITES]
+        except Exception:
+            snap["slow_sites"] = []
+        snap["line_mbps"] = self._settings().get("line_mbps") or 100
         snap["usage"] = self._usage_snapshot()
         try:
             leases = [{"mac-address": m, "address": v.get("ip", ""), "host-name": v.get("host", "")}
