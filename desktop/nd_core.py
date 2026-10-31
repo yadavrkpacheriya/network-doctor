@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 import nd_linux
 
 APP = "Network Doctor"
-VERSION = "3.17.1"
+VERSION = "3.18.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 # Installed from the Microsoft Store (MSIX): Windows keeps it under ...\WindowsApps\ and the Store updates it
@@ -64,6 +64,45 @@ else:
 DB_PATH = os.path.join(DATA_DIR, "devices_db.json")
 OUI_PATH = os.path.join(DATA_DIR, "oui_cache.json")
 REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor Reports")
+
+# Advanced ("Pro") features (auto-defense, remote access, packet capture, security check, exposure, users &
+# audit) ship INSIDE this one public app but stay locked. They unlock only when a licence signed with the
+# owner's private key is installed (Setup > Pro / Activate). No other user - and no internal tester - can
+# unlock them, because only the owner holds the signing key; the same licence mechanism issues paid
+# licences later. Verification is in nd_license (pure-Python Ed25519, no extra dependencies).
+def _pro_enabled():
+    # Developer / CI override: honoured ONLY when running from source, never in a shipped (frozen) build,
+    # so setting an env var can never bypass the licence on an installed app.
+    if not getattr(sys, "frozen", False) and os.environ.get("ND_EDITION", "").lower() == "pro":
+        return True
+    try:
+        import nd_license
+        ok, _info = nd_license.is_licensed(DATA_DIR)
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def pro_info():
+    """The verified licence payload (email, plan, exp) when Pro is unlocked, else None."""
+    if not getattr(sys, "frozen", False) and os.environ.get("ND_EDITION", "").lower() == "pro":
+        return {"email": "dev@localhost", "plan": "pro", "exp": 0}
+    try:
+        import nd_license
+        ok, info = nd_license.is_licensed(DATA_DIR)
+        return info if ok else None
+    except Exception:
+        return None
+
+
+IS_PRO = _pro_enabled()
+
+
+def refresh_pro():
+    """Re-evaluate the licence (after one is installed or removed). Returns the new IS_PRO."""
+    global IS_PRO
+    IS_PRO = _pro_enabled()
+    return IS_PRO
 
 
 # ==========================================================================

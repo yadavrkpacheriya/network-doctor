@@ -30,6 +30,9 @@ import nd_monitor as M
 import nd_update as U
 import nd_share as SH
 import nd_alerts as AL
+import nd_auth as AU
+import nd_defense as DF
+import nd_protab
 import nd_tabs
 import nd_tools as T
 import nd_net as NT
@@ -58,7 +61,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.17.1"
+VERSION = "3.18.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -638,6 +641,16 @@ class App(tk.Tk):
                 self.tools._inv_done(None, "")
             elif cur and cur.startswith("t_"):
                 self.tools.show(cur[2:])
+            elif cur in nd_protab.ALWAYS_PAGES or (core.IS_PRO and cur in nd_protab.PRO_PAGES):
+                factory = nd_protab.ALWAYS_PAGES.get(cur) or nd_protab.PRO_PAGES[cur]
+                if cur not in self._pro_built:
+                    self._pro_built[cur] = factory(self, self.nav.page(cur))
+                else:
+                    pg = self._pro_built[cur]
+                    for m in ("load", "refresh"):
+                        if hasattr(pg, m):
+                            getattr(pg, m)()
+                            break
         except Exception:
             pass
 
@@ -1113,6 +1126,9 @@ class App(tk.Tk):
         mon = self.mon
         if not mon:
             return
+        if core.IS_PRO and getattr(self, "defense", None):
+            self.defense.gw_ip = self.gw
+            self._scan_watch()
         fs = mon.feed_status()
         self._note_feeds(mon)
         self._usage_tick()
@@ -1770,6 +1786,12 @@ class App(tk.Tk):
         self.alert_win = None
         self.alert_lines = []
         self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
+        self._pro_built = {}  # also holds the always-visible "Pro / Activate" page when locked
+        if core.IS_PRO:
+            self.accounts = AU.Accounts()
+            self.audit = AU.AuditLog()
+            self.defense = DF.Defense(self._settings(), self.gw)
+            self._portscan_seen = {}
         self.quick_summary = "not run yet"
 
     @staticmethod
@@ -1929,6 +1951,8 @@ class App(tk.Tk):
             self.alert_log.save()
             self._refresh_alerts()
             self._auto_fix(e)
+            if core.IS_PRO and getattr(self, "defense", None):
+                self._defense_consider(e)
         except Exception:
             pass
 
@@ -1966,6 +1990,109 @@ class App(tk.Tk):
                             f"Auto-fix ({e['count']} repeats) - {fix['label']}: " + ("done" if not err else err[:120]),
                             "Auto-fix")
         threading.Thread(target=work, daemon=True).start()
+
+    # ---------------------------------------------------------------- auto-defense (Pro)
+    ALERT_THREAT = {"exposed": "exposed", "malware": "malware", "arp_spoof": "arp_spoof", "rogue_dhcp": "rogue_dhcp",
+                    "loop": "loop", "login_fail": "login_fail", "torrent": "torrent"}
+
+    def _defense_status(self):
+        d = getattr(self, "defense", None)
+        if not d:
+            return {"ok": False, "message": "Pro feature"}
+        c = d.config()
+        return {"ok": True, "armed": c["armed"], "mode": c["mode"], "night_only": c["night_only"],
+                "night_from": c["night_from"], "night_to": c["night_to"], "is_night": DF.is_night(c),
+                "levels": c["levels"], "exclude_ips": c["exclude_ips"], "exclude_macs": c["exclude_macs"],
+                "cooldown_min": c["cooldown_min"], "ladder": DF.LADDER,
+                "threats": {k: v[0] for k, v in DF.THREATS.items()},
+                "contained": [dict(v, key=k) for k, v in d.contained().items()]}
+
+    def _defense_consider(self, e):
+        """An alert was raised: if it is a live attack and auto-defense is armed, contain the attacker."""
+        try:
+            kind = AL.explain(e["text"], e["sev"], self.lip, self.gw)["kind"]
+        except Exception:
+            return
+        threat = self.ALERT_THREAT.get(kind)
+        if not threat:
+            return
+        ip = e.get("ip", "")
+        d = self._dev_by({"ip": ip}) if ip else None
+        mac = (d or {}).get("mac", "")
+        self._defense_act(threat, ip, mac, (d or {}).get("name") or ip or "a device", e.get("text", ""))
+
+    def _defense_act(self, threat, ip, mac, name, reason):
+        d = getattr(self, "defense", None)
+        if not d:
+            return
+        level = d.planned(threat, ip, mac)
+        if level == "notify":
+            return
+        key = (mac or ip or name).upper()
+        if d.cool(threat, key):
+            return
+        action = {"internet": "block", "isolate": "isolate", "poweroff": "poweroff"}[level]
+        args = {"mac": mac, "ip": ip}
+        label = {"block": "cut the internet of", "isolate": "quarantined", "poweroff": "powered off"}[action]
+
+        def work():
+            res = self._remote(action, dict(args))
+            ok = res.get("ok", True)
+            if res.get("job"):  # wait for the router job so the audit says what really happened
+                for _ in range(40):
+                    j = (self.__dict__.get("phone_jobs") or {}).get(res["job"], {})
+                    if j.get("done"):
+                        ok = j.get("ok", False)
+                        break
+                    time.sleep(1)
+            self.q.put(("call", lambda: self._defense_done(threat, level, ip, mac, name, reason, label, ok, key)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _defense_done(self, threat, level, ip, mac, name, reason, label, ok, key):
+        if ok:
+            self.defense.note_contained(key, {"kind": threat, "level": level, "ip": ip, "mac": mac, "name": name,
+                                              "by": "auto-defense"})
+        self.audit.add("auto-defense", "auto", level, f"{threat} {name} {ip} {mac}".strip(),
+                       "done" if ok else "FAILED")
+        txt = f"Auto-defense {label} {name} ({ip or mac}) - {DF.THREATS.get(threat, ('threat',))[0]}" + \
+              ("" if ok else " [tried, router refused - do it by hand]")
+        self._log_event("critical", txt, "Auto-defense")
+        self._record_alert_plain("critical", txt, "Auto-defense")
+        if self.var_alerts.get():
+            self._popup("critical", txt)
+
+    def _record_alert_plain(self, sev, text, source):
+        """Log an alert WITHOUT re-running the defense engine (avoids a loop)."""
+        try:
+            self.alert_log.add(sev, text, source, self.lip, self.gw)
+            self.alert_log.save()
+            self._refresh_alerts()
+        except Exception:
+            pass
+
+    def _scan_watch(self):
+        """Pro: spot a device scanning the LAN or spreading to many PCs (port-scan / lateral movement)."""
+        mon = self.mon
+        if not (core.IS_PRO and mon and mon.last_flow):
+            return
+        now = time.time()
+        for d in list(self.devices):
+            ip = d.get("ip")
+            if not ip or not d.get("online") or d.get("ip") == self.gw or d.get("self"):
+                continue
+            try:
+                rem = mon.traffic.remotes(ip)[0]
+            except Exception:
+                continue
+            hosts = {k[0] for k, _v in rem if not k[3] and core.is_private_ip(k[0]) and k[0] != ip}
+            n = len(hosts)
+            prev = self._portscan_seen.get(ip, 0)
+            self._portscan_seen[ip] = n
+            if n >= 20 and n > prev + 8:  # suddenly talking to many internal hosts
+                threat = "port_scan" if n >= 40 else "lateral"
+                self._record_alert("critical", f"{d.get('name') or ip} is contacting {n} other devices on the LAN - "
+                                               "possible network scan or an intruder spreading", "Intrusion watch")
+                self._defense_act(threat, ip, d.get("mac", ""), d.get("name") or ip, f"{n} internal hosts")
 
     def _refresh_alerts(self):
         if threading.current_thread() is not threading.main_thread():
@@ -2288,7 +2415,9 @@ class App(tk.Tk):
         if need and not (self.share and self.share.running):
             store = self._settings().setdefault("share", {})
             self.share = SH.ShareServer(APP, VERSION, self._snapshot, self._remote_cmd, store, self._save_settings,
-                                        report_fn=lambda client, data: self.q.put(("pc_report", client, data)))
+                                        report_fn=lambda client, data: self.q.put(("pc_report", client, data)),
+                                        auth=getattr(self, "accounts", None))
+            self.share.remote_enabled = bool(core.IS_PRO and self._settings().get("remote_enabled", False))
             self._save_settings()
             if not self.share.start():
                 if on:
@@ -2422,15 +2551,37 @@ class App(tk.Tk):
         return None
 
     def _remote_cmd(self, name, args=None):
-        """Actions the paired phone app may run. Always answers a dict {ok, message[, job]}."""
+        """Actions the paired phone app may run. Pro: the signed-in user's role is checked and every change is
+        written to the audit log. Always answers a dict {ok, message[, job]}."""
         a = args if isinstance(args, dict) else {}
+        token = a.pop("_auth", "")
+        ip = a.pop("_ip", "")
+        actor = None
+        if core.IS_PRO and getattr(self, "accounts", None) and self.accounts.has_users():
+            ok, s = self.accounts.may(token, name)
+            if not ok:
+                return {"ok": False, "message": s, "login": "sign in" in str(s)}
+            actor = s
         try:
-            return self._remote(name, a)
+            res = self._remote(name, a)
+            if not isinstance(res, dict):
+                res = {"ok": True, "message": str(res)}
         except Exception as e:
-            return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+            res = {"ok": False, "message": f"{type(e).__name__}: {e}"}
+        if core.IS_PRO and getattr(self, "audit", None) and actor and name not in ("job",):
+            self.audit.add(actor["user"], actor["role"], name,
+                           " ".join(f"{k}={v}" for k, v in a.items() if k in
+                                    ("ip", "mac", "url", "opt", "i", "on", "macs", "status")),
+                           "done" if res.get("ok", True) else str(res.get("message", "")), ip)
+        return res
+
+    PRO_ACTIONS = {"vuln", "capture", "exposure", "hardening", "isolate", "unisolate", "router_reboot", "poweroff",
+                   "defense", "defense_config", "defense_arm", "defense_release", "audit"}
 
     def _remote(self, name, a):
         ipre = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+        if name in self.PRO_ACTIONS and not core.IS_PRO:
+            return {"ok": False, "message": "This is a Pro feature (your private build)."}
         if name == "scan":
             if getattr(self, "scanning", False):
                 return "a scan is already running"
@@ -2513,6 +2664,69 @@ class App(tk.Tk):
                 return self._router_job(f"Block internet of {(d or {}).get('name') or mac}", script)
             return self._router_job(f"Unblock {(d or {}).get('name') or mac}",
                                     f'/ip firewall filter remove [find where comment="ND phone block {mac}"]')
+        if name in ("isolate", "unisolate"):
+            d = self._dev_by(a)
+            mac = (d or {}).get("mac") or core.norm_mac(str(a.get("mac", "")))
+            ip = (d or {}).get("ip") or str(a.get("ip", ""))
+            if not mac:
+                return {"ok": False, "message": "device not found (need its MAC)"}
+            who = (d or {}).get("name") or mac
+            if name == "unisolate":
+                res = self._router_job(f"Release {who} from quarantine",
+                                       f'/ip firewall filter remove [find where comment="ND isolate {mac}"]')
+                if res.get("ok") or res.get("job"):
+                    getattr(self, "defense", None) and self.defense.release(mac)
+                return res
+            r1 = f'chain=forward src-mac-address={mac} action=drop comment="ND isolate {mac}"'
+            r2 = f'chain=forward dst-address={ip} action=drop comment="ND isolate {mac}"' if ip else ""
+            top = "place-before=([/ip firewall filter find]->0)"
+            script = f':do {{ /ip firewall filter add {r1} {top} }} on-error={{ /ip firewall filter add {r1} }}'
+            if r2:
+                script += f'\n:do {{ /ip firewall filter add {r2} {top} }} on-error={{ /ip firewall filter add {r2} }}'
+            return self._router_job(f"Quarantine {who} (block ALL its traffic)", script)
+        if name == "router_reboot":
+            return self._router_job("Reboot the router", "/system reboot")
+        if name == "poweroff":
+            d = self._dev_by(a)
+            host = (d or {}).get("name") or str(a.get("host", "")) or str(a.get("ip", ""))
+            mac = (d or {}).get("mac") or core.norm_mac(str(a.get("mac", "")))
+            how = "shutdown" if a.get("shutdown") else "isolate"  # default: disable the PC's own network card
+            with core.DB_LOCK:
+                self.db.setdefault("agent_cmds", {}).setdefault(host, []).append(
+                    {"cmd": how, "t": core.now_s()})
+            core.save_db(self.db)
+            msg = f"{host}: will {'shut down' if how == 'shutdown' else 'disconnect itself'} when its agent next " \
+                  "checks in (within a minute if the agent is installed)."
+            if mac:  # contain at the router straight away, agent or not
+                self._remote("isolate", {"mac": mac, "ip": (d or {}).get("ip", "")})
+                msg = "Quarantined at the router now; " + msg
+            return {"ok": True, "message": msg}
+        if name == "defense":  # read the current auto-defense status
+            return self._defense_status()
+        if name == "defense_config":
+            if not getattr(self, "defense", None):
+                return {"ok": False, "message": "Pro feature"}
+            self.defense.save({k: a[k] for k in ("armed", "mode", "night_only", "night_from", "night_to",
+                                                 "levels", "exclude_ips", "exclude_macs", "cooldown_min") if k in a})
+            self._save_settings()
+            return dict(self._defense_status(), ok=True, message="Auto-defense settings saved")
+        if name == "defense_arm":
+            if not getattr(self, "defense", None):
+                return {"ok": False, "message": "Pro feature"}
+            self.defense.save({"armed": bool(a.get("armed", True)), "mode": a.get("mode", "auto")})
+            self._save_settings()
+            return dict(self._defense_status(), ok=True,
+                        message=("Auto-defense ARMED" if a.get("armed", True) else "Auto-defense off"))
+        if name == "defense_release":
+            if not getattr(self, "defense", None):
+                return {"ok": False, "message": "Pro feature"}
+            key = core.norm_mac(str(a.get("mac", ""))) or str(a.get("ip", ""))
+            self._remote("unisolate", {"mac": a.get("mac", ""), "ip": a.get("ip", "")})
+            self.defense.release(key)
+            return {"ok": True, "message": "Released"}
+        if name == "audit":
+            return {"ok": True, "entries": self.audit.recent(int(a.get("n", 200))) if getattr(self, "audit", None)
+                    else []}
         if name == "bind":
             devs = [self._dev_by({"mac": m}) for m in (a.get("macs") or [])]
             devs = [d for d in devs if d and d.get("mac") and d.get("ip")]
@@ -2558,6 +2772,80 @@ class App(tk.Tk):
                         return "applied:\n" + text
                     return c.run_cli(text) or "(no output)"
             return self._job(T.COMMANDS[i][2], run)
+        if name == "vuln":
+            import nd_vuln as V
+
+            def run():
+                f = V.assess(list(self.devices), self.db, self.mon, self.lip, active=bool(a.get("active", True)))
+                if not f:
+                    return "No weaknesses found - nothing open, no default-login devices, no poisoner."
+                out = []
+                for x in f:
+                    out.append(f"[{x['sev'].upper()}] {x['title']} - {x['device']}")
+                    out.append("   " + x["detail"])
+                    out.append("   Fix: " + x["fix"])
+                    out.append("")
+                out.append("Hardening commands (run on each PC / via GPO):")
+                out += [f"  {lbl}\n    {cmd}" for lbl, cmd in V.HARDENING]
+                return "\n".join(out)
+            return self._job("Security check (vulnerabilities)", run)
+        if name == "capture":
+            import nd_capture as CP
+            if not CP.HAVE_SCAPY:
+                return {"ok": False, "message": "Packet capture needs Npcap (npcap.com) on this PC."}
+            secs = min(120, max(5, int(a.get("seconds", 20))))
+            cap = CP.Capture()
+
+            def run():
+                done = threading.Event()
+                cap.start(secs, str(a.get("bpf", "")), on_done=lambda _c: done.set())
+                done.wait(secs + 10)
+                if cap.error:
+                    raise RuntimeError(cap.error)
+                r = cap.analyse()
+                out = [f"{r['packets']} packets, {r['bytes'] // 1024} kB in {r['seconds']} s", ""]
+                out.append("Protocols: " + ", ".join(f"{k} {v}" for k, v in r["protocols"][:8]))
+                out.append("")
+                out.append("Top talkers:")
+                out += [f"  {t['ip']}  {t['bytes'] // 1024} kB" for t in r["talkers"][:10]]
+                if r["dns"]:
+                    out.append("")
+                    out.append("Websites looked up:")
+                    out += [f"  {d['name']} ({d['n']}x)" for d in r["dns"][:15]]
+                if r["findings"]:
+                    out.append("")
+                    out.append("Suspicious:")
+                    for sev, title, detail in r["findings"]:
+                        out.append(f"  [{sev.upper()}] {title}: {detail}")
+                return "\n".join(out)
+            return self._job(f"Packet capture ({secs}s)", run)
+        if name == "exposure":
+            import nd_expose as EX
+            pro = self._settings().get("pro", {})
+
+            def run():
+                ip = str(a.get("ip", "")) or EX.public_ip()
+                if not ip:
+                    raise RuntimeError("Could not find the public IP - check the internet connection.")
+                sh = EX.shodan(ip, pro.get("shodan_key", "")) if pro.get("shodan_key") else \
+                    {"ok": False, "error": "no Shodan key saved (Setup > Pro)"}
+                ce = EX.censys(ip, pro.get("censys_id", ""), pro.get("censys_secret", "")) if pro.get("censys_id") \
+                    else {"ok": False, "error": "no Censys key saved"}
+                out = [EX.summary(ip, sh, ce), ""]
+                if sh.get("ok") and sh.get("services"):
+                    out.append("Shodan sees:")
+                    out += [f"  port {s['port']}/{s['proto']}  {s['product']}  {s['banner'][:60]}" for s in sh["services"]]
+                elif not sh.get("ok"):
+                    out.append("Shodan: " + sh.get("error", ""))
+                if ce.get("ok") and ce.get("services"):
+                    out.append("Censys sees: " + ", ".join(f"{s['port']}/{s['proto']}" for s in ce["services"]))
+                elif not ce.get("ok"):
+                    out.append("Censys: " + ce.get("error", ""))
+                return "\n".join(out)
+            return self._job("Internet exposure check", run)
+        if name == "hardening":
+            import nd_vuln as V
+            return {"ok": True, "commands": [{"label": l, "cmd": c} for l, c in V.HARDENING]}
         if name == "slow":
             import nd_slow as S
             url = S.norm_url(str(a.get("url", "")))
@@ -2629,7 +2917,12 @@ class App(tk.Tk):
                            "pc_fixes": [f["label"] + ": " + f["cmd"] for f in r["auto"] if f["where"] == "pc"]})
         snap["alerts"] = alerts
         snap["router_login"] = bool(RO.from_settings(self._settings(), self.gw))
-        snap["phone_api"] = 2
+        snap["phone_api"] = 3
+        snap["pro"] = bool(core.IS_PRO)
+        if core.IS_PRO:
+            snap["defense"] = self._defense_status()
+            snap["audit"] = (self.audit.recent(60) if getattr(self, "audit", None) else [])
+            snap["accounts"] = list(self.accounts.users().keys()) if getattr(self, "accounts", None) else []
         try:
             bad, ports = self.map.problems()
             root = T.build_map(list(self.devices), self.db, self.gw, bad, ports)
@@ -2728,7 +3021,7 @@ class App(tk.Tk):
             self.check_updates(True)
 
     def _update_mode(self, code=False):
-        if core.IS_STORE:  # the Microsoft Store installs updates; the app must not update itself
+        if core.IS_STORE:  # the Store installs updates itself; Pro features now ship in this same app
             return "off" if code else next(k for k, v in self.UPDATE_MODES.items() if v == "off")
         st = self._settings()
         m = st.get("update_mode")
@@ -2738,7 +3031,7 @@ class App(tk.Tk):
 
     def check_updates(self, auto=False, force=False):  # noqa: ARG002 (force kept for callers)
         if core.IS_STORE:
-            self.var_upd.set(f"Version {VERSION} - updates come from the Microsoft Store")
+            self.var_upd.set(f"Version {VERSION} - Microsoft Store updates this")
             if not auto:
                 messagebox.showinfo(APP, "This copy is from the Microsoft Store: the Store installs new versions "
                                          "by itself (Microsoft Store > Library > Get updates).")

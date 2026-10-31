@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HTTP_PORT = 8787
 DISCOVERY_PORT = 8788
 DISCOVER_MSG = b"NETWORK-DOCTOR-DISCOVER"
-API_VERSION = 2  # 2: /api/action (the phone can act, not only look)
+API_VERSION = 3  # 3: accounts (sign-in), audit, auto-defense, remote
 
 
 def _lan_only(ip):
@@ -48,9 +48,10 @@ def _lan_only(ip):
 class ShareServer:
     """snapshot_fn() -> dict (built on demand); command_fn(name) -> str; store = dict persisted by save_fn()."""
 
-    def __init__(self, app_name, version, snapshot_fn, command_fn, store, save_fn, report_fn=None):
+    def __init__(self, app_name, version, snapshot_fn, command_fn, store, save_fn, report_fn=None, auth=None):
         self.app_name, self.version = app_name, version
         self.snapshot_fn, self.command_fn = snapshot_fn, command_fn
+        self.auth = auth  # nd_auth.Accounts (Pro): sign-in + per-action roles. None = no accounts (old behaviour)
         self.store, self.save_fn = store, save_fn
         self.store.setdefault("phones", {})  # token -> {"name":..., "paired":...}
         if not self.store.get("report_key"):  # only lets the PC fix script report; it can read nothing
@@ -162,8 +163,12 @@ class ShareServer:
 
     def _handle(self, h, method):
         client = h.client_address[0]
+        # The LAN and loopback (a tunnel such as Cloudflare / Tailscale terminates on localhost) are always fine.
+        # A real public client is accepted only when the owner turned on remote access AND accounts are set up,
+        # so an outside connection can do nothing until it signs in.
         if not _lan_only(client):
-            return self._send(h, 403, {"error": "LAN only"})
+            if not (getattr(self, "remote_enabled", False) and self.auth and self.auth.has_users()):
+                return self._send(h, 403, {"error": "remote access is off on this PC"})
         path = h.path.split("?")[0]
         try:
             if path == "/api/hello" and method == "GET":
@@ -178,6 +183,11 @@ class ShareServer:
             if not self._authorised(h):
                 return self._send(h, 401, {"error": "not paired"})
             self.last_client = (client, time.time())
+            if path in ("/api/login", "/api/logout") and method == "POST":
+                return self._auth_ep(h, path, client)
+            # Pro with accounts set up: everything past here needs a signed-in user
+            if self.auth and self.auth.has_users() and not self.auth.who(h.headers.get("X-ND-User", "")):
+                return self._send(h, 401, {"error": "please sign in", "login": True})
             if path == "/api/state" and method == "GET":
                 now = time.time()
                 t, snap = self._cache
@@ -196,7 +206,11 @@ class ShareServer:
                         raise ValueError
                 except Exception:
                     return self._send(h, 400, {"error": "bad request"})
-                res = self.command_fn(str(req.get("action", "")), req.get("args") or {})
+                args = req.get("args") or {}
+                if isinstance(args, dict):  # carry the signed-in user token to the command (role check + audit)
+                    args["_auth"] = h.headers.get("X-ND-User", "")
+                    args["_ip"] = client
+                res = self.command_fn(str(req.get("action", "")), args)
                 if not isinstance(res, dict):
                     res = {"ok": True, "message": str(res)}
                 self._cache = (0, None)  # the next /api/state shows the change
@@ -204,6 +218,33 @@ class ShareServer:
             return self._send(h, 404, {"error": "unknown request"})
         except Exception as e:
             return self._send(h, 500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _auth_ep(self, h, path, client):
+        """Sign in / out a user (Pro). The device must already be paired to reach here."""
+        if not self.auth:
+            return self._send(h, 404, {"error": "accounts are not enabled on this PC"})
+        if path == "/api/logout":
+            self.auth.logout(h.headers.get("X-ND-User", ""))
+            return self._send(h, 200, {"ok": True})
+        try:
+            n = int(h.headers.get("Content-Length", "0"))
+            req = json.loads(h.rfile.read(min(n, 4096)).decode("utf-8") or "{}")
+        except Exception:
+            return self._send(h, 400, {"error": "bad request"})
+        with self.lock:
+            now = time.time()
+            if now < getattr(self, "_login_lock", 0):
+                return self._send(h, 429, {"error": "too many wrong passwords - wait a minute"})
+            sess = self.auth.login(str(req.get("user", "")), str(req.get("password", "")), client,
+                                   str(req.get("device", "phone")))
+            if not sess:
+                self._login_fails = getattr(self, "_login_fails", 0) + 1
+                if self._login_fails >= 5:
+                    self._login_lock = now + 60
+                    self._login_fails = 0
+                return self._send(h, 403, {"error": "wrong user name or password"})
+            self._login_fails = 0
+        return self._send(h, 200, sess)
 
     def _pair(self, h, client):
         try:

@@ -10,7 +10,7 @@ import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/tools_screen.dart';
 
-const appVersion = '1.7.0';
+const appVersion = '1.8.0';
 
 void main() => runApp(const NetworkDoctorApp());
 

@@ -2012,7 +2012,8 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
     ("fix_s", "Fix & Commands", "#b45309", "#fef3c7", [("commands", "Commands"), ("t_lan", "LAN speed (PC to PC)"),
                                                        ("t_wifi", "Wi-Fi analyzer"), ("t_nic", "Network adapters"),
                                                        ("t_mtu", "MTU finder"), ("t_subnet", "Subnet calculator")]),
-    ("setup_s", "Setup", "#475569", "#e2e8f0", [("setup", "Setup"), ("t_ready", "What is missing")]),
+    ("setup_s", "Setup", "#475569", "#e2e8f0", [("setup", "Setup"), ("t_ready", "What is missing"),
+                                                ("activate", "Pro / Activate")]),
 ]
 
 
@@ -2100,3 +2101,14 @@ class SectionNav:
         self.last[sec] = key
         if self.on_change:
             self.on_change(key)
+
+
+# Pro build: add the advanced-security pages into the existing coloured sections.
+if core.IS_PRO:
+    _PRO_PAGES = {
+        "security_s": [("defense", "Auto-defense"), ("vuln", "Security check"), ("expose", "Internet exposure")],
+        "fix_s": [("capture", "Packet capture")],
+        "setup_s": [("accounts", "Users & sign-in"), ("audit", "Audit log")],
+    }
+    for _s in SECTIONS:
+        _s[4].extend(_PRO_PAGES.get(_s[0], []))

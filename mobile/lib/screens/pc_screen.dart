@@ -276,12 +276,85 @@ class _PcDashboardState extends State<PcDashboard> {
         });
       }
     } on PcError catch (e) {
-      if (mounted) setState(() => _err = e.message);
+      if (mounted) {
+        if (e.message.toLowerCase().contains('sign in') && widget.pc.host != 'demo') {
+          _loading = false;
+          await _signIn();
+          return;
+        }
+        // LAN unreachable but a remote address is set and we're not already using it: switch to remote and retry
+        final connErr = e.message.contains('did not answer') || e.message.contains('Could not');
+        if (connErr && widget.pc.remote.isNotEmpty && !PcLink.viaRemote.contains(widget.pc.host)) {
+          PcLink.preferRemote(widget.pc, true);
+          _loading = false;
+          _load();
+          return;
+        }
+        setState(() => _err = e.message);
+      }
     } catch (e) {
       if (mounted) setState(() => _err = 'Unexpected answer from the PC: $e');
     } finally {
       _loading = false;
     }
+  }
+
+  Future<void> _signIn() async {
+    final u = TextEditingController(text: widget.pc.user);
+    final p = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text('Sign in to ${widget.pc.name}'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: u, decoration: const InputDecoration(labelText: 'User name')),
+          TextField(controller: p, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign in')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await PcLink.login(widget.pc, u.text.trim(), p.text);
+      await PcLink.save(widget.others);
+      if (mounted) setState(() => _err = '');
+      _load();
+    } on PcError catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        setState(() => _err = e.message);
+      }
+    }
+  }
+
+  Future<void> _setRemote() async {
+    final c = TextEditingController(text: widget.pc.remote);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reach this PC from outside'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('When you are NOT on the office Wi-Fi, the app will use this internet address. Set up a free '
+              'Cloudflare Tunnel or Tailscale on the PC pointing at http://localhost:8787, and turn on remote '
+              'access on the PC (Security > Users & sign-in).'),
+          const SizedBox(height: 8),
+          TextField(controller: c, decoration: const InputDecoration(labelText: 'host or host:port (blank = off)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    widget.pc.remote = c.text.trim();
+    PcLink.preferRemote(widget.pc, false);
+    await PcLink.save(widget.others);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Remote address saved')));
   }
 
   Future<void> _scan() async {
@@ -325,6 +398,7 @@ class _PcDashboardState extends State<PcDashboard> {
         ('Ping / traceroute', () => PcToolsTab(s: s, only: const ['ping'])),
       ]),
       PcSection('Security', Icons.shield, sectionColors[4], [
+        if (s['pro'] == true) ('Auto-defense & checks', () => ProSecurityTab(s: s, onRefresh: _load)),
         ('Network guard', () => PcToolsTab(s: s, only: const ['guard'])),
       ]),
       PcSection('Fix & Commands', Icons.build, sectionColors[5], [
@@ -364,6 +438,13 @@ class _PcDashboardState extends State<PcDashboard> {
                     onSelected: (v) async {
                       if (v == 'add') widget.onAddPc();
                       if (v == 'unpair') await widget.onUnpair();
+                      if (v == 'remote') await _setRemote();
+                      if (v == 'signin') await _signIn();
+                      if (v == 'signout') {
+                        await PcLink.logout(widget.pc);
+                        await PcLink.save(widget.others);
+                        _load();
+                      }
                       if (v.startsWith('pc:')) {
                         widget.onSwitch(widget.others.firstWhere((p) => p.host == v.substring(3)));
                       }
@@ -371,6 +452,11 @@ class _PcDashboardState extends State<PcDashboard> {
                     itemBuilder: (_) => [
                       for (final p in widget.others.where((p) => p.host != widget.pc.host))
                         PopupMenuItem(value: 'pc:${p.host}', child: Text('Switch to ${p.name}')),
+                      if (widget.pc.user.isEmpty)
+                        const PopupMenuItem(value: 'signin', child: Text('Sign in'))
+                      else
+                        PopupMenuItem(value: 'signout', child: Text('Sign out (${widget.pc.user})')),
+                      const PopupMenuItem(value: 'remote', child: Text('Reach from outside...')),
                       const PopupMenuItem(value: 'add', child: Text('Pair another PC')),
                       const PopupMenuItem(value: 'unpair', child: Text('Remove this PC')),
                     ],

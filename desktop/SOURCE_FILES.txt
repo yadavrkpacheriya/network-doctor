@@ -17,3 +17,10 @@ nd_home.py
 nd_slow.py
 nd_smbinfo.py
 nd_alerts.py
+nd_auth.py
+nd_defense.py
+nd_vuln.py
+nd_capture.py
+nd_expose.py
+nd_protab.py
+nd_license.py
