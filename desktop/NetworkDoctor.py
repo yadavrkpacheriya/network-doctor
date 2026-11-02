@@ -61,7 +61,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.18.2"
+VERSION = "3.18.3"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1990,7 +1990,7 @@ class App(tk.Tk):
         if e.get("count", 1) < self.AUTO_FIX_AFTER or e.get("autofix") or e.get("status") == "fixed" or \
                 not self._settings().get("auto_fix", True):
             return
-        r = AL.explain(e["text"], e["sev"], self.lip, self.gw)
+        r = AL.explain(e["text"], e["sev"], self.lip, self.gw, self.net)
         fix = next((a for a in r["auto"] if a["where"] == "router"), None) if r["kind"] in AL.AUTO_SAFE else None
         if not fix:
             return
@@ -2037,7 +2037,7 @@ class App(tk.Tk):
     def _defense_consider(self, e):
         """An alert was raised: if it is a live attack and auto-defense is armed, contain the attacker."""
         try:
-            kind = AL.explain(e["text"], e["sev"], self.lip, self.gw)["kind"]
+            kind = AL.explain(e["text"], e["sev"], self.lip, self.gw, self.net)["kind"]
         except Exception:
             return
         threat = self.ALERT_THREAT.get(kind)
@@ -2216,7 +2216,7 @@ class App(tk.Tk):
         t.delete("1.0", "end")
         t.insert("end", "New network problems\n", "h1")
         for ts, sv, tx in reversed(self.alert_lines):
-            r = AL.explain(tx, sv, self.lip, self.gw)
+            r = AL.explain(tx, sv, self.lip, self.gw, self.net)
             t.insert("end", f"{ts}  ", "mute")
             t.insert("end", r["prio_text"].upper() + "  ", "crit" if r["prio"] <= 2 else "warn")
             t.insert("end", tx + "\n")
@@ -2654,7 +2654,7 @@ class App(tk.Tk):
             x = self.alert_log.get(str(a.get("id")))
             if not x:
                 return {"ok": False, "message": "alert not found"}
-            r = AL.explain(x["text"], x["sev"], self.lip, self.gw)
+            r = AL.explain(x["text"], x["sev"], self.lip, self.gw, self.net)
             fixes = [f for f in r["auto"] if f["where"] in ("router", "router_read")]
             n = int(a.get("n", 0))
             if not 0 <= n < len(fixes):
@@ -2684,10 +2684,15 @@ class App(tk.Tk):
             if not mac:
                 return {"ok": False, "message": "device not found"}
             if a.get("on", True):
-                rule = f'chain=forward src-mac-address={mac} action=drop comment="ND phone block {mac}"'
+                # block only the device's INTERNET traffic (destination outside the LAN), so local
+                # printing / access keeps working. dst-address=!LAN is what preserves the local network.
+                lan = self.net if (self.net and "/" in (self.net or "")) else ""
+                dst = f" dst-address=!{lan}" if lan else ""
+                rule = f'chain=forward src-mac-address={mac}{dst} action=drop comment="ND phone block {mac}"'
                 script = (f':do {{ /ip firewall filter add {rule} place-before=([/ip firewall filter find]->0) }} '
                           f'on-error={{ /ip firewall filter add {rule} }}')
-                return self._router_job(f"Block internet of {(d or {}).get('name') or mac}", script)
+                return self._router_job(f"Block internet of {(d or {}).get('name') or mac} (keeps local network)",
+                                        script)
             return self._router_job(f"Unblock {(d or {}).get('name') or mac}",
                                     f'/ip firewall filter remove [find where comment="ND phone block {mac}"]')
         if name in ("isolate", "unisolate"):
@@ -2934,7 +2939,7 @@ class App(tk.Tk):
         snap["checklist"] = list(getattr(self, "_checklist_cache", []))
         alerts = []
         for x in self.alert_log.recent(80):
-            r = AL.explain(x["text"], x["sev"], self.lip, self.gw)
+            r = AL.explain(x["text"], x["sev"], self.lip, self.gw, self.net)
             alerts.append({"id": x["id"], "t": x["t"], "last": x["last"], "prio": x["prio"],
                            "prio_text": AL.PRIO[x["prio"]], "text": x["text"], "title": r["title"], "why": r["why"],
                            "fix": x["fix"], "status": x.get("status", ""), "count": x.get("count", 1),

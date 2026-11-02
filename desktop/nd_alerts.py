@@ -7,6 +7,7 @@ steps for what needs hands on a cable, a switch or a device.
 """
 import csv
 import html
+import ipaddress
 import json
 import os
 import re
@@ -31,6 +32,36 @@ def _top_rule(rule):
     return f':do {{ /ip firewall filter add {rule} {TOP} }} on-error={{ /ip firewall filter add {rule} }}'
 
 
+def _lan_cidr(net, lip):
+    """The local network in CIDR form, so a block can keep LAN traffic. Uses the real network when known,
+    otherwise a /24 around this PC's IP (true for almost every office / home network)."""
+    if net and "/" in net:
+        return net.strip()
+    if lip:
+        try:
+            return str(ipaddress.ip_network(f"{lip}/24", strict=False))
+        except Exception:
+            pass
+    return ""
+
+
+def _no_internet(lan, comment, ip="", mac="", out=True, inp=False):
+    """Router script that blocks a device's INTERNET traffic while keeping the local network working:
+    it drops only packets whose other end is outside the LAN (dst-address=!LAN for outbound, src-address
+    =!LAN for inbound). out=block the device reaching the internet; inp=block the internet reaching it
+    (used for an exposed camera, so local viewing still works). Falls back to a plain forward drop when
+    the LAN is unknown (intra-LAN traffic is bridged, so local use usually still works)."""
+    sel = f"src-address={ip}" if ip else f"src-mac-address={mac}"
+    rules = []
+    if out:
+        rules.append(f'chain=forward {sel} dst-address=!{lan} action=drop comment="{comment}"' if lan
+                     else f'chain=forward {sel} action=drop comment="{comment}"')
+    if inp and ip:
+        rules.append(f'chain=forward dst-address={ip} src-address=!{lan} action=drop comment="{comment}"' if lan
+                     else f'chain=forward dst-address={ip} action=drop comment="{comment}"')
+    return "\n".join(_top_rule(r) for r in rules)
+
+
 def _ip_of(text, skip=("255.255.255.255", "0.0.0.0")):
     for ip in IP_RE.findall(text or ""):
         if ip not in skip and not ip.startswith(("224.", "239.")):
@@ -45,13 +76,14 @@ def _fix(prio, kind, title, why, fix, steps, auto=(), app=None):
             "auto": [{"label": a[0], "where": a[1], "cmd": a[2]} for a in auto if a], "app": app}
 
 
-def recipe(text, sev="warning", lip="", gw=""):
+def recipe(text, sev="warning", lip="", gw="", net=""):
     """What an alert means, how urgent it is and how to fix it."""
     t = text or ""
     low = t.lower()
     ip = _ip_of(t)
     macs = MAC_RE.findall(t)
     mac = macs[0].upper() if macs else ""
+    lan = _lan_cidr(net, lip)
 
     m = re.search(r"conflict by arp response for ((?:\d{1,3}\.){3}\d{1,3}) from ([0-9a-f:]{17})", low)
     if m:
@@ -102,8 +134,8 @@ def recipe(text, sev="warning", lip="", gw=""):
                      "Run a Windows Defender quick scan on that PC (torrent downloads often carry malware).",
                      "Tell the user it is not allowed on the office network."],
                     auto=[("Block torrents on the router", "router", "@torrent_guard"),
-                          ("Block only this device's internet", "router",
-                           _top_rule(f'chain=forward src-address={ip} action=drop comment="ND: blocked {ip}"'))
+                          ("Block only this device's internet (keeps local network)", "router",
+                           _no_internet(lan, f"ND: no-internet {ip}", ip=ip))
                           if ip else None])
 
     if "from the internet" in low or "exposed" in low or "port forward" in low:
@@ -120,8 +152,12 @@ def recipe(text, sev="warning", lip="", gw=""):
                      "forward.",
                      "Re-check: the alert should not return."],
                     auto=[("Close internet access to this device", "router",
-                           f"/ip upnp set enabled=no\n/ip firewall nat disable [find where action=dst-nat and "
-                           f"to-addresses={ip}]") if ip else ("Turn off UPnP", "router", "/ip upnp set enabled=no")])
+                           "/ip upnp set enabled=no\n"
+                           f"/ip firewall nat disable [find where action=dst-nat and to-addresses={ip}]\n"
+                           # also drop any traffic reaching it from the internet, so it is no longer exposed even
+                           # if a port-forward is re-created; local viewing on the LAN keeps working.
+                           + _no_internet(lan, f"ND: no-inbound {ip}", ip=ip, out=False, inp=True)) if ip
+                          else ("Turn off UPnP", "router", "/ip upnp set enabled=no")])
 
     if "rogue" in low or "second dhcp" in low or "another dhcp" in low or "extra router" in low or \
             "not the router" in low:
@@ -184,8 +220,8 @@ def recipe(text, sev="warning", lip="", gw=""):
                      "Uninstall unknown programs and browser extensions; update Windows.",
                      "Change the passwords used on that PC (email, banking, ERP) from another PC.",
                      "Unblock and watch the Live monitor for a day."],
-                    auto=[("Block this device's internet", "router",
-                           _top_rule(f'chain=forward src-address={ip} action=drop comment="ND: blocked {ip}"'))
+                    auto=[("Block this device's internet (keeps local network)", "router",
+                           _no_internet(lan, f"ND: no-internet {ip}", ip=ip))
                           if ip else None,
                           ("Defender quick scan on this PC", "pc",
                            'powershell -NoProfile -Command "Update-MpSignature; Start-MpScan -ScanType QuickScan"')])
@@ -304,8 +340,8 @@ def recipe(text, sev="warning", lip="", gw=""):
                 app=("Open Root cause", "rca"))
 
 
-def explain(text, sev="warning", lip="", gw=""):
-    r = recipe(text, sev, lip, gw)
+def explain(text, sev="warning", lip="", gw="", net=""):
+    r = recipe(text, sev, lip, gw, net)
     r["prio_text"] = PRIO[r["prio"]]
     return r
 
