@@ -1,3 +1,16 @@
+## Network Doctor 3.18.7
+
+### Fix in this version
+- **Phone link no longer drops to "This phone is no longer paired" after you turn on Pro sign-in.** Once an account
+  was created on the PC, a paired phone on the office Wi-Fi was being blocked from even viewing the network and the
+  app showed it as un-paired. A phone on the local network can now always view the network again; signing in is only
+  required for remote (outside-the-office) access, and each action is still checked against the signed-in user's
+  role, so Pro stays locked to you. If your phone still shows "Pair again", re-pair it once with the code on the PC's
+  Setup tab - that issues a fresh link.
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install.
+
 ## Network Doctor 3.18.6
 
 ### New in this version

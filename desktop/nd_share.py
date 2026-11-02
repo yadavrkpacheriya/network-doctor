@@ -185,8 +185,11 @@ class ShareServer:
             self.last_client = (client, time.time())
             if path in ("/api/login", "/api/logout") and method == "POST":
                 return self._auth_ep(h, path, client)
-            # Pro with accounts set up: everything past here needs a signed-in user
-            if self.auth and self.auth.has_users() and not self.auth.who(h.headers.get("X-ND-User", "")):
+            # A remote (off-LAN) client must sign in before anything, even viewing. On the LAN a paired phone can
+            # always view the network; individual actions are still role-checked in the command handler (may()),
+            # so turning on Pro accounts no longer locks the phone out of viewing (it would 401 as "not paired").
+            if not _lan_only(client) and self.auth and self.auth.has_users() \
+                    and not self.auth.who(h.headers.get("X-ND-User", "")):
                 return self._send(h, 401, {"error": "please sign in", "login": True})
             if path == "/api/state" and method == "GET":
                 now = time.time()

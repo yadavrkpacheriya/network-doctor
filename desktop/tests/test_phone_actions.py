@@ -41,6 +41,31 @@ class PhoneActions(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def get(self, path, token=None):
+        req = urllib.request.Request(self.base + path,
+                                     headers={**({"X-ND-Token": token} if token else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def test_lan_phone_can_view_even_with_accounts(self):
+        # Turning on Pro accounts must NOT lock a paired LAN phone out of viewing the network
+        # (the old blanket gate 401'd here, which the phone app shows as "no longer paired").
+        import nd_auth as AU
+        acc = AU.Accounts()
+        acc.data = {"users": {"owner": {"role": "admin", "salt": "00", "hash": "x", "disabled": False}}}
+        acc._save = lambda: None
+        self.srv.auth = acc
+        self.assertTrue(acc.has_users())
+        _, r = self.post("/api/pair", {"code": self.srv.code, "phone": "test"})
+        tok = r["token"]
+        # loopback counts as LAN -> viewing is allowed without signing in
+        code, snap = self.get("/api/state", tok)
+        self.assertEqual(code, 200)
+        self.assertIn("api", snap)
+
     def test_action_needs_pairing_then_works(self):
         code, _ = self.post("/api/action", {"action": "tag", "args": {"mac": "x"}})
         self.assertEqual(code, 401)
