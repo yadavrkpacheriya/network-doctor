@@ -319,6 +319,20 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes"),
                           ("Clear this PC's DNS cache", "pc", "ipconfig /flushdns")])
 
+    if ("mtu" in low or "large packets" in low or "largest packet" in low or "mss" in low) and "storm" not in low:
+        return _fix(2, "mtu", "Large packets do not pass (MTU / MSS)",
+                    "The internet line carries smaller packets than normal Ethernet (common on PPPoE and some fibre "
+                    "lines). Without MSS clamping, some sites - Google, banks, government portals - hang or load very "
+                    "slowly while small pages work fine.",
+                    "Add MSS clamping on the router (one safe rule, changes nothing on the devices).",
+                    ["Press 'Add MSS clamp on the router': TCP connections then use a packet size that fits the line.",
+                     "No device settings change and nothing is blocked.",
+                     "Re-check after a minute: the big sites should load normally."],
+                    auto=[("Add MSS clamp on the router", "router",
+                           ':do {/ip firewall mangle remove [find where comment="ND: MSS clamp"]} on-error={}\n'
+                           '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
+                           'action=change-mss new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"')])
+
     if "new device" in low or "randomized" in low or "random mac" in low:
         return _fix(3, "new_device", "New device(s) joined the network",
                     "Phones with a 'private / randomized' MAC show as new devices every time, so their history and "

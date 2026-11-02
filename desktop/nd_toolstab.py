@@ -739,8 +739,31 @@ class ToolsTab:
             t.pack(fill="both", expand=True)
             t.insert("1.0", "\n".join(cfg.get(key, [])))
             self.fw_lists[key] = t
+        # Router-native block: works for the WHOLE Wi-Fi with no PC kept on (DNS static on the router).
+        rb = ttk.LabelFrame(f, text=" Block for the whole network on the router (no PC needed) ", padding=6)
+        rb.pack(fill="x", pady=(8, 0))
+        self.fw_router = {}
+        gr = ttk.Frame(rb)
+        gr.pack(fill="x")
+        rcfg = (self.app._settings().get("blocked_sites") or {}).get("groups", [])
+        for key, (label, _sites) in T.SITE_GROUPS.items():
+            v = tk.BooleanVar(value=key in rcfg)
+            ttk.Checkbutton(gr, text=label, variable=v).pack(side="left", padx=(0, 10))
+            self.fw_router[key] = v
+        ttk.Label(rb, text="Also uses the 'Also block' list above. Blocks these for every device that uses the "
+                           "router's DNS (the normal setup) - you do NOT need to keep this PC on.",
+                  foreground="#667085", wraplength=900, justify="left").pack(anchor="w", pady=(4, 4))
+        rbar = ttk.Frame(rb)
+        rbar.pack(fill="x")
+        ttk.Button(rbar, text="Block on the router now", style="Big.TButton",
+                   command=lambda: self._router_block_sites(False)).pack(side="left")
+        ttk.Button(rbar, text="Remove router block",
+                   command=lambda: self._router_block_sites(True)).pack(side="left", padx=6)
         row = ttk.Frame(f)
         row.pack(fill="x", pady=6)
+        ttk.Label(f, text="The firewall below instead uses THIS PC as the DNS server (more categories, live counts), "
+                          "and needs the PC on. The router block above is simpler for just blocking a few sites.",
+                  foreground="#667085", wraplength=900, justify="left").pack(anchor="w")
         self._run_btn(row, "website", "Start firewall", self._website)
         self._stop_btn(row, "website")
         ip = self.app.lip or "this PC's IP"
@@ -764,6 +787,34 @@ class ToolsTab:
                 json.dump(cfg, fh, indent=1)
         except OSError:
             pass
+
+    def _router_block_sites(self, remove=False):
+        """Block (or unblock) the chosen site groups + 'Also block' list on the router itself, so the whole
+        Wi-Fi is covered with no PC kept on."""
+        app = self.app
+        if not app.router_client(ask=False):
+            if messagebox.askyesno(APP, "No router login is saved yet. Open Setup to add it?\n\n(This blocks the "
+                                        "sites on the router itself, for every device - no PC needed afterwards.)"):
+                app.show_tab("setup")
+            return
+        if remove:
+            _, undo = T.site_block_commands([])
+            app.router_apply(undo, "Unblock all sites (router)")
+            app._settings()["blocked_sites"] = {}
+            app._save_settings()
+            return
+        groups = [k for k, v in self.fw_router.items() if v.get()]
+        extra = DF.parse_list(self.fw_lists["blocked"].get("1.0", "end"))
+        sites = T.sites_for(groups, extra)
+        uniq = T.normalize_sites(sites)
+        if not uniq:
+            messagebox.showinfo(APP, "Tick a group (Social media, Chat, Video, Shopping) or type sites in "
+                                     "'Also block' above.")
+            return
+        apply, _ = T.site_block_commands(sites)
+        app.router_apply(apply, f"Block {len(uniq)} site(s) for the whole network")
+        app._settings()["blocked_sites"] = {"groups": groups, "sites": list(extra)}
+        app._save_settings()
 
     def _website(self, out, stop):
         cfg = {"categories": [k for k, v in self.fw_cats.items() if v.get()], "safe_search": self.fw_safe.get(),

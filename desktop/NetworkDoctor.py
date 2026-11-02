@@ -61,7 +61,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.18.3"
+VERSION = "3.18.4"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2684,13 +2684,23 @@ class App(tk.Tk):
             if not mac:
                 return {"ok": False, "message": "device not found"}
             if a.get("on", True):
-                # block only the device's INTERNET traffic (destination outside the LAN), so local
-                # printing / access keeps working. dst-address=!LAN is what preserves the local network.
+                # Cut the device off from the INTERNET in BOTH directions while keeping the local network:
+                #   out: it cannot reach the internet (dst-address=!LAN)
+                #   in : the internet cannot reach it (dst-address=device, src-address=!LAN)
+                # So a camera is no longer exposed to the internet (hackers can't reach it) but the NVR and
+                # PCs on the LAN still see it; a printer/PC keeps the LAN and loses only the internet.
                 lan = self.net if (self.net and "/" in (self.net or "")) else ""
+                ip = (d or {}).get("ip") or str(a.get("ip", ""))
+                top = "place-before=([/ip firewall filter find]->0)"
                 dst = f" dst-address=!{lan}" if lan else ""
-                rule = f'chain=forward src-mac-address={mac}{dst} action=drop comment="ND phone block {mac}"'
-                script = (f':do {{ /ip firewall filter add {rule} place-before=([/ip firewall filter find]->0) }} '
-                          f'on-error={{ /ip firewall filter add {rule} }}')
+                out_rule = f'chain=forward src-mac-address={mac}{dst} action=drop comment="ND phone block {mac}"'
+                script = (f':do {{ /ip firewall filter add {out_rule} {top} }} '
+                          f'on-error={{ /ip firewall filter add {out_rule} }}')
+                if ip and lan:
+                    in_rule = (f'chain=forward dst-address={ip} src-address=!{lan} action=drop '
+                               f'comment="ND phone block {mac}"')
+                    script += (f'\n:do {{ /ip firewall filter add {in_rule} {top} }} '
+                               f'on-error={{ /ip firewall filter add {in_rule} }}')
                 return self._router_job(f"Block internet of {(d or {}).get('name') or mac} (keeps local network)",
                                         script)
             return self._router_job(f"Unblock {(d or {}).get('name') or mac}",
@@ -2779,6 +2789,26 @@ class App(tk.Tk):
             script = T.guard_commands({opt: True}, [], self.lip, "bridge")[0]
             return self._router_job({"torrent": "Block torrents", "dns": "All DNS through the router",
                                      "dhcp": "Block rogue DHCP", "random": "Block randomized MACs"}[opt], script)
+        if name == "block_sites":
+            # block distracting sites for the WHOLE Wi-Fi on the router itself (no PC needed). Groups:
+            # social / chat / video / shopping; plus any typed domains. Replaces the previous ND set.
+            groups = a.get("groups") or []
+            if isinstance(groups, str):
+                groups = [g for g in re.split(r"[\s,]+", groups) if g]
+            sites = T.sites_for(groups, [a.get("sites", "")])
+            uniq = T.normalize_sites(sites)
+            if not uniq:
+                return {"ok": False, "message": "no sites chosen"}
+            apply, _ = T.site_block_commands(sites)
+            self._settings()["blocked_sites"] = {"groups": list(groups),
+                                                 "sites": [x for x in re.split(r"[\s,]+", str(a.get("sites", ""))) if x]}
+            self._save_settings()
+            return self._router_job(f"Block {len(uniq)} site(s) for the whole network", apply)
+        if name == "unblock_sites":
+            _, undo = T.site_block_commands([])
+            self._settings()["blocked_sites"] = {}
+            self._save_settings()
+            return self._router_job("Unblock all sites (ND list)", undo)
         if name == "router_cmd":
             i = int(a.get("i", -1))
             if not 0 <= i < len(T.COMMANDS) or T.COMMANDS[i][1] != "Router":

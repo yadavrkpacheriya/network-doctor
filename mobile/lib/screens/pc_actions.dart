@@ -446,6 +446,8 @@ class _PcToolsTabState extends State<PcToolsTab> {
   final _ip = TextEditingController();
   String? _devIp;
   String _cq = '';
+  final _sites = TextEditingController(); // custom domains to block, one/comma per line
+  final _siteGroups = <String>{}; // chosen groups: social / chat / video / shopping
 
   List<Map<String, dynamic>> get _devs =>
       _ms(widget.s['devices']).where((d) => d['online'] == true).toList()
@@ -487,7 +489,7 @@ class _PcToolsTabState extends State<PcToolsTab> {
       ),
     );
     return ListView(padding: const EdgeInsets.all(12), children: [
-      if (!login && (only == null || only.any((k) => ['guard', 'router'].contains(k))))
+      if (!login && (only == null || only.any((k) => ['guard', 'router', 'sites'].contains(k))))
         const Card(
             child: ListTile(
                 leading: Icon(Icons.info_outline),
@@ -543,6 +545,66 @@ class _PcToolsTabState extends State<PcToolsTab> {
             ),
           ),
         const Text('Undo: Security > Network guard on the PC.'),
+      ]),
+      section('sites', 'Block distracting sites (whole Wi-Fi)', Icons.block, [
+        const Text('Blocks these on the router for every device on the Wi-Fi - no PC needed afterwards.'),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, children: [
+          for (final g in const [
+            ['social', 'Social media'],
+            ['chat', 'Chat / messaging'],
+            ['video', 'Video / streaming'],
+            ['shopping', 'Shopping'],
+          ])
+            FilterChip(
+              label: Text(g[1]),
+              selected: _siteGroups.contains(g[0]),
+              onSelected: (v) => setState(() => v ? _siteGroups.add(g[0]) : _siteGroups.remove(g[0])),
+            ),
+        ]),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _sites,
+          minLines: 1,
+          maxLines: 3,
+          decoration: const InputDecoration(
+              labelText: 'Also block (domains, comma or new line)',
+              hintText: 'e.g. instagram.com, whatsapp.com',
+              isDense: true),
+        ),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, children: [
+          FilledButton.icon(
+            icon: const Icon(Icons.block),
+            label: const Text('Block for the whole network'),
+            onPressed: () async {
+              if (_siteGroups.isEmpty && _sites.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Pick a group or type at least one site.')));
+                return;
+              }
+              if (!await _confirm(context, 'Block sites',
+                  'Block the selected sites for EVERY device on the Wi-Fi. The PC applies this on the router now.')) {
+                return;
+              }
+              if (context.mounted) {
+                await runOnPc(context, 'block_sites',
+                    {'groups': _siteGroups.toList(), 'sites': _sites.text}, title: 'Block sites');
+              }
+            },
+          ),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.undo),
+            label: const Text('Remove block'),
+            onPressed: () async {
+              if (!await _confirm(context, 'Remove site block', 'Unblock all sites that Network Doctor blocked.')) {
+                return;
+              }
+              if (context.mounted) await runOnPc(context, 'unblock_sites', const {}, title: 'Unblock sites');
+            },
+          ),
+        ]),
+        const Text('Note: works for devices using the router as DNS (the normal setup).'),
       ]),
       section('router', 'Router commands', Icons.terminal, [
         TextField(
@@ -661,13 +723,17 @@ class PcDeviceActions extends StatelessWidget {
             if (mac.isNotEmpty)
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.block),
-                label: const Text('Block internet'),
+                label: const Text('Block from internet (keep LAN)'),
                 onPressed: () async {
-                  if (!await _confirm(context, 'Block ${name.isEmpty ? ip : name}',
-                      'This device loses internet and the rest of the network until you unblock it.')) {
+                  if (!await _confirm(context, 'Block ${name.isEmpty ? ip : name} from the internet',
+                      'It can\'t reach the internet and can\'t be reached from the internet, but still works on the '
+                      'local network. Good for a camera: the NVR / PCs still see it, but no one outside can. '
+                      'Unblock any time.')) {
                     return;
                   }
-                  if (context.mounted) await runOnPc(context, 'block', {'mac': mac, 'on': true}, title: 'Block $ip');
+                  if (context.mounted) {
+                    await runOnPc(context, 'block', {'mac': mac, 'ip': ip, 'on': true}, title: 'Block $ip');
+                  }
                 },
               ),
             if (mac.isNotEmpty)

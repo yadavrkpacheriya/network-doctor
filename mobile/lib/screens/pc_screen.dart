@@ -400,6 +400,7 @@ class _PcDashboardState extends State<PcDashboard> {
       PcSection('Security', Icons.shield, sectionColors[4], [
         if (s['pro'] == true) ('Auto-defense & checks', () => ProSecurityTab(s: s, onRefresh: _load)),
         ('Network guard', () => PcToolsTab(s: s, only: const ['guard'])),
+        ('Block sites', () => PcToolsTab(s: s, only: const ['sites'])),
       ]),
       PcSection('Fix & Commands', Icons.build, sectionColors[5], [
         ('Router commands', () => PcToolsTab(s: s, only: const ['router'])),
