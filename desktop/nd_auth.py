@@ -29,6 +29,7 @@ NEEDS = {
     "tag": "operator", "guard": "operator", "bind": "operator", "router_cmd": "operator", "alert_fix": "operator",
     "alert_status": "operator", "set_category": "operator",
     "block": "operator", "unblock": "operator", "isolate": "operator", "unisolate": "operator",
+    "block_sites": "operator", "unblock_sites": "operator",
     "router_reboot": "admin", "poweroff": "admin", "defense_config": "admin", "defense_arm": "admin",
     "defense_release": "operator",
     "account": "admin", "settings": "admin",

@@ -467,6 +467,63 @@ TORRENT_SITES = ["thepiratebay", "1337x", "1377x", "yts", "yify", "rarbg", "torr
 DOH_SERVERS = ("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "149.112.112.112", "208.67.222.222",
                "208.67.220.220", "94.140.14.14", "94.140.15.15", "185.228.168.9", "76.76.2.0")
 
+# Ready-made groups of "unproductive" sites to block for the whole Wi-Fi (full domains, subdomains included).
+SITE_GROUPS = {
+    "social": ("Social media", ["facebook.com", "fbcdn.net", "instagram.com", "cdninstagram.com", "threads.net",
+                                 "twitter.com", "x.com", "t.co", "tiktok.com", "tiktokcdn.com", "snapchat.com",
+                                 "reddit.com", "pinterest.com", "tumblr.com", "linkedin.com"]),
+    "chat": ("Chat / messaging", ["whatsapp.com", "whatsapp.net", "telegram.org", "t.me", "telegram.me",
+                                   "discord.com", "discord.gg", "messenger.com"]),
+    "video": ("Video / streaming", ["youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "netflix.com",
+                                     "nflxvideo.net", "primevideo.com", "hotstar.com", "disneyplus.com",
+                                     "twitch.tv", "dailymotion.com"]),
+    "shopping": ("Shopping", ["amazon.in", "amazon.com", "flipkart.com", "myntra.com", "ajio.com",
+                              "meesho.com", "snapdeal.com"]),
+}
+
+
+def _rx_domain(d):
+    """A domain with its dots escaped for a RouterOS /ip dns static regexp (same escaping the torrent
+    guard uses). Produces e.g. instagram\\.com so the regexp matches that domain exactly."""
+    return d.replace(".", "\\\\.")
+
+
+def normalize_sites(sites):
+    """Cleaned, de-duplicated, sorted list of blockable domains (lowercase, no www./*. prefix)."""
+    clean = [d.strip().lower().lstrip("*.").lstrip(".") for d in sites if d and str(d).strip()]
+    clean = [d[4:] if d.startswith("www.") else d for d in clean]
+    return sorted({d for d in clean if "." in d and " " not in d})
+
+
+def site_block_commands(sites):
+    """RouterOS script (apply, undo) that blackholes the given sites AND their subdomains for every device
+    that uses the router's DNS - i.e. the whole Wi-Fi, no PC needed. Uses match-subdomain on RouterOS 7 and
+    falls back to a regexp on RouterOS 6. Replaces any previous 'ND site-block' entries, then flushes the
+    DNS cache so it takes effect at once."""
+    clean = normalize_sites(sites)
+    rm = ':do {/ip dns static remove [find where comment~"^ND site-block"]} on-error={}'
+    apply = [rm]
+    for d in clean:
+        rx = _rx_domain(d)
+        apply.append(
+            f':do {{/ip dns static add name={d} match-subdomain=yes address=0.0.0.0 '
+            f'comment="ND site-block {d}"}} '
+            f'on-error={{/ip dns static add regexp="(^|\\\\.){rx}\\$" address=0.0.0.0 '
+            f'comment="ND site-block {d}"}}')
+    apply.append("/ip dns cache flush")
+    undo = [rm, "/ip dns cache flush"]
+    return "\n".join(apply), "\n".join(undo)
+
+
+def sites_for(groups=(), extra=()):
+    """Expand group keys (social/chat/video/shopping) plus any extra typed domains into one site list."""
+    out = []
+    for g in groups:
+        out += SITE_GROUPS.get(g, ("", []))[1]
+    for e in extra:
+        out += [x for x in re.split(r"[\s,]+", str(e)) if x]
+    return out
+
 
 def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
     """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random. Returns (apply_text, undo_text)."""

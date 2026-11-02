@@ -65,3 +65,33 @@ class Filters(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import unittest as _ut
+
+
+class SiteBlock(_ut.TestCase):
+    """Router-native site blocking for the whole Wi-Fi (DNS static, no PC needed)."""
+
+    def test_builds_match_subdomain_and_regexp_fallback(self):
+        import nd_tools as T
+        sites = T.sites_for(["social"], ["example.com, mysite.in"])
+        apply, undo = T.site_block_commands(sites)
+        self.assertIn("match-subdomain=yes", apply)       # RouterOS 7
+        self.assertIn("regexp=", apply)                   # RouterOS 6 fallback
+        self.assertIn("/ip dns cache flush", apply)
+        self.assertIn("instagram.com", apply)             # from the social group
+        self.assertIn("example.com", apply)               # custom typed
+        self.assertTrue(apply.startswith(':do {/ip dns static remove'))  # replaces old ND set
+        self.assertIn('remove [find where comment~"^ND site-block"]', undo)
+
+    def test_normalize(self):
+        import nd_tools as T
+        self.assertEqual(T.normalize_sites(["WWW.Instagram.com", "*.instagram.com", "instagram.com", "x y"]),
+                         ["instagram.com"])
+
+    def test_empty_is_just_cleanup(self):
+        import nd_tools as T
+        apply, _ = T.site_block_commands([])
+        self.assertTrue(apply.splitlines()[0].startswith(':do {/ip dns static remove'))
+        self.assertNotIn("dns static add", apply)
