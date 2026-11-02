@@ -1,0 +1,182 @@
+name: Mobile - build Android app
+
+# Builds the Network Doctor phone app on GitHub's free Linux machines.
+#  * First run: creates the standard Android project files with `flutter create` and saves them
+#    to the repository (so every later build is identical).
+#  * Every run: checks the code (flutter analyze), runs the tests, builds the APK.
+#  * When the version in mobile/pubspec.yaml is new, the APK is published as a GitHub Release
+#    "mobile-vX.Y.Z" (never marked "latest", so the Windows app's updater is not affected).
+#  * When the Play Store upload-key secrets exist, an .aab for Google Play is built, signed and attached
+#    to the "mobile-vX.Y.Z" release (NetworkDoctor-Android.aab - the file to upload in Play Console).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-android.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobile-android
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android project files (first run only)
+        id: boot
+        run: |
+          if [ ! -d android ]; then
+            flutter create --project-name network_doctor --org io.github.yadavrkpacheriya --platforms android .
+            rm -f test/widget_test.dart          # template test for the demo counter app
+            flutter pub add http shared_preferences url_launcher network_info_plus
+            flutter pub add dev:flutter_lints
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+          python3 tool/patch_platforms.py
+          flutter pub get
+
+      - name: Check the code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Run tests
+        # a failing test is also shown as an annotation on the check (readable without the full log)
+        run: |
+          set -o pipefail
+          flutter test 2>&1 | tee test.log || {
+            grep -A22 "EXCEPTION CAUGHT" test.log | grep -v "^\s*$" | head -30 |
+              while IFS= read -r l; do echo "::error::$l"; done
+            exit 1; }
+
+      - name: Save generated project files to the repository
+        if: steps.boot.outputs.created == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .
+          git commit -m "Mobile: add generated Android project files"
+          git push
+
+      - name: Read version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(grep -E '^version:' pubspec.yaml | sed -E 's/^version: *([0-9.]+).*/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "mobile-v$v" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "mobile-v$v already released"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"; echo "new version mobile-v$v"
+          fi
+
+      - name: Play Store upload key (only when the secrets are set)
+        if: env.KS_B64 != ''
+        run: |
+          echo "$KS_B64" | base64 -d > android/app/upload-keystore.jks
+          {
+            echo "storePassword=$KS_PASS"
+            echo "keyPassword=$KEY_PASS"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.jks"
+          } > android/key.properties
+
+      - name: Build APK
+        run: |
+          # One APK per processor type instead of one APK holding all three: about a third of the size.
+          flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/NetworkDoctor-Android.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/NetworkDoctor-Android-32bit.apk
+          ls -lh build/NetworkDoctor-Android*.apk
+
+      - name: Build Play Store bundle (.aab)
+        if: env.KS_B64 != ''
+        run: |
+          flutter build appbundle --release
+          cp build/app/outputs/bundle/release/app-release.aab build/NetworkDoctor-Android.aab
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: network-doctor-android
+          path: |
+            mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android-32bit.apk
+            mobile/build/NetworkDoctor-Android.aab
+          if-no-files-found: ignore
+
+      - name: Publish APK as a GitHub Release
+        if: steps.ver.outputs.exists == 'false' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mobile-v${{ steps.ver.outputs.version }}
+          name: Network Doctor for Android ${{ steps.ver.outputs.version }}
+          make_latest: false
+          body: |
+            Network Doctor phone app for Android.
+
+            Install on a phone for testing: open this page on the phone, download NetworkDoctor-Android.apk
+            and allow "Install unknown apps" for your browser when Android asks. The Google Play version
+            will update automatically through the Play Store once it is published there.
+
+            NetworkDoctor-Android.apk is for every phone made since about 2017 (64-bit). Only if Android says
+            the app is not compatible, use NetworkDoctor-Android-32bit.apk instead.
+          files: |
+            mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android-32bit.apk
+
+      - name: Attach the Play Store bundle (.aab) to the release
+        # Also for an existing release, so the file Google Play needs is always one click away.
+        if: env.KS_B64 != '' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f build/NetworkDoctor-Android.aab
+          gh release upload "mobile-v${{ steps.ver.outputs.version }}" build/NetworkDoctor-Android.aab --clobber \
+            --repo "${{ github.repository }}"
+
+      - name: Publish to Google Play (internal testing track)
+        # Runs only for a new version and only once the Play Console service-account key is saved as the
+        # PLAY_SERVICE_ACCOUNT_JSON secret (and the app exists in Play Console). Promote to production in Play Console.
+        if: env.PLAY_JSON != '' && env.KS_B64 != '' && steps.ver.outputs.exists == 'false' && github.event_name != 'pull_request'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.pacheriya.networkdoctor
+          releaseFiles: mobile/build/NetworkDoctor-Android.aab
+          track: internal
+          status: completed
+          releaseName: ${{ steps.ver.outputs.version }}
+
+      - name: Clean up signing files
+        if: always()
+        run: rm -f android/app/upload-keystore.jks android/key.properties
