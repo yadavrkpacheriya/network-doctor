@@ -86,6 +86,22 @@ class Diagnosis(unittest.TestCase):
         self.assertIn("MTU 1452", f["title"])
         self.assertIn("clamp-to-pmtu", S.fix_script("mss_clamp"))
 
+    def test_mss_clamp_has_hard_ceiling_from_mtu(self):
+        scr = S.fix_script("mss_clamp", mtu=1480)
+        self.assertIn("clamp-to-pmtu", scr)      # PMTU-learned rule
+        self.assertIn("new-mss=1440", scr)       # explicit ceiling = 1480 - 40
+        self.assertIn("tcp-mss=!0-1440", scr)
+        # unknown MTU falls back to the safe PPPoE default
+        self.assertIn("new-mss=1440", S.fix_script("mss_clamp"))
+
+    def test_mtu_suppressed_when_clamp_active(self):
+        # once the MSS clamp is on the router, a small line MTU is no longer a warning
+        outs = S.judge(healthy(mtu=1480, mss_clamp=True))
+        mtu_f = [f for f in outs if "MTU 1480" in f["title"]]
+        self.assertEqual(len(mtu_f), 1)
+        self.assertEqual(mtu_f[0]["sev"], "ok")
+        self.assertIsNone(mtu_f[0]["action"])
+
     def test_site_itself_slow_google_sheets_advice(self):
         m = healthy(site_runs=[run(total=5200, ttfb=4500, tls=90)], ref_runs=[run(total=300, ttfb=60, tls=60)])
         f = first(m)
