@@ -1631,7 +1631,8 @@ class SlowTab:
                 for x in f["fixes"]:
                     t.insert("end", f"  -> {x}\n", "ok")
             a = f.get("action") or ""
-            scr = self.S.fix_script(a, self.mbps, self._lan()) if a and not a.startswith("open:") else ""
+            scr = self.S.fix_script(a, self.mbps, self._lan(), mtu=(self.result or {}).get("mtu")) \
+                if a and not a.startswith("open:") else ""
             if scr:
                 t.insert("end", "\nRouter commands for this fix (or press 'Fix this on the router'):\n", "h")
                 t.insert("end", scr)
@@ -1696,7 +1697,7 @@ class SlowTab:
         if a == "queue_fair" and not self.mbps:
             messagebox.showinfo(APP, "Type your internet plan speed (Mbps) first, then run the check again.")
             return
-        scr = self.S.fix_script(a, self.mbps, self._lan())
+        scr = self.S.fix_script(a, self.mbps, self._lan(), mtu=(self.result or {}).get("mtu"))
         if scr:
             self.app.router_apply(scr, f"Slow website fix: {f['title']}")
 

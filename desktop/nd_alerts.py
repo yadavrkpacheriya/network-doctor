@@ -331,7 +331,9 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                     auto=[("Add MSS clamp on the router", "router",
                            ':do {/ip firewall mangle remove [find where comment="ND: MSS clamp"]} on-error={}\n'
                            '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
-                           'action=change-mss new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"')])
+                           'action=change-mss new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"\n'
+                           '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
+                           'tcp-mss=!0-1440 action=change-mss new-mss=1440 passthrough=yes comment="ND: MSS clamp"')])
 
     if "new device" in low or "randomized" in low or "random mac" in low:
         return _fix(3, "new_device", "New device(s) joined the network",

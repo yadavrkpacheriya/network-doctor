@@ -1,3 +1,31 @@
+## Network Doctor 3.18.5
+
+### The fix in this version
+- **Google Sheets / big sites that spin on "Loading…" even though the internet works.** This is the classic
+  large-packet (MTU) blackhole on PPPoE and some fibre lines: the page connects but then hangs because full-size
+  packets are silently dropped. The MSS-clamp fix is now **two rules** instead of one - the usual
+  `clamp-to-pmtu` rule plus a hard ceiling (line MTU − 40, e.g. 1440 on a 1480 line) so it still works even when
+  the router never learns the path MTU. The ceiling is computed from the MTU actually measured on your line.
+- **The MTU warning no longer keeps nagging after the clamp is applied.** Once the "ND: MSS clamp" rule is on the
+  router, the Slow-website check detects it and shows a green "Large packets handled - MSS clamp active" note
+  instead of flagging the same problem again. A PPPoE/fibre line will always read an MTU below 1500; that is the
+  real line limit, not a fault, and the app now says so.
+
+### Also included since the last store build (3.18.0 → 3.18.5)
+- **3.18.1 - Updater no longer flashes a black command window.** Auto-updates now run fully hidden.
+- **3.18.2 - Alert pop-up could hang and stop responding.** Alerts are now drained in small batches on the main
+  thread, so a burst of events can never freeze the window.
+- **3.18.3 - "Stop a device's internet" now actually sticks for printers/IoT.** Blocks keep the device fully usable
+  on the local network (printing, scanning) while cutting only its internet, in both directions.
+- **3.18.4 - Block distracting sites for the whole Wi-Fi** (Instagram, Facebook, WhatsApp, YouTube, shopping, …)
+  straight from the PC or the phone; **cameras can be cut off from the internet while the NVR stays reachable from
+  outside** (bi-directional block that keeps the LAN), so single cameras can't be reached by attackers from the
+  internet; and the first version of the **MSS-clamp / MTU** fix.
+
+### Reminder
+Close and reopen Network Doctor once to let any pending auto-update install - that is how you move up to the
+latest version.
+
 ## Network Doctor 3.18.0
 
 **Standard app:** no visible change - this version adds a separate private "Pro" edition for the owner.

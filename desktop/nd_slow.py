@@ -197,6 +197,12 @@ def measure(url, device, ctx, progress=lambda pct, text: None, stop=None, loaded
         try:
             with router:
                 res = router.cmd("/system/resource/print")
+                try:  # is an MSS clamp already on the router? then a small line MTU is fine, not a problem
+                    mg = router.cmd("/ip/firewall/mangle/print")
+                    m["mss_clamp"] = any("clamp-to-pmtu" in str(r.get("new-mss", "")) or
+                                         "ND: MSS clamp" in str(r.get("comment", "")) for r in (mg or []))
+                except Exception:
+                    pass
             m["router_cpu"] = int((res[0] if res else {}).get("cpu-load", "0") or 0)
         except Exception as e:
             m["router_err"] = str(e)
@@ -370,10 +376,17 @@ def judge(m):
                        "Keep big downloads / backups for after office hours."], "queue_fair", 78))
     mtu = m.get("mtu")
     if mtu and mtu < 1500:
-        out.append(_f("warning", f"Large packets do not pass (MTU {mtu})", "Medium",
-                      [f"largest packet {mtu} bytes (normal 1500) - typical of PPPoE / some fibre lines"],
-                      ["Some sites (Google, banks, portals) then hang or load very slowly. Add 'MSS clamp' on the "
-                       "router (button below)."], "mss_clamp", 72))
+        if m.get("mss_clamp"):
+            out.append(_f("ok", f"Large packets handled (line MTU {mtu}, MSS clamp active)", "Low",
+                          [f"line carries {mtu}-byte packets (normal for PPPoE / fibre); the router's MSS clamp "
+                           "already makes every connection fit, so sites load normally"],
+                          ["Nothing to do - the MSS clamp is doing its job. This line will always read "
+                           f"{mtu}, that is the real fibre/PPPoE limit, not a fault."], None, 20))
+        else:
+            out.append(_f("warning", f"Large packets do not pass (MTU {mtu})", "Medium",
+                          [f"largest packet {mtu} bytes (normal 1500) - typical of PPPoE / some fibre lines"],
+                          ["Some sites (Google, banks, portals) then hang or load very slowly. Add 'MSS clamp' on the "
+                           "router (button below)."], "mss_clamp", 72))
 
     # ---- the user's own device is busy / weak
     if dev.get("down_bps", 0) + dev.get("up_bps", 0) > 5e6:
@@ -441,14 +454,19 @@ def compare_command(url):
 
 
 # router fixes (MikroTik), applied with the router login or pasted in WinBox
-def fix_script(action, line_mbps=None, lan="", bridge="bridge"):
+def fix_script(action, line_mbps=None, lan="", bridge="bridge", mtu=None):
     if action == "dns_public":
         return ("/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes cache-size=8192KiB\n"
                 "/ip dns cache flush\n")
     if action == "mss_clamp":
+        # ceiling = path MTU - 40 (IP+TCP headers); 1440 is the safe PPPoE default
+        ceil = max(1200, (int(mtu) - 40)) if mtu else 1440
         return (':do {/ip firewall mangle remove [find where comment="ND: MSS clamp"]} on-error={}\n'
                 "/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn action=change-mss "
-                'new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"\n')
+                'new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"\n'
+                # hard ceiling so it still works if the router never learns the path MTU
+                "/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn "
+                f'tcp-mss=!0-{ceil} action=change-mss new-mss={ceil} passthrough=yes comment="ND: MSS clamp"\n')
     if action.startswith("limit:"):
         ip = action.split(":", 1)[1]
         mb = max(2, int((line_mbps or 50) * 0.3))
