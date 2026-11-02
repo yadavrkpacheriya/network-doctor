@@ -1871,7 +1871,7 @@ class TroubleshootWindow(tk.Toplevel):
     def __init__(self, app, alert):
         super().__init__(app)
         self.app, self.alert = app, alert
-        r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw)
+        r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw, getattr(app, "net", ""))
         self.title("Troubleshoot - " + r["title"][:60])
         self.geometry("820x640")
         self.transient(app)

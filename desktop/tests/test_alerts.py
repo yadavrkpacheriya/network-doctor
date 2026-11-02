@@ -71,3 +71,38 @@ class Log(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LanPreservingBlock(unittest.TestCase):
+    """Blocking a device's internet must keep the local network (dst-address=!LAN), so a printer still
+    prints on the LAN while being cut off from the internet, and an exposed camera is dropped only from
+    the internet side."""
+
+    NET = "192.168.0.0/24"
+
+    def _auto(self, text, ip="192.168.0.97"):
+        r = AL.explain(text, "warning", "192.168.0.5", "192.168.0.1", self.NET)
+        return r["auto"]
+
+    def test_torrent_block_keeps_lan(self):
+        a = self._auto("192.168.0.97: Torrent / peer-to-peer download (255.255.255.255 port 51413)")
+        blk = [x for x in a if "internet" in x["label"].lower() and x["where"] == "router"]
+        self.assertTrue(blk, "no per-device internet block offered")
+        cmd = blk[0]["cmd"]
+        self.assertIn("dst-address=!192.168.0.0/24", cmd)   # keeps the LAN
+        self.assertIn("src-address=192.168.0.97", cmd)
+        self.assertIn("action=drop", cmd)
+
+    def test_exposed_camera_blocks_inbound_only_keeps_lan(self):
+        a = self._auto("192.168.0.203: XMeye DVR is reachable from the internet (45.79.125.182 port 34567)",
+                       ip="192.168.0.203")
+        close = [x for x in a if "internet access" in x["label"].lower()][0]["cmd"]
+        self.assertIn("/ip upnp set enabled=no", close)
+        self.assertIn("dst-address=192.168.0.203", close)    # drop traffic reaching the camera...
+        self.assertIn("src-address=!192.168.0.0/24", close)  # ...only from outside the LAN
+
+    def test_fallback_without_net_still_blocks(self):
+        r = AL.explain("192.168.0.97: Torrent / peer-to-peer download (255.255.255.255 port 51413)",
+                       "warning", "", "")  # no lip, no net
+        blk = [x for x in r["auto"] if "internet" in x["label"].lower() and x["where"] == "router"]
+        self.assertIn("action=drop", blk[0]["cmd"])
