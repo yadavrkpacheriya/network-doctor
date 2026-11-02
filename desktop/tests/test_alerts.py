@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest as _ut
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -106,3 +107,13 @@ class LanPreservingBlock(unittest.TestCase):
                        "warning", "", "")  # no lip, no net
         blk = [x for x in r["auto"] if "internet" in x["label"].lower() and x["where"] == "router"]
         self.assertIn("action=drop", blk[0]["cmd"])
+
+
+class MtuFix(_ut.TestCase):
+    def test_mss_clamp_offered(self):
+        import nd_alerts as AL
+        r = AL.explain("Large packets do not pass (MTU 1480)", "warning", "192.168.0.5", "192.168.0.1")
+        self.assertEqual(r["kind"], "mtu")
+        cmd = [x for x in r["auto"] if x["where"] == "router"][0]["cmd"]
+        self.assertIn("action=change-mss", cmd)
+        self.assertIn("clamp-to-pmtu", cmd)
