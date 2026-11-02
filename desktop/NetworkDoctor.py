@@ -61,7 +61,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.18.5"
+VERSION = "3.18.6"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1892,6 +1892,12 @@ class App(tk.Tk):
                          "; ".join(i["title"] for i in bad))
         self._evaluate("Loop / conflict check", issues, dhcp_tested=dhcp)
         self._auto_label()
+        for cb in list(getattr(self, "_quick_done_cbs", [])):
+            try:
+                cb()
+            except Exception:
+                pass
+        self._quick_done_cbs = []
         if self.pending_scan:
             self.pending_scan = False
             self.start_scan()
