@@ -1872,6 +1872,7 @@ class TroubleshootWindow(tk.Toplevel):
     def __init__(self, app, alert):
         super().__init__(app)
         self.app, self.alert = app, alert
+        self.undo_script = ""
         r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw, getattr(app, "net", ""))
         self.title("Troubleshoot - " + r["title"][:60])
         self.geometry("820x640")
@@ -1905,8 +1906,19 @@ class TroubleshootWindow(tk.Toplevel):
             ttk.Label(box, text="Router fixes need the router login (Setup) and ask before changing anything. "
                                 "Without a login, 'Show commands' gives them to paste in WinBox > New Terminal.",
                       foreground="#667085", wraplength=760, justify="left").pack(anchor="w")
+            self.undo_script = "\n".join(
+                s for s in (T.undo_for(self.script(a)) for a in r["auto"] if a["where"] == "router") if s)
             if any(a["where"] == "router" for a in r["auto"]):
-                ttk.Button(box, text="Show commands", command=self.show_cmds).pack(anchor="w", pady=(4, 0))
+                row = ttk.Frame(box)
+                row.pack(anchor="w", pady=(4, 0), fill="x")
+                ttk.Button(row, text="Show commands", command=self.show_cmds).pack(side="left")
+                if self.undo_script:
+                    ttk.Button(row, text="Undo this fix  (on the router)",
+                               command=self.undo).pack(side="left", padx=6)
+                    ttk.Label(box, text="If a fix causes trouble, 'Undo this fix' removes exactly what Network "
+                                        "Doctor added and puts the router back. 'Show commands' lists both the fix "
+                                        "and its undo.", foreground="#667085", wraplength=760,
+                              justify="left").pack(anchor="w", pady=(2, 0))
         sb = ttk.LabelFrame(f, text="Step by step (tick each step when done)", padding=8)
         sb.pack(fill="both", expand=True)
         self.ticks = []
@@ -1947,18 +1959,65 @@ class TroubleshootWindow(tk.Toplevel):
 
         def done(err):
             if not err:
-                self.var_res.set(f"Done: {a['label']}. Re-check in a few minutes.")
                 self.app.alert_log.set_status({self.alert["id"]}, "fixed", "automatic fix: " + a["label"])
                 self.app.alert_log.save()
                 self.app.alerts_tab.refresh()
+                self.auto_recheck(f"Done: {a['label']}.")
         if not self.app.router_apply(self.script(a), a["label"], done):
             self.show_cmds()
 
+    def undo(self):
+        if not self.undo_script:
+            return
+        if not messagebox.askyesno(APP, "Undo this fix on the router?\n\nThis removes exactly what Network Doctor "
+                                         "added for this fix and puts the router back as it was.\n\n"
+                                         + self.undo_script + "\n\nContinue?"):
+            return
+
+        def done(err):
+            if not err:
+                self.app.alert_log.set_status({self.alert["id"]}, "open", "fix undone")
+                self.app.alert_log.save()
+                self.app.alerts_tab.refresh()
+                self.auto_recheck("Fix undone.")
+        if not self.app.router_apply(self.undo_script, "Undo: " + self.r["title"][:40], done):
+            self.show_cmds()
+
+    def auto_recheck(self, prefix=""):
+        """After a fix or undo is applied, re-check automatically and say whether the issue is gone."""
+        covered = bool(core.QUICK_TITLES.search(self.r["title"]))
+        if not covered:
+            self.var_res.set((prefix + " Applied. This check runs on the next full scan - "
+                              "press 'Mark fixed' once the device can no longer be reached.").strip())
+            return
+        self.var_res.set((prefix + " Re-checking the network now...").strip())
+        aid, akey = self.alert["id"], self.app._akey(self.r["title"])
+
+        def after_scan():
+            cur = self.app.alert_log.get(aid)
+            still = (cur and cur.get("status") == "open") or any(
+                self.app._akey(x["title"]) == akey for x in self.app.alert_log.recent(400, only_open=True))
+            if still:
+                self.var_res.set("Still showing after the fix - try the step-by-step below, then re-check.")
+            else:
+                self.var_res.set("Resolved - the re-check no longer finds this problem.")
+        cbs = getattr(self.app, "_quick_done_cbs", None)
+        if cbs is None:
+            cbs = self.app._quick_done_cbs = []
+        cbs.append(after_scan)
+        try:
+            self.app.start_quick(manual=True)
+        except TypeError:
+            self.app.start_quick()
+
     def show_cmds(self):
         txt = "\n\n".join(f"# {a['label']}\n{self.script(a)}" for a in self.r["auto"] if a["where"] == "router")
+        if self.undo_script:
+            txt += ("\n\n# ------------------------------- UNDO (keep these) -------------------------------\n"
+                    "# Paste these to reverse the fix above if it causes any trouble:\n" + self.undo_script)
         w = tk.Toplevel(self)
         w.title("Commands - paste in WinBox > New Terminal")
-        w.geometry("760x420")
+        w.geometry("760x460")
         t = UI["text_box"](w)
         t.configure(state="normal")
         t.insert("1.0", txt)

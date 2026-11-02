@@ -1580,3 +1580,40 @@ def parse_remote_inventory(out):
     elif "rpc server" in low or "0x800706ba" in low or "unavailable" in low:
         err = "the PC's firewall blocks remote WMI (run the PC details script on it once instead)"
     return {}, err.replace("ERROR: ", "")[:200]
+
+
+def undo_for(script):
+    """Best-effort reverse of a Network Doctor router fix script, so the user can roll a fix back.
+
+    Covers what ND actually emits: any rule it adds carries an "ND ..." comment, so the undo is a
+    remove-by-comment; UPnP / NAT / loop-protect / IGMP toggles are flipped back; a DNS-server change
+    cannot be reversed blindly, so it is flagged for the user. Returns a script string (may be empty)."""
+    outs, seen = [], set()
+
+    def add(line):
+        if line and line not in seen:
+            seen.add(line)
+            outs.append(line)
+
+    # every ND rule it adds carries comment="ND ..."; reverse each unique (path, comment) with a remove.
+    for m in re.finditer(r'(/[\w ]+?) add [^\n}]*?comment="([^"]+)"', script):
+        path, comment = m.group(1).strip(), m.group(2)
+        add(f'{path} remove [find where comment="{comment}"]')
+    # a queue added only by name (no comment)
+    for m in re.finditer(r'(/queue simple) add name="([^"]+)"', script):
+        if 'comment=' not in m.group(0):
+            add(f'{m.group(1)} remove [find name="{m.group(2)}"]')
+    # state toggles - flip them back
+    for line in script.splitlines():
+        s = line.strip()
+        if s.startswith("/ip upnp set enabled=no"):
+            add("/ip upnp set enabled=yes")
+        elif "/ip firewall nat disable " in s:
+            add(s.replace("/ip firewall nat disable ", "/ip firewall nat enable ", 1))
+        elif "loop-protect=on" in s and " set " in s:
+            add(s.replace("loop-protect=on", "loop-protect=off"))
+        elif "igmp-snooping=yes" in s and " set " in s:
+            add(s.replace("igmp-snooping=yes", "igmp-snooping=no"))
+        elif s.startswith("/ip dns set servers="):
+            add("# DNS servers were changed - if you need the old ones back, set them by hand in /ip dns")
+    return "\n".join(outs)

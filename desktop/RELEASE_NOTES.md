@@ -1,3 +1,23 @@
+## Network Doctor 3.18.6
+
+### New in this version
+- **Every router fix now has an "Undo this fix" button.** Open any alert's Troubleshoot window: next to
+  "Show commands" there is now "Undo this fix (on the router)". It removes exactly what Network Doctor added
+  for that fix - by the "ND ..." tag it put on each rule - and puts the router back as it was (re-enabling
+  UPnP or a port-forward where the fix had turned them off). You get a preview and a Yes/No before anything
+  changes.
+- **"Show commands" now also lists the UNDO commands.** The command window shows the fix and, below it, a clearly
+  marked UNDO block you can copy and paste in WinBox if you ever need to roll the fix back by hand.
+- **Automatic re-check after a fix (and after an undo).** When a fix is applied, Network Doctor immediately
+  re-checks the network and tells you in the same window whether the problem is **Resolved** or **Still showing** -
+  no need to press "Re-check" yourself. For checks that only run in a full scan (such as "device exposed to the
+  internet"), it says so plainly and asks you to confirm once the device can no longer be reached, instead of
+  guessing.
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install - that is how you move up to the latest
+version.
+
 ## Network Doctor 3.18.5
 
 ### The fix in this version
