@@ -28,9 +28,8 @@
 - The Root cause advice for "device uses most of the internet" and "reachable from the internet" now points to this page.
 
 ### Good to know
-- Per-user limits use MikroTik *simple queues with PCQ*. They work behind NAT; a queue on the internet port would see one
-  address for everybody. FastTrack skips queues, so the plan switches the router's FastTrack rules off (marked, and
-  switched on again by Undo). Watch the router's CPU after applying.
+- Per-user limits use MikroTik *simple queues with PCQ*. FastTrack skips queues, so the plan switches the router's
+  FastTrack rules off as its last step (marked, and switched on again by Undo). Watch the router's CPU after applying.
 - Not tested on a real router yet: apply it at a quiet time, with the Undo commands at hand.
 
 ## Network Doctor 3.18.7

@@ -117,7 +117,7 @@ class Queues(unittest.TestCase):
         self.assertEqual(names, ["ND-TOTAL", "ND-NVR", "ND-VIP", "ND-MOBILE", "ND-PC"])  # first match wins
         self.assertIn("target=192.168.0.20/32,192.168.0.21/32", a)
         self.assertIn("ND-PC target=192.168.0.0/24", a)
-        self.assertTrue(all("dst=ether1" in ln for ln in a.splitlines() if ln.startswith("add name=ND-") and " target=" in ln))
+        self.assertNotIn("dst=", a)  # no dependency on the internet port name
 
     def test_guarantees_fit_in_the_line(self):
         a, _ = self.build()
@@ -142,7 +142,7 @@ class Queues(unittest.TestCase):
 
     def test_borrow_off_keeps_hard_pools(self):
         a, _ = self.build({"borrow": False})
-        self.assertIn("name=ND-NVR target=192.168.0.20/32,192.168.0.21/32 dst=ether1 parent=ND-TOTAL priority=1/1 "
+        self.assertIn("name=ND-NVR target=192.168.0.20/32,192.168.0.21/32 parent=ND-TOTAL priority=1/1 "
                       "limit-at=10M/10M max-limit=10M/10M", a)
 
     def test_fasttrack_off_and_undo(self):
@@ -154,9 +154,13 @@ class Queues(unittest.TestCase):
         self.assertEqual(len("ND-off: "), 8)
         self.assertIn('remove [find where name~"^ND-"]', u)
 
-    def test_needs_wan(self):
-        with self.assertRaises(ValueError):
-            B.queue_commands({}, self.groups, "192.168.0.0/24", "")
+    def test_fasttrack_is_the_last_step(self):
+        a, _ = self.build()
+        self.assertGreater(a.index("fasttrack-connection"), a.index("add name=ND-PC "))
+
+    def test_works_without_wan(self):
+        a, _ = B.queue_commands({}, self.groups, "192.168.0.0/24")
+        lint(a)
 
 
 class Cameras(unittest.TestCase):

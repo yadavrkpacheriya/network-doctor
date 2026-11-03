@@ -166,18 +166,17 @@ def _ros_on(path):
             f'{path} set $r comment=[:pick $c {n} [:len $c]]; {path} enable $r }}')
 
 
-def queue_commands(plan, groups, lan, wan):
+def queue_commands(plan, groups, lan, wan=""):
     """Per-group pools and a per-user cap inside each pool, as MikroTik simple queues with PCQ.
-    groups: {'nvr': [ips], 'vip': [ips], 'mobile': [ips]}; lan: '192.168.0.0/24'; wan: the internet port (ether1).
-    Simple queues (not queue tree) because a limit per user on the WAN port would see the NAT'ed address and treat
-    every user as one. Order matters (first match wins): NVR, VIP, mobiles, then everything else = Office PCs.
-    FastTrack skips queues, so the router's FastTrack rules are switched off (and switched on again by the UNDO)."""
+    groups: {'nvr': [ips], 'vip': [ips], 'mobile': [ips]}; lan: '192.168.0.0/24'. wan is not needed (kept so older
+    callers still work). Traffic between devices on the same switch never reaches the router, so only internet
+    traffic is limited. Order matters (first match wins): NVR, VIP, mobiles, then everything else = Office PCs.
+    FastTrack skips queues, so the router's FastTrack rules are switched off - as the LAST step, so a line the router
+    refuses cannot leave it with FastTrack off and no queues - and switched on again by the UNDO."""
     counts = {g: len((groups or {}).get(g) or []) for g in ("nvr", "vip", "mobile")}
     pl = compute_pools(plan, counts)
     if pl["errors"]:
         raise ValueError(" ".join(pl["errors"]))
-    if not wan:
-        raise ValueError("The internet port of the router (for example ether1) is needed.")
     usable = pl["usable"]
     given = {g: pl[g] for g in ("nvr", "vip", "mobile") if counts[g]}
     pc_at = round(usable - sum(given.values()), 2)  # pools nobody uses go to the office PCs
@@ -196,15 +195,12 @@ def queue_commands(plan, groups, lan, wan):
     for key, per in (("vip", pl["vip_user"]), ("mobile", pl["mobile_user"]), ("pc", pl["pc_user"])):
         a.append(f"add name=ND-{key}-up kind=pcq pcq-classifier=src-address pcq-rate={rate(per)}")
         a.append(f"add name=ND-{key}-dn kind=pcq pcq-classifier=dst-address pcq-rate={rate(per)}")
-    a += ["/ip firewall filter",
-          _ros_off("/ip firewall filter", "action=fasttrack-connection and disabled=no"),
-          "/queue simple",
-          f'add name=ND-TOTAL target={lan} dst={wan} max-limit={rate(usable)}/{rate(usable)} '
-          f'comment="ND: whole internet line"']
+    a += ["/queue simple",
+          f'add name=ND-TOTAL target={lan} max-limit={rate(usable)}/{rate(usable)} comment="ND: whole internet line"']
 
     def child(name, ips, prio, at, top, qtype, note):
         tgt = ",".join(f"{i}/32" for i in ips) if ips else lan
-        a.append(f'add name={name} target={tgt} dst={wan} parent=ND-TOTAL priority={prio}/{prio} '
+        a.append(f'add name={name} target={tgt} parent=ND-TOTAL priority={prio}/{prio} '
                  f'limit-at={rate(at)}/{rate(at)} max-limit={rate(top)}/{rate(top)} queue={qtype} comment="ND: {note}"')
     if counts["nvr"]:
         child("ND-NVR", groups["nvr"], 1, pl["nvr"], mx(pl["nvr"]), "default-small/default-small",
@@ -214,6 +210,8 @@ def queue_commands(plan, groups, lan, wan):
     if counts["mobile"]:
         child("ND-MOBILE", groups["mobile"], 4, pl["mobile"], mx(pl["mobile"]), "ND-mobile-up/ND-mobile-dn", "mobiles")
     child("ND-PC", None, 3, pc_at, mx(pc_at), "ND-pc-up/ND-pc-dn", "office PCs and everything else")
+    a += ["", "# Last step: FastTrack skips queues, so it is switched off (the UNDO switches it on again).",
+          "/ip firewall filter", _ros_off("/ip firewall filter", "action=fasttrack-connection and disabled=no")]
     u = [_header("UNDO bandwidth plan"), "/queue simple", ':do {remove [find where name~"^ND-"]} on-error={}',
          "/queue type", ':do {remove [find where name~"^ND-"]} on-error={}', "/ip firewall filter",
          _ros_on("/ip firewall filter")]
