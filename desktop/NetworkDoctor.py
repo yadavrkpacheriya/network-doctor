@@ -40,6 +40,7 @@ import nd_toolstab
 import nd_routeros as RO
 import nd_usage as US
 import nd_home
+import nd_bwtab
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -61,7 +62,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.18.7"
+VERSION = "3.19.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -519,6 +520,7 @@ class App(tk.Tk):
         self._tab_monitor()
         self._tab_usage()
         self._tab_slow()
+        self._tab_bandwidth()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
@@ -592,6 +594,10 @@ class App(tk.Tk):
         f = self.nav.page("slow")
         self.slow = nd_tabs.SlowTab(self, f)
 
+    def _tab_bandwidth(self):
+        f = self.nav.page("bwplan")
+        self.bwplan = nd_bwtab.BandwidthPage(self, f)
+
     def _tab_usage(self):
         f = self.nav.page("usage")
         self.usage_tab = nd_tabs.UsageTab(self, f)
@@ -633,6 +639,8 @@ class App(tk.Tk):
                 self.home.refresh()
             elif cur == "slow":
                 self.slow.refresh()
+            elif cur == "bwplan":
+                self.bwplan.refresh()
             elif cur == "commands":
                 self.commands.refresh()
             elif cur == "alerts":

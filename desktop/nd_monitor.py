@@ -1388,7 +1388,9 @@ def rca_network(mon, devices, issues, db):
             if share > 0.4 and (r["down_bps"] + r["up_bps"]) > 60e3:
                 add(f"{name_ip(ip)} is using most of the internet", "High" if share > 0.6 else "Medium", 70, ev2,
                     ["Open this device's analysis (Devices tab > select > Analyse) to see which apps / sites.",
-                     "If needed, limit it on the router: /queue simple add target=" + ip + "/32 max-limit=5M/10M"])
+                     "If needed, limit it on the router: /queue simple add target=" + ip + "/32 max-limit=5M/10M",
+                     "Better for every user at once: Internet & Usage > Bandwidth plan (a cap per user, a fixed part "
+                     "for the NVR / DVR, faster internet for directors when needed)."])
         out_bad, in_bad = [], []
         for ip, th in mon.traffic.all_threats().items():
             for remote, (label, kind, inbound) in th.items():
@@ -1414,6 +1416,8 @@ def rca_network(mon, devices, issues, db):
                 (ev3 + in_bad)[:12],
                 ["Remove port-forward / DMZ rules you do not need: /ip firewall nat print  (look for dst-nat).",
                  "For CCTV use the brand's cloud app (Hik-Connect, DMSS) or a VPN instead of open ports.",
+                 "One click: Internet & Usage > Bandwidth plan > 4. Cameras closes the port-forwards, stops the "
+                 "cameras from reaching the internet and keeps the NVR / DVR's cloud link.",
                  "Change default passwords and update firmware on every listed device."])
 
     # --- from the scan
