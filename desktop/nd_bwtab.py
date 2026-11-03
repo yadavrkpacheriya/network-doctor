@@ -8,7 +8,7 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 import nd_bandwidth as B
 import nd_core as core
@@ -38,12 +38,17 @@ class BandwidthPage:
     def __init__(self, app, parent):
         self.app = app
         self.rows = {}  # tree row -> device
+        self.ip_rows = {}  # tree row (page 3) -> IP plan row
+        self.want = {}  # mac -> IP the person chose for that device
         self.plan_rows = []
         self.q_apply = self.q_undo = self.c_apply = self.c_undo = self.r_apply = self.r_undo = ""
         self.spec = None
         top = ttk.Frame(parent)
         top.pack(fill="x", pady=(2, 4))
         self.var_msg = tk.StringVar(value="")
+        self.var_warn = tk.StringVar(value="")
+        ttk.Label(top, textvariable=self.var_warn, foreground="#b42318", wraplength=1100,
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
         ttk.Label(top, text="Steps: 1 check the groups  >  2 set the bandwidth  >  3 fixed IPs  >  4 cameras. "
                             "Nothing changes on the router until you press an Apply button; every Apply has an Undo.",
                   foreground="#344054", wraplength=1100).pack(anchor="w")
@@ -139,8 +144,22 @@ class BandwidthPage:
             iid = self.tv.insert("", "end", values=(t.get("name") or d.get("name") or "-", d["ip"], d["mac"],
                                                     B.GROUP_TITLE.get(g, g), note))
             self.rows[iid] = d
+        self.var_warn.set(self.clash_text())
         self.var_cnt.set("   ".join(f"{B.GROUP_TITLE[g].split(' (')[0]}: {count[g]}" for g in B.GROUPS if g in count))
         self.counts = count
+
+    def clash_text(self):
+        """Warning when two devices answer for one IP (a phone that took the recorder's old IP, for example)."""
+        clash = B.find_conflicts(self.app.devices)
+        if not clash:
+            return ""
+        tags = self.tags()
+        parts = []
+        for ip in sorted(clash, key=B._ipkey):
+            names = " and ".join((tags.get(d["mac"], {}).get("name") or d.get("name") or d["mac"]) for d in clash[ip])
+            parts.append(f"{ip} is answered by {names}")
+        return ("IP CLASH: " + "; ".join(parts) + ". These IPs are left out of every rule until fixed: page 3 > Make the IP "
+                "list > select the device that should move > Change IP of selected.")
 
     def _selected(self):
         sel = [self.rows[i] for i in self.tv.selection() if i in self.rows]
@@ -450,7 +469,8 @@ class BandwidthPage:
             ttk.Entry(g, textvariable=b, width=15).grid(row=i, column=3, padx=4)
         bar = ttk.Frame(f)
         bar.pack(fill="x", pady=4)
-        for txt, cmd in (("Make the IP list", self.make_ips), ("Reserve on the router now", self.apply_ips),
+        for txt, cmd in (("Make the IP list", self.make_ips), ("Change IP of selected...", self.change_ip),
+                         ("Reserve on the router now", self.apply_ips),
                          ("Show commands", self.show_ips), ("Undo (remove these reservations)", self.undo_ips),
                          ("Save IP list (Excel CSV)", self.save_ips)):
             ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
@@ -459,6 +479,25 @@ class BandwidthPage:
                                              (200, 200, 120, 120, 90, 420), None)
         self.txt_i = nd_tabs.UI["text_box"](f)
         self.txt_i.configure(font=("Consolas", 9), height=7)
+
+    def change_ip(self):
+        """Gives one device (for example the phone that sits on the recorder's IP) another fixed IP."""
+        sel = [self.ip_rows[i] for i in self.tv_ip.selection() if i in self.ip_rows]
+        if not sel:
+            messagebox.showinfo(APP, "Press 'Make the IP list', then select (highlight) one device in the list.")
+            return
+        d = sel[0]["dev"]
+        name = self.tags().get(d["mac"], {}).get("name") or d.get("name") or d["mac"]
+        ip = simpledialog.askstring(APP, f"New IP for {name} ({d['mac']}), now on {d['ip']}.\nEmpty = keep its IP.",
+                                    initialvalue=self.want.get(d["mac"], ""), parent=self.app)
+        if ip is None:
+            return
+        ip = ip.strip()
+        if not ip or ip == d["ip"]:
+            self.want.pop(d["mac"], None)
+        else:
+            self.want[d["mac"]] = ip
+        self.make_ips()
 
     def make_ips(self):
         s = self.st()
@@ -476,15 +515,18 @@ class BandwidthPage:
             self.var_move["cam"].set(False)
             move.discard("cam")
         self.plan_rows = B.ip_plan(self.app.devices, self.app.gw, ranges, move, self.tags(), self.over(),
-                                   self.app.ip_type_of, self.lan())
+                                   self.app.ip_type_of, self.lan(), self.want)
         tv = self.tv_ip
         tv.delete(*tv.get_children())
+        self.ip_rows = {}
         for r in self.plan_rows:
             d = r["dev"]
             t = self.tags().get(d["mac"], {})
-            tv.insert("", "end", values=(B.GROUP_TITLE.get(r["group"], r["group"]), t.get("name") or d.get("name") or "-",
+            iid = tv.insert("", "end", values=(B.GROUP_TITLE.get(r["group"], r["group"]), t.get("name") or d.get("name") or "-",
                                          r["ip_now"], r["ip_new"], r["action"], r["why"]),
                       tags=("warning",) if r["action"] == "skip" else ())
+            self.ip_rows[iid] = r
+        self.var_warn.set(self.clash_text())
         n = sum(1 for r in self.plan_rows if r["action"] in ("keep", "move"))
         m = sum(1 for r in self.plan_rows if r["action"] == "move")
         self.var_msg.set(f"IP list ready: {n} devices reserved, {m} moved, "
@@ -552,6 +594,14 @@ class BandwidthPage:
             ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
         self.var_cams = tk.StringVar(value="")
         ttk.Label(left, textvariable=self.var_cams, foreground="#667085", wraplength=430).pack(anchor="w")
+        ttk.Label(left, text="A device shows the wrong name (a phone listed as the DVR), or the DVR got a new IP? An old "
+                             "port-forward or auto-defense block still points at the OLD IP and hits whoever has it now.",
+                  justify="left", wraplength=430, foreground="#b54708").pack(anchor="w", pady=(8, 2))
+        bar4 = ttk.Frame(left)
+        bar4.pack(fill="x")
+        for txt, cmd in (("Check port-forwards", self.check_forwards), ("Release auto-defense blocks", self.release_blocks),
+                         ("Undo the release", self.undo_release)):
+            ttk.Button(bar4, text=txt, command=cmd).pack(side="left", padx=(0, 6))
         ttk.Separator(left).pack(fill="x", pady=8)
         ttk.Label(left, text="How much internet do the NVR / DVRs need?", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         g = ttk.Frame(left)
@@ -615,6 +665,51 @@ class BandwidthPage:
         r = self._make(self.build_cams, "Camera isolation")
         if r:
             self._send(r[1], "REMOVE the camera internet block (port-forwards switched on again)")
+
+    def check_forwards(self):
+        c = self.app.router_client(ask=False)
+        if not c:
+            self.var_msg.set("No router login saved (Setup > Router login).")
+            return
+
+        def work():
+            try:
+                with c:
+                    rows, err = c.cmd("/ip/firewall/nat/print"), ""
+            except Exception as e:  # noqa: BLE001 - shown to the person
+                rows, err = [], str(e)
+            self.app.q.put(("call", lambda: show(rows, err)))
+
+        def show(rows, err):
+            if err:
+                messagebox.showwarning(APP, f"Could not read the router's port-forwards: {err}")
+                return
+            rep = B.portforward_report(rows, self.app.devices, self.tags(), self.over())
+            lines = [f"{'STATUS':8} {'PORT':8} {'TO IP':16} WHO HAS THAT IP NOW   (rule)"]
+            lines += [f"{r['status']:8} {r['port']:8} {r['to']:16} {r['who']}   ({r['rule']})" for r in rep]
+            stale = sum(1 for r in rep if r["status"] == "STALE")
+            lines += ["", (f"{len(rep)} port-forward(s); {stale} point at a device that is not a camera / recorder."
+                           if rep else "No active port-forwards on the router."),
+                      "STALE = the forward now exposes some other device (the recorder moved to another IP). 'Block "
+                      "cameras on the router' (above) closes every forward of a camera port and every forward to a "
+                      "camera / recorder; its Undo puts them back."]
+            self._show_text("Port-forwards on the router", "\n".join(lines))
+        threading.Thread(target=work, daemon=True).start()
+
+    def release_blocks(self):
+        a, u = B.release_blocks_commands()
+
+        def done(err):
+            if err:
+                return
+            d = getattr(self.app, "defense", None)
+            for k in list(getattr(d, "active", None) or {}):
+                d.release(k)
+            self.var_msg.set("Auto-defense blocks switched off on the router. 'Undo the release' switches them on again.")
+        self._send(a, "Release ALL auto-defense / phone blocks on the router (kept, switched off)", done)
+
+    def undo_release(self):
+        self._send(B.release_blocks_commands()[1], "Switch the released auto-defense blocks ON again")
 
     def calc(self):
         n = lambda k, d: _num(self.sz[k].get(), d)  # noqa: E731

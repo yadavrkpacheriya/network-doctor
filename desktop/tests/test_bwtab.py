@@ -118,7 +118,8 @@ def fake_toolkit():
     mb.askyesno = lambda *a, **k: True
     fd.asksaveasfilename = lambda **k: fd.path
     fd.path = ""
-    sd.askstring = lambda *a, **k: None
+    sd.askstring = lambda *a, **k: sd.answer
+    sd.answer = None
     tk.ttk, tk.messagebox, tk.filedialog, tk.simpledialog = ttk, mb, fd, sd
     return {"tkinter": tk, "tkinter.ttk": ttk, "tkinter.messagebox": mb, "tkinter.filedialog": fd,
             "tkinter.simpledialog": sd}
@@ -284,6 +285,77 @@ class Page(unittest.TestCase):
         self.bw.filedialog.path = path
         self.page.save_chart()
         self.assertIn("NO INTERNET", open(path, encoding="utf-8").read())
+
+    def test_phone_on_the_dvr_ip_is_flagged_and_moved(self):
+        self.assertEqual(self.page.clash_text(), "")
+        phone = dev("192.168.0.20", core.CAT_PHONE, "Rakesh phone", mac="E8:D5:2B:2D:45:1A")
+        self.app.devices.append(phone)
+        self.page.refresh()
+        self.assertIn("IP CLASH", self.page.var_warn.get())
+        self.assertIn("192.168.0.20", self.page.var_warn.get())
+        # the clashing IP is in no camera rule
+        cams = self.page.build_cams()[0]
+        self.assertNotIn("address=192.168.0.20 ", cams)
+        self.page.make_ips()
+        row = next(i for i, r in self.page.ip_rows.items() if r["dev"]["mac"] == phone["mac"])
+        self.page.tv_ip.sel = [row]
+        self.bw.simpledialog.answer = "192.168.0.201"
+        self.page.change_ip()
+        moved = next(r for r in self.page.plan_rows if r["dev"]["mac"] == phone["mac"])
+        self.assertEqual((moved["action"], moved["ip_new"]), ("move", "192.168.0.201"))
+        self.page.apply_ips()
+        self.assertIn("192.168.0.201", self.app.sent[-1][1])
+        self.assertIn(phone["mac"], self.app.sent[-1][1])
+        self.page.undo_ips()
+        self.assertIn("remove", self.app.sent[-1][1])
+
+    def test_change_ip_needs_a_selection(self):
+        self.page.make_ips()
+        self.page.change_ip()
+        self.assertEqual(self.page.want, {})
+
+    def test_check_forwards_lists_stale(self):
+        phone = dev("192.168.0.20", core.CAT_PHONE, "Rakesh phone", mac="E8:D5:2B:2D:45:1A")
+        self.app.devices = [phone]
+
+        class Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def cmd(self, path, **k):
+                return [{".id": "*1", "action": "dst-nat", "dst-port": "37777", "to-addresses": "192.168.0.20",
+                         "comment": "DVR"}]
+        self.app.router_client = lambda ask=True: Client()
+        shown = []
+        self.page._show_text = lambda title, text: shown.append(text)
+        self.page.check_forwards()
+        for _ in range(50):  # the setUp scan also queued a job; run everything that arrives
+            try:
+                kind, fn = self.app.q.get(timeout=0.1)
+                fn()
+            except queue.Empty:
+                break
+        self.assertTrue(shown)
+        self.assertIn("STALE", shown[0])
+        self.assertIn("37777", shown[0])
+
+    def test_release_blocks_with_undo(self):
+        class Def:
+            active = {"E8:D5:2B:2D:45:1A": {}}
+            released = []
+
+            def release(self, k):
+                self.released.append(k)
+                self.active.pop(k)
+        self.app.defense = Def()
+        self.page.release_blocks()
+        self.assertIn("ND-rel: ", self.app.sent[-1][1])
+        self.assertEqual(Def.released, ["E8:D5:2B:2D:45:1A"])
+        self.page.undo_release()
+        self.assertIn('comment~"^ND-rel: "', self.app.sent[-1][1])
 
     def test_sweep_ends_boost(self):
         self.select("192.168.0.9")

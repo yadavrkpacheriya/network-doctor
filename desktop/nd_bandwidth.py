@@ -70,7 +70,10 @@ def groups_ips(devices, tags, over, extra_ips=None, gw_ip=None):
     """{group: sorted IPs} for the live devices. extra_ips: {mac: [more IPs]} (a device that is being moved is listed
     on its old and its new IP, so it stays covered while it renews)."""
     out = {g: set() for g in GROUPS}
+    clash = set(find_conflicts(devices))  # an IP two devices answer for would put rules on the wrong one
     for d in live_devices(devices, gw_ip):
+        if d["ip"] in clash:
+            continue
         g = group_of(d, tags, over)
         out[g].add(d["ip"])
         out[g].update((extra_ips or {}).get(d["mac"], []))
@@ -151,18 +154,19 @@ def _header(title, n=None):
     return f"# Network Doctor - {title}{f' ({n})' if n is not None else ''} - generated {time.strftime('%Y-%m-%d %H:%M')}"
 
 
-_OFF = "ND-off: "
+_OFF = "ND-off: "  # FastTrack / port-forwards switched off by the plan
+_REL = "ND-rel: "  # auto-defense blocks released by hand
 
 
-def _ros_off(path, cond):
-    """Disables the rules matching cond and marks them 'ND-off: ' so the UNDO can enable exactly those again."""
-    return (f':foreach r in=[{path} find where {cond}] do={{ {path} set $r comment=("{_OFF}" . [{path} get $r comment]); '
+def _ros_off(path, cond, tag=_OFF):
+    """Disables the rules matching cond and marks them with tag so the UNDO can enable exactly those again."""
+    return (f':foreach r in=[{path} find where {cond}] do={{ {path} set $r comment=("{tag}" . [{path} get $r comment]); '
             f'{path} disable $r }}')
 
 
-def _ros_on(path):
-    n = len(_OFF)
-    return (f':foreach r in=[{path} find where comment~"^{_OFF}"] do={{ :local c [{path} get $r comment]; '
+def _ros_on(path, tag=_OFF):
+    n = len(tag)
+    return (f':foreach r in=[{path} find where comment~"^{tag}"] do={{ :local c [{path} get $r comment]; '
             f'{path} set $r comment=[:pick $c {n} [:len $c]]; {path} enable $r }}')
 
 
@@ -219,6 +223,9 @@ def queue_commands(plan, groups, lan, wan=""):
 
 
 # --------------------------------------------------------------------------------------------------- CCTV isolation
+CCTV_PORTS = (37777, 37778, 34567, 8000, 554)  # Dahua, Dahua, XMeye, Hikvision, RTSP
+
+
 def camera_block_commands(cams, nvrs, wan):
     """Cameras can reach only the NVR / DVR: they are stopped from going out to the internet on the router (many
     cameras have no setting for that), nothing from the internet may start a connection to a camera or recorder, and
@@ -245,14 +252,65 @@ def camera_block_commands(cams, nvrs, wan):
                  f'connection-state=new place-before=0 comment="ND: camera / recorder no inbound"}} on-error='
                  f'{{add chain=forward action=drop in-interface={wan} dst-address-list=ND-CCTV connection-state=new '
                  f'comment="ND: camera / recorder no inbound"}}')
-        a += ["/ip firewall nat"]
-        for ip in cams + nvrs:
-            a.append(_ros_off("/ip firewall nat", f"action=dst-nat and to-addresses={ip} and disabled=no"))
+    a += ["# Port-forwards: to the cameras / recorders, and ANY forward of a CCTV port (a forward that still points at an",
+          "# IP the recorder no longer has would send the internet to whatever device has that IP now).",
+          "/ip firewall nat"]
+    for ip in cams + nvrs:
+        a.append(_ros_off("/ip firewall nat", f"action=dst-nat and to-addresses={ip} and disabled=no"))
+    for port in CCTV_PORTS:
+        a.append(_ros_off("/ip firewall nat", f"action=dst-nat and dst-port={port} and disabled=no"))
     u = [_header("UNDO CCTV isolation"), "/ip firewall filter",
          ':do {remove [find where comment~"^ND: camera"]} on-error={}', "/ip firewall address-list",
          ':do {remove [find where list="ND-CAM"]} on-error={}', ':do {remove [find where list="ND-CCTV"]} on-error={}',
          "/ip firewall nat", _ros_on("/ip firewall nat")]
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
+
+
+def release_blocks_commands():
+    """Switches off every block Network Doctor's auto-defense / phone app put on the router (rules commented
+    'ND phone block ...' and 'ND isolate ...'). They are kept, marked 'ND-rel: ', so the UNDO switches them on again."""
+    f = "/ip firewall filter"
+    a = [_header("release auto-defense blocks"),
+         "# A block by MAC / IP cuts whichever device has that MAC / IP NOW - after an IP change that can be the wrong one.",
+         f, _ros_off(f, 'comment~"^ND phone block" and disabled=no', _REL),
+         _ros_off(f, 'comment~"^ND isolate" and disabled=no', _REL)]
+    u = [_header("UNDO release auto-defense blocks"), f, _ros_on(f, _REL)]
+    return "\n".join(a) + "\n", "\n".join(u) + "\n"
+
+
+def portforward_report(nat_rows, devices, tags=None, over=None):
+    """Each enabled port-forward (dst-nat) of the router and who is at the target IP now. status: 'ok' (a recorder or
+    camera is there), 'STALE' (another kind of device has that IP: the forward now exposes it), 'nobody' (nobody online)."""
+    by_ip = {}
+    for d in devices:
+        if d.get("online") and d.get("ip"):
+            by_ip.setdefault(d["ip"], []).append(d)
+    out = []
+    for r in nat_rows or []:
+        if r.get("action") != "dst-nat" or str(r.get("disabled", "false")).lower() == "true":
+            continue
+        ip = r.get("to-addresses", "")
+        devs = by_ip.get(ip, [])
+        groups = [group_of(d, tags, over) for d in devs]
+        who = ", ".join((((tags or {}).get(d["mac"], {}).get("name")) or d.get("name") or d["mac"]) +
+                        f" ({GROUP_TITLE[g].split(' (')[0]})" for d, g in zip(devs, groups))
+        if not devs:
+            status = "nobody"
+        elif len(devs) > 1 or any(g not in ("nvr", "cam") for g in groups):
+            status = "STALE"
+        else:
+            status = "ok"
+        out.append({"rule": r.get("comment") or r.get(".id", ""), "port": r.get("dst-port", ""), "to": ip,
+                    "who": who or "nobody online at that IP", "status": status})
+    return out
+
+
+def find_conflicts(devices):
+    """{ip: [devices]} for IPs that more than one live device (different MAC) answers for."""
+    by_ip = {}
+    for d in live_devices(devices):
+        by_ip.setdefault(d["ip"], []).append(d)
+    return {ip: v for ip, v in by_ip.items() if len({x["mac"] for x in v}) > 1}
 
 
 # --------------------------------------------------------------------------------------------------- fixed IP plan
@@ -277,13 +335,16 @@ def _in_range(ip, rng):
         return False
 
 
-def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None, net=None):
+def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None, net=None, want=None):
     """One row per live device: keep its IP, or move it into its group's block. Every row ends up as a DHCP
     reservation on the router (the router always hands the same IP to the same MAC - also after a power cut).
     move: groups whose devices are moved into their block. Cameras should normally NOT be moved: the NVR / DVR stores
-    each camera's IP. A device with a hand-typed IP cannot be changed from the router: it is marked 'manual'."""
+    each camera's IP. A device with a hand-typed IP cannot be changed from the router: it is marked 'manual'.
+    want: {mac: IP} chosen by the person for single devices (for example the phone that took the recorder's IP)."""
     live = live_devices(devices, gw_ip)
-    cnt = Counter(d["ip"] for d in live)
+    want = want or {}
+    moving = {d["mac"] for d in live if d["mac"] in want and want[d["mac"]] != d["ip"]}
+    cnt = Counter(d["ip"] for d in live if d["mac"] not in moving)  # a device that is moving away no longer clashes
     taken = {d["ip"] for d in live} | ({gw_ip} if gw_ip else set())
     try:
         nw = ipaddress.ip_network(net, strict=False) if net else None
@@ -297,7 +358,25 @@ def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None,
                "manual": bool(re.search(r"static|fixed", typ or "", re.I)), "type": typ}
         if d.get("random"):
             row.update(action="skip", why="randomized (private) MAC: it changes, so it cannot be reserved")
-        elif cnt[d["ip"]] > 1 or d.get("conflict"):
+        elif d["mac"] in moving:
+            new, why = want[d["mac"]], ""
+            try:
+                a = ipaddress.IPv4Address(new)
+                if nw and (a not in nw or a in (nw.network_address, nw.broadcast_address)):
+                    why = f"{new} is outside this network or is its network / broadcast address"
+                elif new == gw_ip:
+                    why = f"{new} is the router's own IP"
+                elif new in taken:
+                    why = f"{new} is already used by another device"
+            except ValueError:
+                why = f"{new} is not an IP address"
+            if why:
+                row.update(action="skip", why=why)
+            else:
+                taken.add(new)
+                row.update(ip_new=new, action="move", why="chosen by you; the device takes it when it reconnects "
+                           "(switch its Wi-Fi off and on, or 'ipconfig /renew')")
+        elif cnt[d["ip"]] > 1 or (d.get("conflict") and not any(x["ip"] == d["ip"] for x in live if x["mac"] in moving)):
             row.update(action="skip", why="IP conflict: fix the conflict first")
         elif len(d.get("ips") or []) > 1:
             row.update(action="skip", why="answers on several IPs")

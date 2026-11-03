@@ -7,6 +7,10 @@
   PCs) 60 Mbps with 5 Mbps each. Unused bandwidth is lent to whoever needs it. The page checks the numbers, shows what
   each office PC gets when everyone is busy, and applies the plan on the router itself (or shows the commands to
   paste). **Remove the plan** takes it all away again, FastTrack included.
+- **Two devices on one IP (a phone shown as the DVR).** The page shows a red *IP CLASH* line and leaves that IP out of
+  every rule. *Change IP of selected...* (page 3) moves the wrong device to a free IP and reserves it. Page 4 has
+  *Check port-forwards* (marks forwards that now point at the wrong device), *Release auto-defense blocks* and
+  *Undo the release*; the camera block also closes forwards by CCTV port. Every action has an Undo.
 - **Boost for directors / backups.** Select a device and press *Boost now* (1 hour, 4 hours, 8 hours or until you stop
   it): it becomes a VIP with a higher limit and priority. When the time ends Network Doctor removes the boost on the
   router (Network Doctor must be running at that moment).

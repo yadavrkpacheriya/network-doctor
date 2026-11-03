@@ -240,6 +240,78 @@ class FixedIPs(unittest.TestCase):
         self.assertEqual(csv_text.count("\n"), len(rows) + 1)
 
 
+class Clash(unittest.TestCase):
+    """The phone took the IP the recorder used to have; a forward / block by IP then hits the phone."""
+    phone = dev("192.168.0.20", core.CAT_PHONE, "Rakesh phone", mac="E8:D5:2B:2D:45:1A")
+    dvr = dev("192.168.0.20", core.CAT_CAM, "Dahua DVR", mac="9C:8E:CD:00:00:01")
+
+    def test_conflict_found_and_kept_out_of_rules(self):
+        self.assertEqual(list(B.find_conflicts([self.phone, self.dvr])), ["192.168.0.20"])
+        g = B.groups_ips([self.phone, self.dvr, NET[4]], {}, {})
+        self.assertEqual(g["nvr"], [])
+        self.assertEqual(g["mobile"], [])
+        self.assertEqual(g["pc"], ["192.168.0.38"])
+
+    def test_move_the_phone_and_keep_the_recorder(self):
+        rows = B.ip_plan([self.phone, self.dvr], "192.168.0.1", {}, set(), net="192.168.0.0/24",
+                         want={self.phone["mac"]: "192.168.0.201"})
+        by = {r["dev"]["mac"]: r for r in rows}
+        self.assertEqual((by[self.phone["mac"]]["action"], by[self.phone["mac"]]["ip_new"]), ("move", "192.168.0.201"))
+        self.assertEqual(by[self.dvr["mac"]]["action"], "keep")  # reserved, so DHCP never hands .20 out again
+        a, u = B.reservation_commands(rows, {})
+        self.assertIn('mac-address="E8:D5:2B:2D:45:1A"', a)
+        self.assertIn("address=192.168.0.201", a)
+        self.assertIn("address=192.168.0.20 mac-address=\"9C:8E:CD:00:00:01\"", a)
+
+    def test_without_a_choice_both_are_skipped(self):
+        rows = B.ip_plan([self.phone, self.dvr], "192.168.0.1", {}, set(), net="192.168.0.0/24")
+        self.assertEqual([r["action"] for r in rows], ["skip", "skip"])
+
+    def test_bad_choice_is_refused(self):
+        for bad, text in (("192.168.5.9", "outside"), ("192.168.0.1", "router"), ("192.168.0.38", "already used"),
+                          ("nope", "not an IP")):
+            rows = B.ip_plan([self.phone, self.dvr, NET[4]], "192.168.0.1", {}, set(), net="192.168.0.0/24",
+                             want={self.phone["mac"]: bad})
+            r = next(x for x in rows if x["dev"]["mac"] == self.phone["mac"])
+            self.assertEqual(r["action"], "skip", bad)
+            self.assertIn(text, r["why"])
+
+    def test_two_chosen_ips_cannot_be_equal(self):
+        a, b = dev("192.168.0.7", core.CAT_PHONE), dev("192.168.0.8", core.CAT_PHONE)
+        rows = B.ip_plan([a, b], "192.168.0.1", {}, set(), net="192.168.0.0/24",
+                         want={a["mac"]: "192.168.0.201", b["mac"]: "192.168.0.201"})
+        self.assertEqual([r["action"] for r in rows], ["move", "skip"])
+
+    def test_portforward_report(self):
+        nat = [{"action": "dst-nat", "dst-port": "37777", "to-addresses": "192.168.0.20", "comment": "DVR"},
+               {"action": "dst-nat", "dst-port": "8000", "to-addresses": "192.168.0.99", "comment": "old"},
+               {"action": "dst-nat", "dst-port": "8000", "to-addresses": "192.168.0.21", "disabled": "true"},
+               {"action": "masquerade"}]
+        r = B.portforward_report(nat, [self.phone, NET[1]], {})
+        self.assertEqual([x["status"] for x in r], ["STALE", "nobody"])
+        self.assertIn("Rakesh phone (Mobiles / tablets)", r[0]["who"])
+        ok = B.portforward_report([{"action": "dst-nat", "to-addresses": "192.168.0.21"}], [NET[1]], {})
+        self.assertEqual(ok[0]["status"], "ok")
+
+    def test_close_forwards_by_port_even_when_ip_is_stale(self):
+        a, u = B.camera_block_commands([], [], "ether1")
+        lint(a)
+        for port in B.CCTV_PORTS:
+            self.assertIn(f"action=dst-nat and dst-port={port} and disabled=no", a)
+
+    def test_release_blocks_and_undo(self):
+        a, u = B.release_blocks_commands()
+        lint(a)
+        lint(u)
+        self.assertIn('comment~"^ND phone block"', a)
+        self.assertIn('comment~"^ND isolate"', a)
+        self.assertIn('"ND-rel: "', a)
+        self.assertIn('comment~"^ND-rel: "', u)
+        self.assertIn("[:pick $c 8 [:len $c]]", u)  # len("ND-rel: ") == 8
+        self.assertEqual(len("ND-rel: "), 8)
+        self.assertNotIn("fasttrack", a + u)  # separate tag: undoing this never touches the bandwidth plan's FastTrack
+
+
 class Wan(unittest.TestCase):
     def test_detect(self):
         self.assertEqual(B.detect_wan([{"gateway": "203.0.113.1", "immediate-gw": "203.0.113.1%ether1"}]), "ether1")
