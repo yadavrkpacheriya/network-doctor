@@ -1,3 +1,38 @@
+## Network Doctor 3.19.0
+
+### New in this version
+- **Bandwidth plan (Internet & Usage > Bandwidth plan).** Splits the internet line into parts and caps every user inside
+  its part, so one heavy user can no longer slow the others. Default for a 100 Mbps line: 5% kept free, NVR / DVR remote
+  viewing 10 Mbps, mobiles 20 Mbps (4 Mbps each), VIP PCs 5 Mbps guaranteed (up to 20 each), everything else (office
+  PCs) 60 Mbps with 5 Mbps each. Unused bandwidth is lent to whoever needs it. The page checks the numbers, shows what
+  each office PC gets when everyone is busy, and applies the plan on the router itself (or shows the commands to
+  paste). **Remove the plan** takes it all away again, FastTrack included.
+- **Boost for directors / backups.** Select a device and press *Boost now* (1 hour, 4 hours, 8 hours or until you stop
+  it): it becomes a VIP with a higher limit and priority. When the time ends Network Doctor removes the boost on the
+  router (Network Doctor must be running at that moment).
+- **Fixed IPs that survive a power cut.** *3. Fixed IPs* reserves every device's IP on the router by MAC address, so
+  after a power cut the PCs, NVR / DVR and cameras come back with the same IPs. Nothing is moved by default; you can
+  optionally move groups into IP blocks (NVR / DVR, VIP, PCs, mobiles). Cameras are never moved unless you confirm,
+  because the NVR stores each camera's IP. Hand-typed IPs are marked "also change on the device". Saves the IP list as
+  an Excel CSV.
+- **Cameras without internet.** *4. Cameras and chart* stops every camera from reaching the internet **on the router**
+  (many cameras have no setting for it), blocks new connections from the internet to cameras and NVR / DVR, and
+  switches off the router's port-forwards to them (the Dahua DVR on port 37777 case). The NVR / DVR keeps its own
+  outbound link to the maker's cloud, so the phone app (DMSS, Hik-Connect, XMeye) works from anywhere, with live view,
+  playback and clip download, and no open port. One Undo puts everything back.
+- **NVR / DVR bandwidth calculator.** Cameras, NVRs, people viewing and clip download -> how many Mbps to reserve.
+  Example for 50 cameras and 2 NVR / DVR with 3 people watching 9 cameras each on the sub-stream: about 25 Mbps live,
+  about 35 Mbps while one clip is also being downloaded.
+- **Camera chart.** A drawing of cameras, PoE switches, NVR / DVR, router and the app, with the blocked path in red,
+  using your real device counts. Save it as `.svg` (also in `docs/camera-network-chart.svg`).
+- The Root cause advice for "device uses most of the internet" and "reachable from the internet" now points to this page.
+
+### Good to know
+- Per-user limits use MikroTik *simple queues with PCQ*. They work behind NAT; a queue on the internet port would see one
+  address for everybody. FastTrack skips queues, so the plan switches the router's FastTrack rules off (marked, and
+  switched on again by Undo). Watch the router's CPU after applying.
+- Not tested on a real router yet: apply it at a quiet time, with the Undo commands at hand.
+
 ## Network Doctor 3.18.7
 
 ### Fix in this version

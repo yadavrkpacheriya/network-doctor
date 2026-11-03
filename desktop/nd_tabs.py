@@ -2065,7 +2065,7 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
                                                     ("t_switch", "Switches (SNMP)"), ("t_ports", "Port scanner"),
                                                     ("t_mac", "MAC lookup"), ("t_wol", "Wake-on-LAN")]),
     ("internet_s", "Internet & Usage", "#047857", "#d1fae5", [("monitor", "Live monitor"), ("usage", "Usage"),
-                                                              ("slow", "Slow website?"), ("t_speed", "Speed test"),
+                                                              ("bwplan", "Bandwidth plan"), ("slow", "Slow website?"), ("t_speed", "Speed test"),
                                                               ("t_web", "Website check"), ("t_dns", "DNS test")]),
     ("security_s", "Security", "#7c3aed", "#ede9fe", [("t_guard", "Network guard"), ("t_website", "Website firewall"),
                                                       ("t_watch", "Critical devices")]),
