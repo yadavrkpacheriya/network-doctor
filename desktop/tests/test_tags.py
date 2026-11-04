@@ -111,7 +111,8 @@ class UndoFor(_ut.TestCase):
         undo = T.undo_for(apply)
         self.assertIn('/ip firewall filter remove [find where comment="ND: no-inbound 192.168.0.203"]', undo)
         self.assertIn("/ip upnp set enabled=yes", undo)                     # UPnP turned back on
-        self.assertIn("/ip firewall nat enable [find where", undo)          # port-forward re-enabled
+        self.assertIn('/ip firewall nat find where comment~"^ND-off: " and to-addresses=192.168.0.203', undo)
+        self.assertIn("/ip firewall nat enable $r", undo)                   # that device's port-forward re-enabled
 
     def test_dedup_and_empty(self):
         self.assertEqual(T.undo_for("# nothing to undo here\n/ip dns cache flush"), "")

@@ -8,6 +8,13 @@
   camera / recorder may be cut for it; every other device is just alerted (fix the port-forward instead).
 - **Automatic internet cuts end by themselves** after 60 minutes (setting `release_min`, 0 = never), so a wrong
   guess cannot last. The app log says when a device was NOT cut and why.
+- **Reset (Bandwidth plan > 5. Reset (safety)).** *Show what the app changed* lists, read only, everything Network Doctor
+  made on the router. *Reset blocks, limits and rules*, *Reset fixed-IP reservations* and *Reset EVERYTHING* remove only
+  items named or commented "ND ..." and switch on again what the app had switched off (port-forwards, FastTrack). The ISP
+  and owner configuration is never matched. A copy of the router configuration is saved first (nd-before-reset.rsc).
+  Single settings (DNS servers, UPnP, loop protection ...) cannot be reversed blindly and are listed for a manual check.
+- **Safety tests.** The build now fails if any new router rule, queue or list the app creates is not covered by the
+  reset, or if code could wipe the router, delete without a condition or change router users.
 - Already-made blocks: Bandwidth plan > 4. Cameras and chart > *Release auto-defense blocks* (Undo included).
 
 ## Network Doctor 3.19.0
