@@ -42,19 +42,22 @@ class PairedPc {
 
   /// The base address to use now: the remote one when set and we're told to use it, else the LAN host.
   Uri uriVia(String path, bool useRemote) {
-    if (useRemote && remote.isNotEmpty) {
-      final r = remote.contains(':') ? remote : '$remote:$port';
-      return Uri.parse('http://$r$path');
-    }
+    if (useRemote && remote.isNotEmpty) return _remoteUri(path);
     return uri(path);
   }
 
   Uri uri(String path) {
-    if (PcLink.viaRemote.contains(host) && remote.isNotEmpty) {
-      final r = remote.contains(':') ? remote : '$remote:$port';
-      return Uri.parse('http://$r$path');
-    }
+    if (PcLink.viaRemote.contains(host) && remote.isNotEmpty) return _remoteUri(path);
     return Uri.parse('http://$host:$port$path');
+  }
+
+  /// A tunnel address (Cloudflare Tunnel, Tailscale ...) is reached over https with no literal port unless one was
+  /// typed. A scheme already in the saved address (http:// or https://) is kept as typed.
+  Uri _remoteUri(String path) {
+    var r = remote;
+    if (!r.contains('://')) r = 'https://$r';
+    final u = Uri.parse(r);
+    return u.replace(path: u.path + path);
   }
 }
 

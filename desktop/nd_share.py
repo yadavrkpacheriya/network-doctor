@@ -20,6 +20,13 @@ Endpoints (port 8787):
                                      check, router command...) and answers {"ok","message"} or {"job": id}
                                      (poll with action "job"; header X-ND-Token)
   POST /api/report                 -> a PC fix script reports its name / MACs (header X-ND-Report)
+  POST /api/telemetry {"install_id","kind","version","platform","counts","crashes"} -> an opted-in install
+                                     (desktop or phone, anywhere - this is the only endpoint a remote,
+                                     off-LAN caller can reach without first pairing or signing in) reports
+                                     anonymous feature-use counts and sanitised crash details. No sign-in
+                                     needed, but still only reachable when this PC has Remote access turned
+                                     on (same gate as everything else off-LAN); 1 report/minute per source,
+                                     16 KB max, newest 2000 kept (nd_telemetry.py is the sending side).
 """
 
 import hmac
@@ -57,6 +64,8 @@ class ShareServer:
         if not self.store.get("report_key"):  # only lets the PC fix script report; it can read nothing
             self.store["report_key"] = secrets.token_urlsafe(18)
         self.report_fn = report_fn
+        self.store.setdefault("telemetry_in", [])  # received usage/crash reports (nd_telemetry.py senders)
+        self._telem_last = {}  # source ip -> time of its last accepted report (rate limit)
         self.pairing_enabled = True  # False when only PC reports are accepted (phone link switched off)
         self.code = self.new_code()
         self.fails = 0
@@ -180,6 +189,8 @@ class ShareServer:
                 return self._pair(h, client)
             if path == "/api/report" and method == "POST":
                 return self._report(h, client)
+            if path == "/api/telemetry" and method == "POST":
+                return self._telemetry(h, client)
             if not self._authorised(h):
                 return self._send(h, 401, {"error": "not paired"})
             self.last_client = (client, time.time())
@@ -291,6 +302,59 @@ class ShareServer:
             return self._send(h, 400, {"error": "bad request"})
         self.report_fn(client, data)
         return self._send(h, 200, {"result": "thanks"})
+
+    def _telemetry(self, h, client):
+        """An opted-in install (nd_telemetry.py) reporting anonymous feature-use counts and sanitised
+        crash details. No sign-in / pairing needed - the outer _handle() gate already requires this PC's
+        owner to have turned Remote access on before any off-LAN caller reaches here at all. Still kept
+        cheap to abuse: 1 report/minute per source address, 16 KB max, only plain counters and short text
+        kept, newest 2000 reports retained."""
+        try:
+            n = int(h.headers.get("Content-Length", "0"))
+            if n > 16384:
+                return self._send(h, 413, {"error": "too large"})
+            body = h.rfile.read(n).decode("utf-8-sig", "replace")
+            data = json.loads(body or "{}")
+            if not isinstance(data, dict):
+                raise ValueError
+        except Exception:
+            return self._send(h, 400, {"error": "bad request"})
+        with self.lock:
+            now = time.time()
+            if now - self._telem_last.get(client, 0) < 60:
+                return self._send(h, 429, {"error": "too soon - at most one report a minute"})
+            self._telem_last[client] = now
+            counts = data.get("counts") or {}
+            crashes = data.get("crashes") or []
+            entry = {"received_at": time.strftime("%Y-%m-%d %H:%M:%S"), "from_ip": client,
+                     "install_id": str(data.get("install_id", ""))[:40],
+                     "kind": str(data.get("kind", "?"))[:20], "version": str(data.get("version", ""))[:20],
+                     "platform": str(data.get("platform", ""))[:120],
+                     "counts": {str(k)[:60]: v for k, v in counts.items()
+                                if isinstance(counts, dict) and isinstance(v, (int, float))
+                                and not isinstance(v, bool)},
+                     "crashes": [self._sanitize_crash(c) for c in crashes[:20]] if isinstance(crashes, list) else []}
+            hist = self.store.setdefault("telemetry_in", [])
+            hist.append(entry)
+            del hist[:-2000]
+        self.save_fn()
+        return self._send(h, 200, {"result": "thanks"})
+
+    @staticmethod
+    def _sanitize_crash(c):
+        if not isinstance(c, dict):
+            return {}
+        return {"context": str(c.get("context", ""))[:60], "type": str(c.get("type", ""))[:60],
+               "message": str(c.get("message", ""))[:200], "where": str(c.get("where", ""))[:120]}
+
+    def telemetry_reports(self):
+        with self.lock:
+            return list(self.store.get("telemetry_in", []))
+
+    def clear_telemetry(self):
+        with self.lock:
+            self.store["telemetry_in"] = []
+        self.save_fn()
 
     # ---- management from the PC window
     def phones(self):

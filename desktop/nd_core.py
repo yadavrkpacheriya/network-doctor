@@ -44,6 +44,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import nd_linux
+import nd_ranges as NR
 
 APP = "Network Doctor"
 VERSION = "3.18.0"
@@ -1018,17 +1019,43 @@ def scan(subnet, opts, progress, stop):
     gw, lip = detect_network()
     nets = parse_nets(subnet)
     net = next((n for n in nets if in_net(lip, n)), nets[0])  # this PC's own network (ARP works only there)
+    local = in_net(lip, net)
+    local_nets = [net] if local else []
+    auto = {"added": [], "skipped": []}
+    got = None  # the router's tables, read once (also used further down)
+    if opts.get("auto_ranges", True):
+        # Devices on another IP series (a camera still on 192.168.1.x, a VLAN) are invisible to a sweep of only this PC's
+        # own range: add this PC's other adapters and every range the router knows about.
+        progress(1, "Looking for other IP ranges (this PC's adapters, the router's tables)...")
+        fetch = opts.get("router_fetch")
+        if fetch and gw:
+            try:
+                got = fetch() or {}
+            except Exception as e:
+                got = {"error": str(e)}
+        mine = NR.local_networks(run, IS_WIN, IS_MAC)
+        seen = list((got or {}).get("arp") or {})
+        seen += [x.get("ip", "") for x in ((got or {}).get("leases") or {}).values()]
+        seen += list(NR.neighbor_ips((got or {}).get("neighbors")))
+        cands = [(n, "another network adapter of this PC") for n in mine]
+        cands += NR.router_candidates((got or {}).get("addresses"), (got or {}).get("dhcp_networks"))
+        auto = NR.plan_extra_nets(nets, cands, seen)
+        for n, _ in auto["added"]:
+            nets.append(n)
+            if any(n.subnet_of(m) for m in mine):
+                local_nets.append(n)  # attached to this PC: ARP works there too
     hosts = sorted({str(h) for n in nets for h in n.hosts()}, key=ip_key)
     admin = is_admin()
-    local = in_net(lip, net)
 
     def is_local(ip):
-        return local and in_net(ip, net)
+        return any(in_net(ip, n) for n in local_nets)
     raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": ", ".join(map(str, nets)),
                     "admin": admin, "scapy": False, "tests": {}, "local_subnet": local,
                     "self_dhcp": local_dhcp_enabled(lip), "self_lease": local_lease_seconds(lip)},
            "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},
-           "self_mac": local_mac(lip)}
+           "self_mac": local_mac(lip),
+           "auto_ranges": [{"net": str(n), "why": w} for n, w in auto["added"]],
+           "ranges_skipped": [{"net": str(n), "why": w} for n, w in auto["skipped"]]}
     tests = raw["meta"]["tests"]
     use_scapy = opts.get("deep") and scapy_ok()
     raw["meta"]["scapy"] = use_scapy
@@ -1090,14 +1117,20 @@ def scan(subnet, opts, progress, stop):
         ra, who = {}, ""
         fetch = opts.get("router_fetch")  # router login (API): ARP table + DHCP leases with device names
         if fetch:
-            try:
-                got = fetch() or {}
-            except Exception as e:
-                got = {"error": str(e)}
+            if got is None:
+                try:
+                    got = fetch() or {}
+                except Exception as e:
+                    got = {"error": str(e)}
             if got.get("error"):
                 tests["router_api_err"] = str(got["error"])[:200]
-            ra, who = got.get("arp") or {}, "router login (API)" if got.get("arp") else ""
+            ra, who = dict(got.get("arp") or {}), "router login (API)" if got.get("arp") else ""
             raw["leases"] = got.get("leases") or {}
+            raw["router_hosts"] = got.get("hosts") or []
+            for nip, nmac in NR.neighbor_ips(got.get("neighbors")).items():  # neighbours say their own IP
+                if nip not in ra:
+                    ra[nip] = nmac
+                    who = who or "router login (API)"
         if not ra:
             ra, who = router_arp_table(gw, opts.get("router_snmp"))
         if ra:
@@ -1319,6 +1352,14 @@ def build_devices(raw, oui, db):
         out.append(d)
 
     online_macs = {d["mac"] for d in out if d["mac"]}
+    # MACs the router's switch table sees that no scan source gave an IP for (wrong IP series, no DHCP, sleeping ...)
+    known_ip_macs = set(online_macs) | {mac for mac in (raw.get("leases") or {})}
+    only = NR.mac_only_hosts(raw.get("router_hosts"), known_ip_macs)
+    for x in only:
+        x["vendor"] = vendor_of(x["mac"], oui)
+        x["name"] = (db.get("labels", {}).get(x["mac"]) or
+                     ((db.get("tags") or {}).get(x["mac"]) or {}).get("name") or "")
+    raw["mac_only"] = only
     for mac, h in db["devices"].items():
         if mac in online_macs:
             continue
@@ -1558,6 +1599,27 @@ def analyse(raw, devices, db):
         checks.append(("Loop echo test", "fail" if bad else "pass", f"sent {echo['sent']}, came back {echo['seen']}"))
     checks.append(("Loop overall", "fail" if loop else "pass", "based on the tests above"))
 
+    # ---- ranges added automatically, and devices that have no IP in any scanned range
+    auto = raw.get("auto_ranges") or []
+    if auto:
+        checks.append(("Other IP ranges", "pass", f"{len(auto)} extra range(s) scanned: " +
+                       ", ".join(a["net"] for a in auto[:6])))
+    for sk in (raw.get("ranges_skipped") or [])[:3]:
+        add("info", f"Range {sk['net']} was not scanned", sk["why"],
+            "Type it in the network box at the top and scan again, or remove another range to make room.")
+    only = raw.get("mac_only") or []
+    if only:
+        add("warning", f"{len(only)} device(s) are connected but have no IP in any scanned range",
+            "The router's switch table sees these devices on a cable / Wi-Fi port, but no scan source (this PC, the "
+            "router's ARP table, DHCP leases or neighbour list) knows an IP for them. Usually a camera / PC with a hand-"
+            "typed address from another series (192.168.1.x, 10.x), a device with a wrong subnet mask, or one that "
+            "never asked DHCP.",
+            "Find the port in the list, look at the device's own IP settings (or unplug it to see which one it is) and "
+            "set it to automatic (DHCP), or to a free IP of the office range.",
+            [f"{x['mac']}  {x.get('vendor') or 'unknown maker'}  port {x['port'] or '?'}"
+             + (f" VLAN {x['vlan']}" if x.get("vlan") else "") + (f"  ({x['name']})" if x.get("name") else "")
+             for x in only[:60]])
+
     # ---- networks / devices this PC could not reach itself
     other = raw.get("other_nets") or []
     if other:
@@ -1758,7 +1820,9 @@ def quick_check(subnet, known_ips, opts, stop=None):
     raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": str(net), "admin": admin,
                     "scapy": False, "tests": {}, "local_subnet": local, "quick": True},
            "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},
-           "self_mac": local_mac(lip)}
+           "self_mac": local_mac(lip),
+           "auto_ranges": [{"net": str(n), "why": w} for n, w in auto["added"]],
+           "ranges_skipped": [{"net": str(n), "why": w} for n, w in auto["skipped"]]}
     tests = raw["meta"]["tests"]
     t_start = time.time()
     mon = {}

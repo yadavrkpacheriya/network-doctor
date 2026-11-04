@@ -138,6 +138,7 @@ class SweepPage:
         self.results, self.rows = [], {}
         self.tv.delete(*self.tv.get_children())
         self.running = True
+        self.app.telemetry.note("login_sweep")
         self.var_sum.set(f"Scanning 0 of {len(targets)}...")
         force = self.var_force.get()
         sw = self.sweep = S.Sweep(creds, force=force)
