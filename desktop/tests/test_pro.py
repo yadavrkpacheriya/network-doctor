@@ -78,6 +78,29 @@ class DefenseEngine(unittest.TestCase):
         st = {"defense": dict(patch)}
         return DF.Defense(st, gw_ip="192.168.0.1")
 
+    def test_phones_are_never_cut_and_exposed_only_cuts_cameras(self):
+        d = self.mk(armed=True, mode="auto")
+        phone, cam, pc = "Phones / tablets", "CCTV cameras / DVR / NVR", "Computers / laptops"
+        for kind in ("exposed", "port_scan", "lateral", "torrent", "malware"):
+            self.assertEqual(d.planned(kind, "192.168.0.20", "AA", phone), "notify")
+            self.assertTrue(d.guard(kind, phone))
+        self.assertTrue(d.guard("exposed", pc))            # a router setting: not the PC's fault
+        self.assertEqual(d.guard("exposed", cam), "")      # a camera that is open to the internet may be cut
+        self.assertEqual(d.planned("exposed", "192.168.0.105", "AA", cam), "internet")
+        self.assertEqual(d.planned("malware", "192.168.0.9", "AA", pc), "isolate")
+
+    def test_internet_cuts_expire_but_isolation_does_not(self):
+        d = self.mk(armed=True, release_min=60)
+        d.note_contained("A", {"level": "internet"})
+        d.note_contained("B", {"level": "isolate"})
+        d.active["A"]["t"] -= 3601
+        d.active["B"]["t"] -= 3601
+        self.assertEqual(d.expired(), ["A"])
+        d2 = self.mk(armed=True, release_min=0)
+        d2.note_contained("A", {"level": "internet"})
+        d2.active["A"]["t"] -= 99999
+        self.assertEqual(d2.expired(), [])
+
     def test_disarmed_only_notifies(self):
         d = self.mk(armed=False)
         self.assertEqual(d.planned("malware", "192.168.0.9", "AA"), "notify")

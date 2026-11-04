@@ -1,3 +1,15 @@
+## Network Doctor 3.19.1
+
+### Fixed
+- **Auto-defense no longer cuts phones.** A phone changes its IP and uses a private Wi-Fi address, so a block made for
+  "the device at that IP" landed on the wrong phone and many phones lost internet. Phones and tablets are now only
+  alerted on, never cut automatically.
+- **"Open to the internet" no longer cuts the wrong device.** That alert is about a router port-forward, so only a
+  camera / recorder may be cut for it; every other device is just alerted (fix the port-forward instead).
+- **Automatic internet cuts end by themselves** after 60 minutes (setting `release_min`, 0 = never), so a wrong
+  guess cannot last. The app log says when a device was NOT cut and why.
+- Already-made blocks: Bandwidth plan > 4. Cameras and chart > *Release auto-defense blocks* (Undo included).
+
 ## Network Doctor 3.19.0
 
 ### New in this version

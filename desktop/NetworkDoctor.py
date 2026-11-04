@@ -62,7 +62,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.19.0"
+VERSION = "3.19.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2060,13 +2060,18 @@ class App(tk.Tk):
         ip = e.get("ip", "")
         d = self._dev_by({"ip": ip}) if ip else None
         mac = (d or {}).get("mac", "")
-        self._defense_act(threat, ip, mac, (d or {}).get("name") or ip or "a device", e.get("text", ""))
+        self._defense_act(threat, ip, mac, (d or {}).get("name") or ip or "a device", e.get("text", ""),
+                          (d or {}).get("category", ""))
 
-    def _defense_act(self, threat, ip, mac, name, reason):
+    def _defense_act(self, threat, ip, mac, name, reason, category=""):
         d = getattr(self, "defense", None)
         if not d:
             return
-        level = d.planned(threat, ip, mac)
+        why = d.guard(threat, category)
+        if why:
+            self._log_event("warning", f"Auto-defense did NOT cut {name} ({ip or mac}): {why}.", "Auto-defense")
+            return
+        level = d.planned(threat, ip, mac, category)
         if level == "notify":
             return
         key = (mac or ip or name).upper()
@@ -2093,6 +2098,9 @@ class App(tk.Tk):
         if ok:
             self.defense.note_contained(key, {"kind": threat, "level": level, "ip": ip, "mac": mac, "name": name,
                                               "by": "auto-defense"})
+            mins = self.defense.config().get("release_min", 60)
+            if mins and level == "internet":
+                self.after(int(mins * 60000), self._defense_expire)
         self.audit.add("auto-defense", "auto", level, f"{threat} {name} {ip} {mac}".strip(),
                        "done" if ok else "FAILED")
         txt = f"Auto-defense {label} {name} ({ip or mac}) - {DF.THREATS.get(threat, ('threat',))[0]}" + \
@@ -2101,6 +2109,17 @@ class App(tk.Tk):
         self._record_alert_plain("critical", txt, "Auto-defense")
         if self.var_alerts.get():
             self._popup("critical", txt)
+
+    def _defense_expire(self):
+        """An automatic internet cut ends by itself (the router rule is removed) so a wrong guess cannot last."""
+        d = getattr(self, "defense", None)
+        for key in (d.expired() if d else []):
+            v = d.active.get(key) or {}
+            res = self._remote("block", {"mac": v.get("mac", ""), "ip": v.get("ip", ""), "on": False})
+            if res.get("ok") or res.get("job"):
+                d.release(key)
+                self._log_event("info", f"Auto-defense released {v.get('name') or key} after the time limit.",
+                                "Auto-defense")
 
     def _record_alert_plain(self, sev, text, source):
         """Log an alert WITHOUT re-running the defense engine (avoids a loop)."""
@@ -2132,7 +2151,8 @@ class App(tk.Tk):
                 threat = "port_scan" if n >= 40 else "lateral"
                 self._record_alert("critical", f"{d.get('name') or ip} is contacting {n} other devices on the LAN - "
                                                "possible network scan or an intruder spreading", "Intrusion watch")
-                self._defense_act(threat, ip, d.get("mac", ""), d.get("name") or ip, f"{n} internal hosts")
+                self._defense_act(threat, ip, d.get("mac", ""), d.get("name") or ip, f"{n} internal hosts",
+                                  d.get("category", ""))
 
     def _refresh_alerts(self):
         if threading.current_thread() is not threading.main_thread():
