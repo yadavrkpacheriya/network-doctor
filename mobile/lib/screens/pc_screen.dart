@@ -338,9 +338,10 @@ class _PcDashboardState extends State<PcDashboard> {
       builder: (ctx) => AlertDialog(
         title: const Text('Reach this PC from outside'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('When you are NOT on the office Wi-Fi, the app will use this internet address. Set up a free '
-              'Cloudflare Tunnel or Tailscale on the PC pointing at http://localhost:8787, and turn on remote '
-              'access on the PC (Security > Users & sign-in).'),
+          const Text("When you are NOT on the office Wi-Fi, the app uses this internet address instead. On the PC: "
+              "Setup > Users & sign-in > Remote access > Start tunnel - it gives you an address to paste here (no "
+              "router changes, no account needed for a quick address). Type just the host name; https is used "
+              "automatically."),
           const SizedBox(height: 8),
           TextField(controller: c, decoration: const InputDecoration(labelText: 'host or host:port (blank = off)')),
         ]),
