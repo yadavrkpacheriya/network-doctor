@@ -1,3 +1,22 @@
+## Network Doctor 3.20.0
+
+### New in this version
+- **Login sweep (Devices > Login sweep).** Give the SAME admin user name and password you already use (up to 3
+  logins), tick PCs / cameras-NVR-DVR / routers-switches, and press **Start scan** - no need to run anything by hand
+  on each device any more. It reads every PC's make, model, serial, CPU, RAM and disk (the existing Windows PC
+  check), every MikroTik router/switch's identity, model and RouterOS version, and every Dahua / Hikvision / ONVIF
+  camera, NVR or DVR's model, serial and firmware. Every login is tried **only once per device**: if the first couple
+  of devices of a kind all refuse it, the rest of that kind are skipped automatically so an account cannot get
+  locked ("Keep trying anyway" overrides this if you are sure of the password). Devices that refused the login,
+  could not be reached, or answered with data missing are listed with the reason, plus one button to copy the
+  "login refused" list and one to export everything to CSV. Passwords are kept in memory only for the run and are
+  cleared the moment it finishes - never saved to settings, the database or a log.
+- **Phone check (same page).** Checks every phone/tablet WITHOUT logging in to it: an IP it shares with another
+  device, an IP inside the camera/NVR/infra block, a hand-typed (static) IP, camera/recorder ports open on something
+  tagged as a phone, a leftover app block still keyed to that phone's MAC, and phones the router has but the scan
+  missed. This is the exact mix-up (an IP showing as "Dahua NVR" on a phone) that cut phones off before 3.19.1 - this
+  catches it before it happens again.
+
 ## Network Doctor 3.19.1
 
 ### Fixed
