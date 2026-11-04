@@ -40,6 +40,7 @@ class Tree:
     def __init__(self):
         self.rows = {}
         self.detached = set()
+        self.sel = []
 
     def insert(self, parent, where, values=(), tags=()):
         iid = f"I{len(self.rows)}"
@@ -55,6 +56,12 @@ class Tree:
 
     def detach(self, iid):
         self.detached.add(iid)
+
+    def selection(self):
+        return list(self.sel)
+
+    def selection_set(self, *iids):
+        self.sel = list(iids)
 
     def __getattr__(self, name):
         return lambda *a, **k: None
@@ -124,6 +131,7 @@ class FakeApp:
         self.reports = []
         self.clip = ""
         self.login_ok = False
+        self.opened = []
         self.telemetry = types.SimpleNamespace(note=lambda *a: None)
 
     def _settings(self):
@@ -143,6 +151,9 @@ class FakeApp:
 
     def clipboard_append(self, s):
         self.clip += s
+
+    def open_web(self, d):
+        self.opened.append(d.get("ip", ""))
 
 
 class Page(unittest.TestCase):
@@ -234,6 +245,37 @@ class Page(unittest.TestCase):
     def test_phones_check_with_no_router_login_still_reports(self):
         self.page.do_phones()
         self.assertIn("No phone issues", self.page.txt_ph.text)
+
+    def test_open_in_browser_with_nothing_selected_warns(self):
+        self.st.messagebox.asked.clear()
+        self.page.open_selected_web()
+        self.assertEqual(self.app.opened, [])
+        self.assertEqual(len(self.st.messagebox.asked), 1)  # showinfo told the person to select a row first
+
+    def test_open_in_browser_opens_the_selected_devices_own_ip(self):
+        r = {"ip": "192.168.0.20", "mac": self.app.devices[1]["mac"], "name": "Cam1", "category": core.CAT_CAM,
+            "method": "dahua", "status": self.S.UNSUP, "data": {}, "detail": "web page has a login form", "missing": []}
+        self.page._insert_row(r)
+        iid = next(iter(self.page.rows))
+        self.page.tv.selection_set(iid)
+        self.page.open_selected_web()
+        self.assertEqual(self.app.opened, ["192.168.0.20"])
+
+    def test_open_in_browser_falls_back_to_the_row_ip_for_an_unknown_device(self):
+        r = {"ip": "192.168.0.99", "mac": "", "name": "", "category": core.CAT_NET, "method": "web",
+            "status": self.S.UNSUP, "data": {}, "detail": "", "missing": []}
+        self.page._insert_row(r)
+        self.page.tv.selection_set(next(iter(self.page.rows)))
+        self.page.open_selected_web()
+        self.assertEqual(self.app.opened, ["192.168.0.99"])
+
+    def test_copy_selected_ip(self):
+        r = {"ip": "192.168.0.20", "mac": "AA:BB", "name": "Cam1", "category": core.CAT_CAM, "method": "dahua",
+            "status": self.S.OK, "data": {}, "detail": "", "missing": []}
+        self.page._insert_row(r)
+        self.page.tv.selection_set(next(iter(self.page.rows)))
+        self.page.copy_selected_ip()
+        self.assertEqual(self.app.clip, "192.168.0.20")
 
     def test_phones_check_flags_phone_sharing_camera_ip(self):
         self.app.devices.append(dev("192.168.0.20", core.CAT_PHONE, "Phone2", [], mac="AA:BB:CC:00:00:99"))
