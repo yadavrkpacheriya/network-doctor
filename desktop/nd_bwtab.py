@@ -12,6 +12,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 
 import nd_bandwidth as B
 import nd_core as core
+import nd_reset as RS
 import nd_routeros as RO
 import nd_tabs
 import nd_tools as T
@@ -56,14 +57,15 @@ class BandwidthPage:
         nb = ttk.Notebook(parent)
         nb.pack(fill="both", expand=True)
         self.nb = nb
-        self.f1, self.f2, self.f3, self.f4 = (ttk.Frame(nb, padding=6) for _ in range(4))
+        self.f1, self.f2, self.f3, self.f4, self.f5 = (ttk.Frame(nb, padding=6) for _ in range(5))
         for f, t in ((self.f1, "1. Groups and boost"), (self.f2, "2. Bandwidth per user"), (self.f3, "3. Fixed IPs"),
-                     (self.f4, "4. Cameras and chart")):
+                     (self.f4, "4. Cameras and chart"), (self.f5, "5. Reset (safety)")):
             nb.add(f, text=t)
         self._build_groups(self.f1)
         self._build_plan(self.f2)
         self._build_ips(self.f3)
         self._build_cams(self.f4)
+        self._build_reset(self.f5)
         self.app.after(5000, self._sweep)
 
     # ------------------------------------------------------------------ saved choices
@@ -710,6 +712,90 @@ class BandwidthPage:
 
     def undo_release(self):
         self._send(B.release_blocks_commands()[1], "Switch the released auto-defense blocks ON again")
+
+    # ------------------------------------------------------------------ 5. reset
+    def _build_reset(self, f):
+        ttk.Label(f, text="Put the router back to how it was before Network Doctor changed it. ONLY things the app made are "
+                          "removed (every one is named or commented 'ND ...'); the ISP / owner configuration, router users, "
+                          "services, interfaces, the bridge, the DHCP server and NAT masquerade are never touched. Rules the "
+                          "app only switched off (port-forwards, FastTrack) are switched on again. Before it starts, the "
+                          "router saves its configuration to the file nd-before-reset.rsc.", wraplength=1100,
+                  foreground="#344054", justify="left").pack(anchor="w")
+        bar = ttk.Frame(f, padding=(0, 8))
+        bar.pack(fill="x")
+        for txt, cmd in (("1. Show what the app changed (read only)", self.reset_scan),
+                         ("2. Reset blocks, limits and rules", lambda: self.reset_router(("limits",))),
+                         ("Reset fixed-IP reservations", lambda: self.reset_router(("ips",))),
+                         ("Reset EVERYTHING", lambda: self.reset_router(("limits", "ips")))):
+            ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
+        ttk.Label(f, text="Changes of single router settings cannot be put back by the app (the router does not remember the "
+                          "old value). If you used these fixes, check them by hand in WinBox:", foreground="#b54708",
+                  wraplength=1100).pack(anchor="w", pady=(6, 2))
+        self.txt_r = nd_tabs.UI["text_box"](f)
+        self.txt_r.configure(font=("Consolas", 9), height=16)
+        self._reset_text(RS.global_text())
+
+    def _reset_text(self, text):
+        self.txt_r.delete("1.0", "end")
+        self.txt_r.insert("end", text)
+
+    def reset_scan(self):
+        """Read-only: lists what a reset would switch on again and what it would remove."""
+        c = self.app.router_client(ask=False)
+        if not c:
+            self.var_msg.set("No router login saved (Setup > Router login).")
+            return
+
+        def work():
+            tables, err = {}, ""
+            try:
+                with c:
+                    for p in RS.READ_PATHS:
+                        tables[p] = c.cmd(p.replace(" ", "/") + "/print")
+            except Exception as e:  # noqa: BLE001 - shown to the person
+                err = str(e)
+            self.app.q.put(("call", lambda: show(tables, err)))
+
+        def show(tables, err):
+            if err:
+                messagebox.showwarning(APP, f"Could not read the router: {err}")
+                return
+            self._reset_text(RS.report_text(RS.classify(tables)) + "\n\nNOT undone by a reset (check by hand):\n" +
+                             RS.global_text())
+            self.var_msg.set("This is what a reset would do. Nothing was changed.")
+        threading.Thread(target=work, daemon=True).start()
+
+    def reset_router(self, scopes):
+        try:
+            script, notes = RS.reset_commands(scopes)
+        except ValueError as e:
+            messagebox.showwarning(APP, str(e))
+            return
+        if not self.app.router_client(ask=False):
+            self._reset_text(script)
+            self.var_msg.set("No router login saved: the reset commands are shown, paste them in WinBox > New Terminal.")
+            return
+        if not messagebox.askyesno(APP, "\n\n".join(notes) + "\n\nReset now?"):
+            return
+        self._reset_text(script + "\n" + "\n".join(notes))
+
+        def done(err):
+            if err:
+                return
+            if "limits" in scopes:
+                self.st()["applied"] = False
+                self.st()["boosts"] = {}
+                self.save()
+                d = getattr(self.app, "defense", None)
+                for k in list(getattr(d, "active", None) or {}):
+                    d.release(k)
+            if "ips" in scopes:
+                with core.DB_LOCK:
+                    self.app.db["bindings"] = {}
+                core.save_db(self.app.db)
+            self.var_msg.set("Reset done: " + ", ".join(RS.SCOPE_TITLE[x] for x in scopes) +
+                             ". The router configuration before the reset is in the file nd-before-reset.rsc on the router.")
+        self._send(script, "RESET everything Network Doctor made: " + ", ".join(RS.SCOPE_TITLE[x] for x in scopes), done)
 
     def calc(self):
         n = lambda k, d: _num(self.sz[k].get(), d)  # noqa: E731
