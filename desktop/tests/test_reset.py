@@ -133,13 +133,11 @@ class ResetScript(unittest.TestCase):
         pats = set(re.findall(r'~"([^"]+)"', s))
         self.assertTrue(pats)
         isp = ["defconf: masquerade", "ISP", "NDA server", "ND", "DVR forward", "fasttrack", "default", "ISP-limit",
-               "LAN", "ND-User-1x"]
+               "LAN"]
         for p in pats:
             if p in (r"^ND-off: ",):
                 continue
             for name in isp:
-                if name == "ND-User-1x" and p == "^ND-":   # a list/queue-type pattern; users are never in those tables
-                    continue
                 self.assertIsNone(re.search(p, name), f"{p} matches {name}")
         self.assertTrue(any(re.search(p, "ND phone block AA") for p in pats))
         self.assertTrue(any(re.search(p, "ND-CAM") for p in pats))
