@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Is the Wi-Fi this phone is joined to right now password-protected? Useful away from the office -
 /// on an unfamiliar or public network there is no way to know who else is on it.
