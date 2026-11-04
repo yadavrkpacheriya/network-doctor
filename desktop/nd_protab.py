@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """Network Doctor Pro - the extra pages (only in the private Pro build): Auto-defense, Security check,
-Packet capture, Internet exposure, Users & sign-in, Audit log. Built on the same section navigator as the
-rest of the app."""
+Packet capture, Internet exposure, Users & sign-in, Audit log, Usage & crash reports. Built on the same
+section navigator as the rest of the app."""
+import json
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 import nd_core as core
 import nd_defense as DF
+import nd_share as SH
 import nd_tabs
+import nd_tunnel as TN
 
 UI = nd_tabs.UI
 
@@ -249,6 +253,173 @@ class ExposePage(_RunPage):
         return {}
 
 
+# ====================================================================== tunnel (reach this PC from outside)
+class TunnelPanel:
+    """One click: a free, no-account Cloudflare Tunnel address that forwards only the Remote-access port. An
+    optional 'permanent' tier points a Cloudflare domain the person owns at a named tunnel so the address never
+    changes and keeps working after a reboot, with Network Doctor closed."""
+
+    def __init__(self, app, f):
+        self.app = app
+        self.quick = None
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(2, 0))
+        self.btn_start = ttk.Button(bar, text="Start tunnel", command=self.start_quick)
+        self.btn_start.pack(side="left")
+        self.btn_stop = ttk.Button(bar, text="Stop tunnel", command=self.stop_quick, state="disabled")
+        self.btn_stop.pack(side="left", padx=4)
+        ttk.Button(bar, text="Copy address", command=self.copy_addr).pack(side="left")
+        self.var_status = tk.StringVar(value="Not running.")
+        ttk.Label(bar, textvariable=self.var_status, foreground="#344054").pack(side="left", padx=10)
+
+        perm = ttk.LabelFrame(f, text="Make it permanent (optional - needs your own domain on a free Cloudflare "
+                                      "account, for example a pacheriya.com subdomain)", padding=6)
+        perm.pack(fill="x", pady=(8, 0))
+        row = ttk.Frame(perm)
+        row.pack(fill="x")
+        ttk.Label(row, text="Subdomain").pack(side="left")
+        self.var_sub = tk.StringVar(value=app._settings().get("tunnel", {}).get("subdomain", "office"))
+        ttk.Entry(row, textvariable=self.var_sub, width=14).pack(side="left", padx=(2, 10))
+        ttk.Label(row, text="Domain (on Cloudflare)").pack(side="left")
+        self.var_domain = tk.StringVar(value=app._settings().get("tunnel", {}).get("domain", ""))
+        ttk.Entry(row, textvariable=self.var_domain, width=20).pack(side="left", padx=(2, 10))
+        ttk.Label(row, text="API token").pack(side="left")
+        self.var_token = tk.StringVar(value="")
+        ttk.Entry(row, textvariable=self.var_token, width=26, show="*").pack(side="left", padx=2)
+        row2 = ttk.Frame(perm)
+        row2.pack(fill="x", pady=(4, 0))
+        ttk.Button(row2, text="Set up permanent address", command=self.setup_permanent).pack(side="left")
+        ttk.Button(row2, text="Remove permanent address", command=self.remove_permanent).pack(side="left", padx=4)
+        ttk.Label(perm, text="The token is used once to set this up and is never saved. Create one at "
+                             "dash.cloudflare.com > My Profile > API Tokens: start from 'Edit zone DNS' and also "
+                             "tick 'Account - Cloudflare Tunnel - Edit'.", foreground="#667085", wraplength=1000,
+                  justify="left").pack(anchor="w", pady=(4, 0))
+        self.var_perm = tk.StringVar(value=self._perm_status())
+        ttk.Label(perm, textvariable=self.var_perm, foreground="#1f7a3d").pack(anchor="w")
+
+    def _perm_status(self):
+        t = self.app._settings().get("tunnel", {})
+        return f"Permanent address: https://{t['hostname']}" if t.get("hostname") else "No permanent address set up yet."
+
+    def copy_addr(self):
+        addr = (self.quick.url if self.quick and self.quick.url else "") or self.app._settings().get(
+            "tunnel", {}).get("hostname", "")
+        if not addr:
+            messagebox.showinfo("Network Doctor", "No address yet - start the tunnel first.")
+            return
+        self.app.clipboard_clear()
+        self.app.clipboard_append(addr if addr.startswith("http") else f"https://{addr}")
+        messagebox.showinfo("Network Doctor", f"Copied: {addr}\n\nPaste it in the phone app under 'Reach this PC "
+                                               "from outside'.")
+
+    def start_quick(self):
+        if self.quick and self.quick.running:
+            return
+        self.app.telemetry.note("tunnel_quick_start")
+        self.btn_start.configure(state="disabled")
+        self.var_status.set("Starting (downloading cloudflared the first time can take a minute)...")
+
+        def work():
+            try:
+                path = TN.ensure_installed(core.DATA_DIR, progress=lambda m: self.app.q.put(
+                    ("call", lambda: self.var_status.set(m))))
+                q = TN.QuickTunnel(path, SH.HTTP_PORT).start()
+                url = q.wait_url(30)
+            except Exception as e:  # noqa: BLE001 - shown to the person
+                self.app.q.put(("call", lambda: self._quick_failed(str(e))))
+                return
+            self.app.q.put(("call", lambda: self._quick_started(q, url)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _quick_started(self, q, url):
+        self.quick = q
+        if url:
+            self.var_status.set(f"Running: {url}  (changes if the tunnel is restarted)")
+            self.btn_stop.configure(state="normal")
+        else:
+            self.var_status.set("Started, but no address was seen yet - press Copy address again shortly.")
+            self.btn_stop.configure(state="normal")
+        self.btn_start.configure(state="disabled" if q.running else "normal")
+
+    def _quick_failed(self, msg):
+        self.var_status.set(f"Could not start: {msg}")
+        self.btn_start.configure(state="normal")
+
+    def stop_quick(self):
+        if self.quick:
+            self.quick.stop()
+        self.quick = None
+        self.var_status.set("Not running.")
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+
+    def setup_permanent(self):
+        domain, sub, token = self.var_domain.get().strip(), self.var_sub.get().strip(), self.var_token.get().strip()
+        if not (domain and sub and token):
+            messagebox.showinfo("Network Doctor", "Enter the subdomain, domain and API token first.")
+            return
+        if not messagebox.askyesno("Network Doctor", f"Point https://{sub}.{domain} at this PC permanently?\n\n"
+                                                      "This creates a tunnel and a DNS record on your Cloudflare "
+                                                      "account, and installs it as a background service."):
+            return
+        self.var_perm.set("Setting up...")
+
+        def work():
+            try:
+                path = TN.ensure_installed(core.DATA_DIR)
+                r = TN.setup_permanent(token, domain, sub, SH.HTTP_PORT)
+                TN.install_service(path, r["run_token"])
+            except Exception as e:  # noqa: BLE001 - shown to the person
+                self.app.q.put(("call", lambda: self._perm_failed(str(e))))
+                return
+            self.app.q.put(("call", lambda: self._perm_done(r)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _perm_done(self, r):
+        t = self.app._settings().setdefault("tunnel", {})
+        t.update({"hostname": r["hostname"], "tunnel_id": r["tunnel_id"], "domain": self.var_domain.get().strip(),
+                  "subdomain": self.var_sub.get().strip()})
+        self.app._save_settings()
+        self.var_token.set("")
+        self.var_perm.set(self._perm_status())
+        messagebox.showinfo("Network Doctor", f"Done: https://{r['hostname']} now reaches this PC, even after a "
+                                               "reboot. Paste it in the phone app.")
+
+    def _perm_failed(self, msg):
+        self.var_perm.set(self._perm_status())
+        messagebox.showerror("Network Doctor", f"Could not set it up: {msg}")
+
+    def remove_permanent(self):
+        t = self.app._settings().get("tunnel", {})
+        if not t.get("hostname"):
+            messagebox.showinfo("Network Doctor", "No permanent address is set up.")
+            return
+        token = simpledialog.askstring("Remove permanent address", "Paste the same API token again to remove it:",
+                                       show="*", parent=self.app)
+        if not token:
+            return
+
+        def work():
+            try:
+                path = TN.locate(core.DATA_DIR)
+                if path:
+                    TN.uninstall_service(path)
+                zone = TN.zone_id_of(token, t.get("domain", ""))
+                rec = TN.find_dns_record_id(token, zone, t["hostname"])
+                TN.remove_tunnel_and_dns(token, TN.account_id_of(token), t["tunnel_id"], zone, rec)
+            except Exception as e:  # noqa: BLE001 - shown to the person
+                self.app.q.put(("call", lambda: messagebox.showerror("Network Doctor", f"Could not remove it: {e}")))
+                return
+            self.app.q.put(("call", self._perm_removed))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _perm_removed(self):
+        self.app._settings().pop("tunnel", None)
+        self.app._save_settings()
+        self.var_perm.set(self._perm_status())
+        messagebox.showinfo("Network Doctor", "Permanent address removed.")
+
+
 # ====================================================================== accounts + audit
 class AccountsPage:
     def __init__(self, app, f):
@@ -273,10 +444,11 @@ class AccountsPage:
         ttk.Checkbutton(rf, text="Allow signed-in users to connect from the internet", variable=self.v_remote,
                         command=self.remote).pack(anchor="w")
         ttk.Label(rf, text="Outside connections can do nothing until they sign in with a user above, and every "
-                           "action is in the Audit log. To get a safe internet address without opening a port, "
-                           "install a free Cloudflare Tunnel or Tailscale on this PC and point it at "
-                           "http://localhost:8787, then enter that address in the phone app (PC menu > Reach from "
-                           "outside).", foreground="#667085", wraplength=1000, justify="left").pack(anchor="w")
+                           "action is in the Audit log. No port is opened on the router, and no public IP is "
+                           "needed - the tunnel below only forwards this PC's Remote-access address (TCP 8787) and "
+                           "nothing else on the network.", foreground="#667085", wraplength=1000,
+                  justify="left").pack(anchor="w", pady=(0, 6))
+        self.tunnel = TunnelPanel(app, rf)
         self.refresh()
 
     def remote(self):
@@ -474,8 +646,83 @@ class ActivatePage:
         messagebox.showinfo("Network Doctor", "Licence removed. Restart Network Doctor to hide the advanced tabs.")
 
 
+# ====================================================================== usage & crash reports (this is "the admin app")
+class TelemetryPage:
+    """What other installs (desktop or phone, opted in under Setup > 'Help improve Network Doctor') have
+    reported to THIS PC, because its Remote access address is their admin address. Only anonymous feature-
+    use counts and sanitised crash details ever arrive here - no IPs, host names, user names, passwords or
+    scan data (nd_telemetry.py never records those; nd_share.py never accepts more than counters and short
+    text) - so this page is safe to use as the one place to see how the app is doing for everyone who opted in."""
+
+    def __init__(self, app, f):
+        self.app = app
+        ttk.Label(f, text="Usage & crash reports", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        ttk.Label(f, text="Reports from other installs that opted in to 'Help improve Network Doctor' (Setup) "
+                          "and pointed their admin address at this PC's Remote access. Only feature-use counts "
+                          "and sanitised crash details - never IPs, host names, user names, passwords or "
+                          "anything scanned.", foreground="#667085", wraplength=1100,
+                  justify="left").pack(anchor="w", pady=(0, 6))
+        bar = ttk.Frame(f)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Refresh", command=self.refresh).pack(side="left")
+        ttk.Button(bar, text="Clear all", command=self.clear).pack(side="left", padx=4)
+        self.var_count = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.var_count, foreground="#344054").pack(side="left", padx=10)
+        self.tv = UI["make_tree"](f, ("kind", "version", "platform", "events", "errors", "from"),
+                                  ("Kind", "Version", "Platform", "Feature uses", "Errors / crashes", "From"),
+                                  (70, 80, 240, 100, 110, 120), first=("Received  /  install id", 190))
+        self.tv.bind("<Double-1>", self._show_detail)
+        self._rows = {}
+        self.refresh()
+
+    def _reports(self):
+        share = getattr(self.app, "share", None)
+        return share.telemetry_reports() if share else []
+
+    def refresh(self):
+        self.tv.delete(*self.tv.get_children())
+        self._rows = {}
+        reports = self._reports()
+        self.var_count.set(f"{len(reports)} report(s) received" if reports else "No reports yet.")
+        for i, r in enumerate(reversed(reports)):
+            counts = r.get("counts") or {}
+            errs = sum(v for k, v in counts.items() if k.startswith("error:")) + len(r.get("crashes") or [])
+            events = sum(v for k, v in counts.items() if not k.startswith("error:"))
+            iid = f"r{i}"
+            self._rows[iid] = r
+            self.tv.insert("", "end", iid=iid, text=f"{r.get('received_at', '')}   {r.get('install_id', '')[:12]}",
+                           values=(r.get("kind", ""), r.get("version", ""), r.get("platform", "")[:46],
+                                   events, errs, r.get("from_ip", "")))
+
+    def _show_detail(self, _=None):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        r = self._rows.get(sel[0])
+        if not r:
+            return
+        win = tk.Toplevel(self.app)
+        win.title(f"Report - {r.get('install_id', '')} ({r.get('received_at', '')})")
+        txt = tk.Text(win, width=90, height=28, font=("Consolas", 9), wrap="word")
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", json.dumps(r, indent=2))
+        txt.configure(state="disabled")
+
+    def clear(self):
+        if not self._reports():
+            messagebox.showinfo("Network Doctor", "There is nothing to clear yet.")
+            return
+        if not messagebox.askyesno("Network Doctor", "Remove all stored usage & crash reports? This cannot "
+                                                       "be undone."):
+            return
+        share = getattr(self.app, "share", None)
+        if share:
+            share.clear_telemetry()
+        self.refresh()
+
+
 PRO_PAGES = {"defense": AutoDefensePage, "vuln": VulnPage, "capture": CapturePage, "expose": ExposePage,
-             "accounts": AccountsPage, "audit": AuditPage}
+             "accounts": AccountsPage, "audit": AuditPage, "telemetry": TelemetryPage}
 
 # Always available, even when Pro is locked (so the owner can paste a licence):
 ALWAYS_PAGES = {"activate": ActivatePage}

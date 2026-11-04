@@ -124,6 +124,7 @@ class FakeApp:
         self.reports = []
         self.clip = ""
         self.login_ok = False
+        self.telemetry = types.SimpleNamespace(note=lambda *a: None)
 
     def _settings(self):
         return {}

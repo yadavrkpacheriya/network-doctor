@@ -2169,7 +2169,8 @@ if core.IS_PRO:
     _PRO_PAGES = {
         "security_s": [("defense", "Auto-defense"), ("vuln", "Security check"), ("expose", "Internet exposure")],
         "fix_s": [("capture", "Packet capture")],
-        "setup_s": [("accounts", "Users & sign-in"), ("audit", "Audit log")],
+        "setup_s": [("accounts", "Users & sign-in"), ("audit", "Audit log"),
+                    ("telemetry", "Usage & crash reports")],
     }
     for _s in SECTIONS:
         _s[4].extend(_PRO_PAGES.get(_s[0], []))

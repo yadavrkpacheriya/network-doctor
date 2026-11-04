@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show appVersion;
+import '../net/telemetry.dart';
 import '../net/update.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -27,6 +30,8 @@ class AboutScreen extends StatelessWidget {
         ]),
         const SizedBox(height: 12),
         const UpdateCard(),
+        const SizedBox(height: 12),
+        const TelemetryCard(),
         const SizedBox(height: 16),
         const Text('Finds the devices on your Wi-Fi, sorts them into categories, and lets you ping them and open '
             'them in the browser. Paired with the Network Doctor PC app it also shows loops, ports going down, '
@@ -39,8 +44,8 @@ class AboutScreen extends StatelessWidget {
         const SizedBox(height: 16),
         Text('Privacy', style: t.titleSmall),
         const Text('Everything stays on your network: no accounts, no tracking, no ads. Scans only talk to devices '
-            'on your own Wi-Fi. The only internet request is the check for a new version on GitHub (once a day; '
-            'it can be switched off above).'),
+            'on your own Wi-Fi. The only internet requests are the check for a new version on GitHub (once a day; '
+            'it can be switched off above) and, only if you turn it on below, anonymous usage & crash reports.'),
         const SizedBox(height: 16),
         Wrap(spacing: 8, children: [
           OutlinedButton.icon(
@@ -148,6 +153,115 @@ class _UpdateCardState extends State<UpdateCard> {
               } catch (_) {}
             },
           ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// "Help improve Network Doctor": opt-in usage & crash reports (off by default, and never sent
+/// anywhere until an admin address is also filled in - see net/telemetry.dart).
+class TelemetryCard extends StatefulWidget {
+  const TelemetryCard({super.key});
+
+  @override
+  State<TelemetryCard> createState() => _TelemetryCardState();
+}
+
+class _TelemetryCardState extends State<TelemetryCard> {
+  bool _enabled = false;
+  final _urlCtrl = TextEditingController();
+  String _msg = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _urlCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final t = Telemetry.instance;
+    await t.load();
+    if (!mounted) return;
+    setState(() {
+      _enabled = t.enabled;
+      _urlCtrl.text = t.adminUrl;
+    });
+  }
+
+  Future<void> _preview() async {
+    final rep = Telemetry.instance.pendingReport(appVersion: appVersion);
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('What gets sent right now'),
+        content: SingleChildScrollView(
+            child: Text(const JsonEncoder.withIndent('  ').convert(rep), style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      ),
+    );
+  }
+
+  Future<void> _sendNow() async {
+    await Telemetry.instance.setAdminUrl(_urlCtrl.text);
+    setState(() {
+      _busy = true;
+      _msg = 'Sending...';
+    });
+    final (ok, detail) = await Telemetry.instance.sendNow(appVersion: appVersion);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _msg = (ok ? 'Sent: ' : 'Not sent: ') + detail;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.insights_outlined),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Help improve Network Doctor', style: Theme.of(context).textTheme.titleSmall)),
+          ]),
+          const Padding(
+            padding: EdgeInsets.only(top: 6, bottom: 4),
+            child: Text('Never sent: Wi-Fi names, IPs, host names, user names, passwords or anything found in a '
+                'scan - only which features get used and sanitised crash details, tagged with a random id no one '
+                'can trace back to you. Nothing is sent unless both this is on and an admin address is set.'),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Send anonymous usage & crash reports'),
+            value: _enabled,
+            onChanged: (v) async {
+              setState(() => _enabled = v);
+              await Telemetry.instance.setEnabled(v);
+            },
+          ),
+          TextField(
+            controller: _urlCtrl,
+            decoration: const InputDecoration(labelText: 'Admin address (the developer\'s Remote access tunnel)', isDense: true),
+            onChanged: (v) => Telemetry.instance.setAdminUrl(v),
+          ),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, children: [
+            OutlinedButton(onPressed: _preview, child: const Text('What gets sent?')),
+            FilledButton.tonal(onPressed: _busy ? null : _sendNow, child: const Text('Send now')),
+          ]),
+          if (_msg.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_msg)),
         ]),
       ),
     );
