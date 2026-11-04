@@ -7,6 +7,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../net/model.dart';
 import '../net/pc_link.dart';
 import '../net/probe.dart';
+import '../net/telemetry.dart';
 import 'common.dart';
 import 'pc_actions.dart';
 import 'pc_more.dart';
@@ -47,6 +48,7 @@ class _PcScreenState extends State<PcScreen> with AutomaticKeepAliveClientMixin 
     _pcs.removeWhere((p) => p.host == pc.host);
     _pcs.insert(0, pc);
     await PcLink.save(_pcs);
+    Telemetry.instance.note('pc_pair');
     setState(() => _pc = pc);
   }
 

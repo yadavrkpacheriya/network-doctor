@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'net/telemetry.dart';
 import 'net/update.dart';
 
 import 'screens/about_screen.dart';
@@ -12,7 +14,20 @@ import 'screens/tools_screen.dart';
 
 const appVersion = '1.9.0';
 
-void main() => runApp(const NetworkDoctorApp());
+void main() {
+  // Unhandled errors would otherwise just vanish - no console is open on a phone. Both hooks only
+  // ever COUNT a sanitised crash (nd_telemetry.dart is a no-op until the person opts in); they never
+  // change how the error is shown or reported to anyone else.
+  FlutterError.onError = (details) {
+    Telemetry.instance.noteError('flutter', details.exception, details.stack);
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    Telemetry.instance.noteError('async', error, stack);
+    return false; // still let the platform's own default handling happen
+  };
+  runApp(const NetworkDoctorApp());
+}
 
 class NetworkDoctorApp extends StatelessWidget {
   const NetworkDoctorApp({super.key});
@@ -47,8 +62,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _check();
+    Telemetry.instance.load().then((_) => _sendTelemetry());
     // the app may stay open past 15:00: look again every 10 minutes (only goes online once a day)
-    _updTimer = Timer.periodic(const Duration(minutes: 10), (_) => _check());
+    _updTimer = Timer.periodic(const Duration(minutes: 10), (_) {
+      _check();
+      _sendTelemetry();
+    });
   }
 
   void _check() {
@@ -57,9 +76,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     });
   }
 
+  void _sendTelemetry() {
+    if (!Telemetry.instance.enabled) return;
+    Telemetry.instance.sendNow(appVersion: appVersion);
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _check();
+    if (state == AppLifecycleState.resumed) {
+      _check();
+      _sendTelemetry();
+    }
   }
 
   @override

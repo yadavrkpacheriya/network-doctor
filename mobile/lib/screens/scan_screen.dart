@@ -6,9 +6,14 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../net/model.dart';
 import '../net/probe.dart';
 import '../net/scanner.dart';
+import '../net/telemetry.dart';
+import '../net/wifi_security.dart';
 import 'common.dart';
 
-/// "This network": the phone scans the Wi-Fi it is connected to, on its own.
+/// "This network": the phone scans the Wi-Fi it is connected to, entirely on its own - no pairing or
+/// connection to the office PC needed. The advanced option for checking an unfamiliar network (home,
+/// a client's office, a hotel, a café) before trusting it with anything, including a Wi-Fi safety
+/// check (is this network even password-protected?).
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
 
@@ -24,6 +29,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   String _progress = '';
   ScanResult? _result;
   String _query = '';
+  WifiSecurity? _security;
   final List<double?> _gwPing = [];
   late final Ticker _gwTicker = Ticker(const Duration(seconds: 2), _pingGateway);
 
@@ -71,7 +77,14 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       _mask = mask;
       _error = ip == null ? 'Not connected to Wi-Fi. Connect to the office Wi-Fi and pull down to retry.' : '';
     });
-    if (ip != null) _gwTicker.start();
+    if (ip != null) {
+      _gwTicker.start();
+      WifiSecurityCheck.check().then((s) {
+        if (mounted) setState(() => _security = s);
+      });
+    } else {
+      setState(() => _security = null);
+    }
   }
 
   Future<void> _pingGateway() async {
@@ -88,6 +101,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   Future<void> _scan() async {
     final ip = _ip;
     if (ip == null) return _readWifi();
+    Telemetry.instance.note('scan_this_network');
     final s = Scanner();
     setState(() {
       _scanner = s;
@@ -118,6 +132,17 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
     }
   }
 
+  void _showSecurityInfo(BuildContext context, WifiSecurity s) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(children: [Icon(s.icon, color: s.color(ctx)), const SizedBox(width: 8), Text(s.label)]),
+        content: Text(s.advice),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -136,6 +161,20 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
               const SizedBox(width: 8),
               Expanded(child: Text(_ip == null ? 'Wi-Fi: not connected' : 'This phone $_ip   ·   router $_gw')),
             ]),
+            if (_security != null) ...[
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () => _showSecurityInfo(context, _security!),
+                child: Row(children: [
+                  Icon(_security!.icon, size: 18, color: _security!.color(context)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: Text(_security!.label,
+                          style: TextStyle(color: _security!.color(context), fontWeight: FontWeight.w600))),
+                  Icon(Icons.info_outline, size: 16, color: Colors.grey.shade600),
+                ]),
+              ),
+            ],
             if (_gwPing.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(ok.isEmpty
@@ -174,10 +213,11 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
         Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'Scan finds the devices on this Wi-Fi, sorts them into categories and lets you ping them or open them '
-            'in the browser.\n\nPhones cannot see MAC addresses or other devices\' traffic. For the complete '
-            'picture (IP conflicts, loops, bandwidth per device) pair with the Network Doctor PC app in the '
-            '"Office PC" tab.',
+            'The advanced option for any network - no connection to your office PC needed, so this works away '
+            'from the office too (home, a client\'s site, a hotel). Scan finds the devices on this Wi-Fi, sorts '
+            'them into categories and lets you ping them or open them in the browser.\n\nPhones cannot see MAC '
+            'addresses or other devices\' traffic. For the complete picture (IP conflicts, loops, bandwidth per '
+            'device) pair with the Network Doctor PC app in the "Office PC" tab.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
         ),
