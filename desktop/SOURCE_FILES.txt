@@ -26,3 +26,4 @@ nd_protab.py
 nd_license.py
 nd_bandwidth.py
 nd_bwtab.py
+nd_reset.py

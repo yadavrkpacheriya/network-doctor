@@ -15,6 +15,7 @@ from collections import Counter
 from xml.sax.saxutils import escape
 
 import nd_core as core
+import nd_reset as R
 import nd_tools as T
 
 # --------------------------------------------------------------------------------------------------- groups
@@ -154,20 +155,8 @@ def _header(title, n=None):
     return f"# Network Doctor - {title}{f' ({n})' if n is not None else ''} - generated {time.strftime('%Y-%m-%d %H:%M')}"
 
 
-_OFF = "ND-off: "  # FastTrack / port-forwards switched off by the plan
-_REL = "ND-rel: "  # auto-defense blocks released by hand
-
-
-def _ros_off(path, cond, tag=_OFF):
-    """Disables the rules matching cond and marks them with tag so the UNDO can enable exactly those again."""
-    return (f':foreach r in=[{path} find where {cond}] do={{ {path} set $r comment=("{tag}" . [{path} get $r comment]); '
-            f'{path} disable $r }}')
-
-
-def _ros_on(path, tag=_OFF):
-    n = len(tag)
-    return (f':foreach r in=[{path} find where comment~"^{tag}"] do={{ :local c [{path} get $r comment]; '
-            f'{path} set $r comment=[:pick $c {n} [:len $c]]; {path} enable $r }}')
+_OFF, _REL = R.OFF, R.REL  # tags for rules the app only switched off (same ones the reset looks for)
+_ros_off, _ros_on = R._ros_off, R._ros_on
 
 
 def queue_commands(plan, groups, lan, wan=""):

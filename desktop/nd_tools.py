@@ -14,6 +14,7 @@ import time
 import urllib.parse
 
 import nd_core as core
+import nd_reset as R
 
 # ==========================================================================
 # tags (name, department, type, where it is connected)
@@ -1606,7 +1607,12 @@ def undo_for(script):
     # state toggles - flip them back
     for line in script.splitlines():
         s = line.strip()
-        if s.startswith("/ip upnp set enabled=no"):
+        if s.startswith(":foreach") and f'("{R.OFF}"' in s:   # a rule the app switched off and marked: switch it on again
+            m = re.search(r"\[(/[\w ]+?) find where", s)
+            if m:
+                t = re.search(r"to-addresses=([\d.]+)", s)   # undo only this device's port-forwards
+                add(R._ros_on(m.group(1).strip(), R.OFF, f" and to-addresses={t.group(1)}" if t else ""))
+        elif s.startswith("/ip upnp set enabled=no"):
             add("/ip upnp set enabled=yes")
         elif "/ip firewall nat disable " in s:
             add(s.replace("/ip firewall nat disable ", "/ip firewall nat enable ", 1))

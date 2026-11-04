@@ -14,6 +14,8 @@ import re
 import threading
 import time
 
+import nd_reset as R
+
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 PRIO = {1: "P1 - fix now", 2: "P2 - fix today", 3: "P3 - this week", 4: "P4 - for information"}
@@ -153,7 +155,7 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "Re-check: the alert should not return."],
                     auto=[("Close internet access to this device", "router",
                            "/ip upnp set enabled=no\n"
-                           f"/ip firewall nat disable [find where action=dst-nat and to-addresses={ip}]\n"
+                           + R._ros_off("/ip firewall nat", f"action=dst-nat and to-addresses={ip} and disabled=no") + "\n"
                            # also drop any traffic reaching it from the internet, so it is no longer exposed even
                            # if a port-forward is re-created; local viewing on the LAN keeps working.
                            + _no_internet(lan, f"ND: no-inbound {ip}", ip=ip, out=False, inp=True)) if ip

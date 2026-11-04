@@ -40,7 +40,14 @@ DEFAULT = {
     "exclude_macs": [],
     "levels": {k: v for k, (_t, v) in THREATS.items()},
     "cooldown_min": 30,
+    "release_min": 60,       # an automatic internet cut ends by itself after this many minutes (0 = never)
 }
+# Devices that are only ever ALERTED on, never cut off by themselves. A phone changes IP / uses a private Wi-Fi
+# address all the time, so a block keyed on its IP or MAC lands on the wrong phone and cuts many phones.
+NEVER_ACT_CATEGORIES = ("Phones / tablets",)
+# Threats that describe the ROUTER (a port-forward, a rogue DHCP), not what a device does: cutting whoever holds
+# the IP now is wrong. Only a camera / recorder may be cut for 'exposed' (it really is open to the internet).
+ROUTER_SIDE = {"exposed": ("CCTV cameras / DVR / NVR",)}
 
 
 def cfg(settings):
@@ -86,9 +93,28 @@ class Defense:
             return True
         return bool(mac and mac.upper() in {m.upper() for m in c["exclude_macs"]})
 
-    def planned(self, kind, ip="", mac=""):
+    def guard(self, kind, category=""):
+        """Why this threat must only be alerted on (never auto-acted), or '' when acting is allowed."""
+        if category in NEVER_ACT_CATEGORIES:
+            return "phones and tablets are never cut off automatically (their IP / MAC changes)"
+        only = ROUTER_SIDE.get(kind)
+        if only and category not in only:
+            return f"'{kind}' is a router setting: fix the port-forward, do not cut the device that has the IP now"
+        return ""
+
+    def expired(self, now=None):
+        """Keys of automatic 'internet' cuts that have run longer than release_min (they should be released)."""
+        mins = self.config().get("release_min", 60)
+        now = now or time.time()
+        if not mins:
+            return []
+        return [k for k, v in self.active.items() if v.get("level") == "internet" and now - v.get("t", now) >= mins * 60]
+
+    def planned(self, kind, ip="", mac="", category=""):
         """What the engine WOULD do for this threat right now (without doing it): a response level or 'notify'."""
         c = self.config()
+        if self.guard(kind, category):
+            return "notify"
         if not c["armed"]:
             return "notify"
         if c["mode"] != "auto":

@@ -357,6 +357,75 @@ class Page(unittest.TestCase):
         self.page.undo_release()
         self.assertIn('comment~"^ND-rel: "', self.app.sent[-1][1])
 
+    def test_reset_button_sends_script_only_after_yes_and_clears_state(self):
+        self.page.st()["applied"] = True
+        self.app.db["bindings"] = {"AA": {"ip": "1.2.3.4"}}
+        self.page.st()["boosts"] = {"AA": {"until": None}}
+
+        class Def:
+            active = {"K": {}}
+            released = []
+
+            def release(self, k):
+                self.released.append(k)
+                self.active.pop(k)
+        self.app.defense = Def()
+        with mock.patch.object(self.bw.messagebox, "askyesno", return_value=False):
+            self.page.reset_router(("limits", "ips"))
+        self.assertEqual(self.app.sent, [])                     # No = nothing sent
+        self.page.reset_router(("limits", "ips"))
+        what, script = self.app.sent[-1]
+        self.assertIn("RESET", what)
+        self.assertIn("nd-before-reset", script)
+        self.assertIn("/ip dhcp-server lease remove", script)
+        self.assertFalse(self.page.st()["applied"])
+        self.assertEqual(self.page.st()["boosts"], {})
+        self.assertEqual(self.app.db["bindings"], {})
+        self.assertEqual(Def.released, ["K"])
+
+    def test_reset_limits_only_keeps_reservations(self):
+        self.app.db["bindings"] = {"AA": {"ip": "1.2.3.4"}}
+        self.page.reset_router(("limits",))
+        self.assertNotIn("dhcp-server", self.app.sent[-1][1])
+        self.assertEqual(self.app.db["bindings"], {"AA": {"ip": "1.2.3.4"}})
+
+    def test_reset_without_router_login_only_shows_commands(self):
+        self.app.login = False
+        self.page.reset_router(("limits",))
+        self.assertEqual(self.app.sent, [])
+        self.assertIn("No router login", self.page.var_msg.get())
+
+    def test_reset_scan_is_read_only_and_lists_items(self):
+        rows = {"/ip/firewall/filter/print": [{"comment": "ND phone block AA"}, {"comment": "defconf"}],
+                "/queue/simple/print": [{"name": "ND-PC"}]}
+
+        class Client:
+            calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def cmd(self, path, **k):
+                Client.calls.append(path)
+                return rows.get(path, [])
+        self.app.router_client = lambda ask=True: Client()
+        self.page.reset_scan()
+        for _ in range(50):
+            try:
+                kind, fn = self.app.q.get(timeout=0.1)
+                fn()
+            except queue.Empty:
+                break
+        txt = self.page.txt_r.text
+        self.assertIn("ND phone block AA", txt)
+        self.assertIn("ND-PC", txt)
+        self.assertNotIn("defconf", txt)
+        self.assertTrue(all(p.endswith("/print") for p in Client.calls))   # only reads
+        self.assertEqual(self.app.sent, [])
+
     def test_sweep_ends_boost(self):
         self.select("192.168.0.9")
         self.page.boost()
