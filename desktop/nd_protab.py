@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Network Doctor Pro - the extra pages (only in the private Pro build): Auto-defense, Security check,
-Packet capture, Internet exposure, Users & sign-in, Audit log. Built on the same section navigator as the
-rest of the app."""
+Packet capture, Internet exposure, Users & sign-in, Audit log, Usage & crash reports. Built on the same
+section navigator as the rest of the app."""
+import json
 import threading
 import time
 import tkinter as tk
@@ -314,6 +315,7 @@ class TunnelPanel:
     def start_quick(self):
         if self.quick and self.quick.running:
             return
+        self.app.telemetry.note("tunnel_quick_start")
         self.btn_start.configure(state="disabled")
         self.var_status.set("Starting (downloading cloudflared the first time can take a minute)...")
 
@@ -644,8 +646,83 @@ class ActivatePage:
         messagebox.showinfo("Network Doctor", "Licence removed. Restart Network Doctor to hide the advanced tabs.")
 
 
+# ====================================================================== usage & crash reports (this is "the admin app")
+class TelemetryPage:
+    """What other installs (desktop or phone, opted in under Setup > 'Help improve Network Doctor') have
+    reported to THIS PC, because its Remote access address is their admin address. Only anonymous feature-
+    use counts and sanitised crash details ever arrive here - no IPs, host names, user names, passwords or
+    scan data (nd_telemetry.py never records those; nd_share.py never accepts more than counters and short
+    text) - so this page is safe to use as the one place to see how the app is doing for everyone who opted in."""
+
+    def __init__(self, app, f):
+        self.app = app
+        ttk.Label(f, text="Usage & crash reports", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        ttk.Label(f, text="Reports from other installs that opted in to 'Help improve Network Doctor' (Setup) "
+                          "and pointed their admin address at this PC's Remote access. Only feature-use counts "
+                          "and sanitised crash details - never IPs, host names, user names, passwords or "
+                          "anything scanned.", foreground="#667085", wraplength=1100,
+                  justify="left").pack(anchor="w", pady=(0, 6))
+        bar = ttk.Frame(f)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Refresh", command=self.refresh).pack(side="left")
+        ttk.Button(bar, text="Clear all", command=self.clear).pack(side="left", padx=4)
+        self.var_count = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.var_count, foreground="#344054").pack(side="left", padx=10)
+        self.tv = UI["make_tree"](f, ("kind", "version", "platform", "events", "errors", "from"),
+                                  ("Kind", "Version", "Platform", "Feature uses", "Errors / crashes", "From"),
+                                  (70, 80, 240, 100, 110, 120), first=("Received  /  install id", 190))
+        self.tv.bind("<Double-1>", self._show_detail)
+        self._rows = {}
+        self.refresh()
+
+    def _reports(self):
+        share = getattr(self.app, "share", None)
+        return share.telemetry_reports() if share else []
+
+    def refresh(self):
+        self.tv.delete(*self.tv.get_children())
+        self._rows = {}
+        reports = self._reports()
+        self.var_count.set(f"{len(reports)} report(s) received" if reports else "No reports yet.")
+        for i, r in enumerate(reversed(reports)):
+            counts = r.get("counts") or {}
+            errs = sum(v for k, v in counts.items() if k.startswith("error:")) + len(r.get("crashes") or [])
+            events = sum(v for k, v in counts.items() if not k.startswith("error:"))
+            iid = f"r{i}"
+            self._rows[iid] = r
+            self.tv.insert("", "end", iid=iid, text=f"{r.get('received_at', '')}   {r.get('install_id', '')[:12]}",
+                           values=(r.get("kind", ""), r.get("version", ""), r.get("platform", "")[:46],
+                                   events, errs, r.get("from_ip", "")))
+
+    def _show_detail(self, _=None):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        r = self._rows.get(sel[0])
+        if not r:
+            return
+        win = tk.Toplevel(self.app)
+        win.title(f"Report - {r.get('install_id', '')} ({r.get('received_at', '')})")
+        txt = tk.Text(win, width=90, height=28, font=("Consolas", 9), wrap="word")
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", json.dumps(r, indent=2))
+        txt.configure(state="disabled")
+
+    def clear(self):
+        if not self._reports():
+            messagebox.showinfo("Network Doctor", "There is nothing to clear yet.")
+            return
+        if not messagebox.askyesno("Network Doctor", "Remove all stored usage & crash reports? This cannot "
+                                                       "be undone."):
+            return
+        share = getattr(self.app, "share", None)
+        if share:
+            share.clear_telemetry()
+        self.refresh()
+
+
 PRO_PAGES = {"defense": AutoDefensePage, "vuln": VulnPage, "capture": CapturePage, "expose": ExposePage,
-             "accounts": AccountsPage, "audit": AuditPage}
+             "accounts": AccountsPage, "audit": AuditPage, "telemetry": TelemetryPage}
 
 # Always available, even when Pro is locked (so the owner can paste a licence):
 ALWAYS_PAGES = {"activate": ActivatePage}

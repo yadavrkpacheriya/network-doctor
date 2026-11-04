@@ -31,3 +31,4 @@ nd_sweep.py
 nd_sweeptab.py
 nd_ranges.py
 nd_tunnel.py
+nd_telemetry.py

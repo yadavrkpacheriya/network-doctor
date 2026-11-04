@@ -42,6 +42,7 @@ import nd_usage as US
 import nd_home
 import nd_bwtab
 import nd_sweeptab
+import nd_telemetry as TL
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -818,6 +819,24 @@ class App(tk.Tk):
         ttk.Label(ph, textvariable=self.var_share_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
         ttk.Button(ph, text="Remove paired phones", command=self.forget_phones).pack(side="right")
         ttk.Button(ph, text="New pairing code", command=self.new_share_code).pack(side="right", padx=6)
+        tel = ttk.LabelFrame(f, text="Help improve Network Doctor (optional)", padding=(8, 4))
+        tel.pack(fill="x", pady=(0, 6))
+        self.var_telemetry = tk.BooleanVar(value=self.telemetry.enabled)
+        ttk.Checkbutton(tel, text="Send anonymous usage & crash reports", variable=self.var_telemetry,
+                        command=self._telemetry_toggle).pack(side="left")
+        ttk.Label(tel, text="Admin address:").pack(side="left", padx=(12, 2))
+        self.var_telemetry_url = tk.StringVar(value=self.telemetry.admin_url())
+        e = ttk.Entry(tel, textvariable=self.var_telemetry_url, width=34)
+        e.pack(side="left")
+        e.bind("<FocusOut>", lambda _e: self._telemetry_save_url())
+        ttk.Button(tel, text="What gets sent?", command=self._telemetry_preview).pack(side="left", padx=(8, 2))
+        ttk.Button(tel, text="Send now", command=self._telemetry_send_now).pack(side="left")
+        ttk.Label(f, text="Never sent: IP addresses, host names, user names, passwords or anything scanned - "
+                          "only which features get used and sanitised crash details, tagged with a random id "
+                          "no one can trace back to you. Off by default. The admin address is the developer's "
+                          "own Remote access tunnel (see above) - leave it blank and nothing is sent even if "
+                          "this is switched on.", foreground="#667085", wraplength=1100,
+                  justify="left").pack(anchor="w", padx=8, pady=(0, 6))
         ro = ttk.LabelFrame(f, text="Router login (optional) - lets Network Doctor apply its own changes on a MikroTik "
                                     "and run router commands", padding=(8, 4))
         ro.pack(fill="x", pady=(0, 6))
@@ -1344,6 +1363,7 @@ class App(tk.Tk):
         else:
             st.pop("scan_nets", None)
         self._save_settings()
+        self.telemetry.note("scan_auto" if auto else "scan_manual")
         self.stop_ev.clear()
         self.scanning = True
         self._scan_is_auto = auto
@@ -1824,6 +1844,10 @@ class App(tk.Tk):
         self.alert_lines = []
         self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
         self._pro_built = {}  # also holds the always-visible "Pro / Activate" page when locked
+        self.telemetry = TL.Telemetry(APP, VERSION, self._settings(), self._save_settings)
+        self.telemetry.install_hook()
+        self.telemetry.install_tk_hook(self)
+        self.telemetry.start_background()
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
@@ -1876,6 +1900,7 @@ class App(tk.Tk):
                 messagebox.showinfo(APP, "Run a full scan first - the check tests the devices it found.")
             return
         self.quick_running = True
+        self.telemetry.note("quick_check_manual" if manual else "quick_check_auto")
         known = sorted({ip for d in self.devices if d.get("online") for ip in d.get("ips", [])}, key=core.ip_key)
         do_dhcp = manual or time.time() - self.last_dhcp_probe > 1800
         if do_dhcp:
@@ -2485,6 +2510,29 @@ class App(tk.Tk):
         self._settings()["share_enabled"] = on
         self._save_settings()
         self._ensure_share()
+
+    def _telemetry_toggle(self):
+        self.telemetry.set_enabled(self.var_telemetry.get())
+
+    def _telemetry_save_url(self):
+        self.telemetry.set_admin_url(self.var_telemetry_url.get())
+
+    def _telemetry_preview(self):
+        rep = self.telemetry.pending_report()
+        win = tk.Toplevel(self)
+        win.title("What would be sent right now")
+        txt = tk.Text(win, width=80, height=24, font=("Consolas", 9), wrap="word")
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", json.dumps(rep, indent=2))
+        txt.configure(state="disabled")
+
+    def _telemetry_send_now(self):
+        self._telemetry_save_url()
+
+        def work():
+            ok, detail = self.telemetry.send_now()
+            self.q.put(("call", lambda: messagebox.showinfo(APP, ("Sent." if ok else "Not sent: ") + detail)))
+        threading.Thread(target=work, daemon=True).start()
 
     def enable_reports(self):
         """Lets PC fix scripts report back (also when the phone link is off). Returns the report key."""
@@ -3409,6 +3457,8 @@ class App(tk.Tk):
             self.orgs.close()
             if self.share:
                 self.share.stop()
+            if getattr(self, "telemetry", None):
+                self.telemetry.stop_background()
         except Exception:
             pass
         self.destroy()
