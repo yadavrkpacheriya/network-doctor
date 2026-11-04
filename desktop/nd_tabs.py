@@ -1876,6 +1876,7 @@ class TroubleshootWindow(tk.Toplevel):
         r = self.r = AL.explain(alert["text"], alert["sev"], app.lip, app.gw, getattr(app, "net", ""))
         self.title("Troubleshoot - " + r["title"][:60])
         self.geometry("820x640")
+        self.minsize(700, 500)
         self.transient(app)
         f = ttk.Frame(self, padding=14)
         f.pack(fill="both", expand=True)
@@ -1890,6 +1891,7 @@ class TroubleshootWindow(tk.Toplevel):
         ttk.Label(f, text=r["title"], font=("Segoe UI", 13, "bold"), wraplength=780, justify="left").pack(
             anchor="w", pady=(8, 2))
         ttk.Label(f, text=alert["text"], foreground="#667085", wraplength=780, justify="left").pack(anchor="w")
+        self._build_mentioned(f, alert["text"])
         ttk.Label(f, text=r["why"], wraplength=780, justify="left").pack(anchor="w", pady=(8, 0))
         ttk.Label(f, text="Fix: " + r["fix"], font=("Segoe UI", 10, "bold"), wraplength=780, justify="left").pack(
             anchor="w", pady=(6, 6))
@@ -1934,6 +1936,59 @@ class TroubleshootWindow(tk.Toplevel):
         ttk.Button(bar, text="Re-check now", command=self.recheck).pack(side="right")
         ttk.Button(bar, text="Copy steps", command=self.copy).pack(side="left")
         ttk.Label(bar, textvariable=self.var_res, foreground="#027a48").pack(side="left", padx=8)
+
+    def _build_mentioned(self, parent, text):
+        """A MAC (or several, as in 'top senders AA:.., BB:..') sitting inside the alert's own sentence cannot be
+        selected on its own. List the device(s) it names as real rows instead - name, type, IP, MAC - so finding
+        and copying one is not a copy-paste exercise against a paragraph."""
+        self.mentioned = T.mentioned_devices(text, getattr(self.app, "devices", []))
+        if not self.mentioned:
+            return
+        box = ttk.LabelFrame(parent, text="Device(s) named above", padding=8)
+        box.pack(fill="x", pady=(6, 0))
+        self.tv_m = UI["make_tree"](box, ("name", "type", "ip", "mac", "note"),
+                                    ("Name", "Type", "IP", "MAC", "Note"), (150, 190, 110, 140, 90), None,
+                                    height=min(len(self.mentioned), 4), selectmode="browse")
+        for row in self.mentioned:
+            self.tv_m.insert("", "end", values=(row["name"] or "(unknown)", row["category"], row["ip"], row["mac"],
+                                                row["note"]))
+        self.tv_m.bind("<Double-1>", lambda ev: self._show_mentioned_in_devices())
+        btns = ttk.Frame(box)
+        btns.pack(anchor="w", pady=(6, 0))
+        ttk.Button(btns, text="Copy", command=self._copy_mentioned).pack(side="left")
+        ttk.Button(btns, text="Show in Devices", command=self._show_mentioned_in_devices).pack(side="left", padx=6)
+        ttk.Button(btns, text="Open in browser", command=self._open_mentioned_web).pack(side="left")
+        ttk.Label(box, text="Double-click a row to find it in Devices.", foreground="#667085").pack(anchor="w",
+                                                                                                    pady=(2, 0))
+
+    def _selected_mentioned(self):
+        sel = self.tv_m.selection()
+        if sel:
+            i = self.tv_m.index(sel[0])
+            return self.mentioned[i] if 0 <= i < len(self.mentioned) else None
+        return self.mentioned[0] if self.mentioned else None
+
+    def _copy_mentioned(self):
+        lines = [f"{r['name'] or '(unknown)'}\t{r['category']}\t{r['ip']}\t{r['mac']}\t{r['note']}"
+                for r in self.mentioned]
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(lines))
+
+    def _show_mentioned_in_devices(self):
+        row = self._selected_mentioned()
+        if not row:
+            return
+        self.app.show_tab("devices")
+        self.app.var_q.set(row["mac"] or row["ip"])
+
+    def _open_mentioned_web(self):
+        row = self._selected_mentioned()
+        if not row or not row["ip"]:
+            messagebox.showinfo(APP, "No IP known for this device (it may be offline or not yet scanned).")
+            return
+        d = next((x for x in getattr(self.app, "devices", []) if x.get("mac") == row["mac"]), None) or \
+            {"ip": row["ip"], "ports": []}
+        self.app.open_web(d)
 
     def script(self, a):
         cmd = a["cmd"]

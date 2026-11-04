@@ -1623,3 +1623,45 @@ def undo_for(script):
         elif s.startswith("/ip dns set servers="):
             add("# DNS servers were changed - if you need the old ones back, set them by hand in /ip dns")
     return "\n".join(outs)
+
+
+# ==========================================================================
+# alert text -> real devices (name / type / IP, not just a MAC buried in a sentence)
+_MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?:[:\-][0-9A-Fa-f]{2}){5}\b")
+_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_COUNT_RE = re.compile(r"\s*\((\d+)\)")
+
+
+def mentioned_devices(text, devices):
+    """Every device an alert / troubleshoot text names by MAC or IP, as a list of
+    {'name', 'category', 'ip', 'mac', 'note'} in the order first mentioned - so "top senders
+    AA:BB:... (259), CC:DD:... (50)" becomes rows with a name, type and IP a person can actually search on and
+    copy, instead of a MAC with no way to even select it on its own. A MAC not currently in the device list
+    still gets a row (empty name/type/ip) so it can still be copied and looked for by hand."""
+    if not text or not devices:
+        return []
+    by_mac = {core.norm_mac(d.get("mac")): d for d in devices if d.get("mac")}
+    by_ip = {d.get("ip", ""): d for d in devices if d.get("ip")}
+    seen, out = set(), []
+    for m in _MAC_RE.finditer(text):
+        mac = core.norm_mac(m.group())
+        if not mac or mac in seen:
+            continue
+        seen.add(mac)
+        d = by_mac.get(mac, {})
+        cm = _COUNT_RE.match(text, m.end())
+        out.append({"name": d.get("name") or "", "category": d.get("category") or "not in current device list",
+                    "ip": d.get("ip", ""), "mac": mac, "note": f"{cm.group(1)} pkt/s" if cm else ""})
+    for m in _IP_RE.finditer(text):
+        d = by_ip.get(m.group())
+        if not d:
+            continue
+        mac = core.norm_mac(d.get("mac"))
+        key = mac or f"ip:{m.group()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        cm = _COUNT_RE.match(text, m.end())
+        out.append({"name": d.get("name") or "", "category": d.get("category", ""), "ip": m.group(), "mac": mac,
+                    "note": f"{cm.group(1)} pkt/s" if cm else ""})
+    return out
