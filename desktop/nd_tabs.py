@@ -2061,6 +2061,7 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
     ("alerts_s", "Alerts", "#c2410c", "#ffedd5", [("alerts", "Alerts"), ("problems", "Problems"),
                                                   ("rca", "Root cause"), ("checks", "Health checks")]),
     ("devices_s", "Devices", "#1d4ed8", "#dbeafe", [("devices", "All devices"), ("inventory", "Inventory"),
+                                                    ("sweep", "Login sweep"),
                                                     ("map", "Network map"), ("binding", "IP-MAC binding"),
                                                     ("t_switch", "Switches (SNMP)"), ("t_ports", "Port scanner"),
                                                     ("t_mac", "MAC lookup"), ("t_wol", "Wake-on-LAN")]),

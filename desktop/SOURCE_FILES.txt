@@ -27,3 +27,5 @@ nd_license.py
 nd_bandwidth.py
 nd_bwtab.py
 nd_reset.py
+nd_sweep.py
+nd_sweeptab.py
