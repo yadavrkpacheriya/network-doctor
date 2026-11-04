@@ -77,6 +77,7 @@ class SweepPage:
         ttk.Button(bar2, text="Check phones", command=self.do_phones).pack(side="left", padx=(16, 0))
         ttk.Button(bar2, text="Export CSV", command=self.do_export).pack(side="left", padx=6)
         ttk.Button(bar2, text="Copy 'login refused' list", command=self.copy_refused).pack(side="left")
+        ttk.Button(bar2, text="Open in browser", command=self.open_selected_web).pack(side="left", padx=(16, 0))
 
         filt = ttk.Frame(parent)
         filt.pack(fill="x", pady=(0, 4))
@@ -87,11 +88,18 @@ class SweepPage:
         self.var_filter.trace_add("write", lambda *_: self._redraw())
         self.var_sum = tk.StringVar(value="Give the login(s) above and press Start scan, or Plan to see counts first.")
         ttk.Label(filt, textvariable=self.var_sum, foreground="#667085").pack(side="left", padx=12)
+        ttk.Label(filt, text="Not supported here? Double-click its row (or right-click > Open in browser) to sign "
+                             "in by hand.", foreground="#667085").pack(side="right", padx=4)
 
         self.tv = nd_tabs.UI["make_tree"](
             parent, ("name", "ip", "mac", "type", "method", "result", "login", "model", "serial", "missing", "detail"),
             ("Name", "IP", "MAC", "Type", "Checked as", "Result", "Login #", "Model", "Serial", "Missing data", "Detail"),
             (170, 110, 140, 160, 130, 110, 60, 140, 120, 150, 320), None, selectmode="extended")
+        self.tv.bind("<Double-1>", self.open_selected_web)
+        self.menu = tk.Menu(self.tv, tearoff=False)
+        self.menu.add_command(label="Open in browser (web login)", command=self.open_selected_web)
+        self.menu.add_command(label="Copy IP", command=self.copy_selected_ip)
+        self.tv.bind("<Button-3>", self._popup_menu)
 
         self.ph = ttk.LabelFrame(parent, text="Phones - checked without any login", padding=6)
         self.ph.pack(fill="x", pady=(6, 0))
@@ -211,6 +219,47 @@ class SweepPage:
         self.rows = {}
         for r in self.results:
             self._insert_row(r)
+
+    # ------------------------------------------------------------------ open the device's own web page by hand
+    def _dev_for(self, r):
+        """The full device dict (with its known ports) for a sweep row - login sweep only automates methods it
+        recognises (WMI, ONVIF, Dahua/Hikvision APIs, RouterOS); a device that answers only with a plain web login
+        page comes back 'NOT SUPPORTED' so the person can sign in by hand instead, same as anywhere else in the app."""
+        for d in self.app.devices:
+            if r.get("mac") and d.get("mac") == r["mac"]:
+                return d
+            if d.get("ip") == r.get("ip"):
+                return d
+        return {"ip": r.get("ip", ""), "ports": []}
+
+    def _selected_rows(self):
+        return [self.rows[iid] for iid in self.tv.selection() if iid in self.rows]
+
+    def _popup_menu(self, ev):
+        iid = self.tv.identify_row(ev.y)
+        if iid:
+            if iid not in self.tv.selection():
+                self.tv.selection_set(iid)
+            self.menu.tk_popup(ev.x_root, ev.y_root)
+
+    def open_selected_web(self, event=None):
+        rows = self._selected_rows()
+        if not rows:
+            messagebox.showinfo(APP, "Select a device in the list first (or double-click its row).")
+            return
+        if len(rows) > 5 and not messagebox.askyesno(
+                APP, f"Open {len(rows)} browser tabs, one per selected device?"):
+            return
+        for r in rows:
+            if r.get("ip"):
+                self.app.open_web(self._dev_for(r))
+
+    def copy_selected_ip(self):
+        rows = self._selected_rows()
+        if not rows:
+            return
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(r["ip"] for r in rows if r.get("ip")))
 
     def copy_refused(self):
         bad = S.refused(self.results)
