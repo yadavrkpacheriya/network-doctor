@@ -208,6 +208,50 @@ class Sending(unittest.TestCase):
         self.assertEqual(self.t.pending_report()["counts"], before)
 
 
+class Locking(unittest.TestCase):
+    """set_locked() is the admin-at-this-console override: it forces reporting on and the checkbox cannot
+    turn it off while locked - but nothing about what is sent or shown changes."""
+
+    def test_unlocked_disabled_by_default(self):
+        t, _ = telem()
+        self.assertFalse(t.locked)
+        self.assertFalse(t.enabled)
+
+    def test_locking_forces_enabled_on(self):
+        t, _ = telem()
+        t.set_locked(True)
+        self.assertTrue(t.locked)
+        self.assertTrue(t.enabled)
+
+    def test_set_enabled_is_ignored_while_locked(self):
+        t, _ = telem()
+        t.set_locked(True)
+        t.set_enabled(False)
+        self.assertTrue(t.enabled)  # the attempt to turn it off had no effect
+
+    def test_unlocking_leaves_enabled_as_it_was(self):
+        t, _ = telem()
+        t.set_locked(True)
+        t.set_locked(False)
+        self.assertFalse(t.locked)
+        self.assertTrue(t.enabled)  # still on - unlock did not turn it off, it only freed the switch
+
+    def test_once_unlocked_set_enabled_works_again(self):
+        t, _ = telem()
+        t.set_locked(True)
+        t.set_locked(False)
+        t.set_enabled(False)
+        self.assertFalse(t.enabled)
+
+    def test_locking_does_not_hide_the_admin_address_or_the_pending_report(self):
+        t, _ = telem()
+        t.set_admin_url("https://office.pacheriya.com")
+        t.set_locked(True)
+        t.note("scan")
+        self.assertEqual(t.admin_url(), "https://office.pacheriya.com")
+        self.assertEqual(t.pending_report()["counts"], {"scan": 1})
+
+
 class Hooks(unittest.TestCase):
     def test_sys_excepthook_records_and_calls_through(self):
         t, _ = telem()

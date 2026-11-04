@@ -30,6 +30,10 @@ UA = {"User-Agent": "NetworkDoctor-telemetry", "Content-Type": "application/json
 MAX_CRASHES = 20
 SEND_EVERY = 3600  # seconds between automatic sends while the app runs and this is switched on
 TIMEOUT = 12
+# Shown as the SUGGESTED admin address (pre-filled, but never saved or used until the person explicitly
+# switches reporting on - see NetworkDoctor.py's Setup page). Not a secret: it is the admin's own
+# Remote access tunnel, reachable only once that PC's owner turns Remote access on there too.
+DEFAULT_ADMIN_URL = "https://office.pacheriya.com"
 OWN_FILE_RE = ("nd_", "networkdoctor.py")  # which frame of a traceback is "our" code, for the crash location
 
 
@@ -86,13 +90,34 @@ class Telemetry:
 
     @property
     def enabled(self):
-        return bool(self.store.get("telemetry", {}).get("enabled", False))
+        t = self.store.get("telemetry", {})
+        return True if t.get("locked") else bool(t.get("enabled", False))
+
+    @property
+    def locked(self):
+        """Set at the console by whoever has physical access to THIS PC (the same trust level as every other
+        admin action here - router credentials, licence keys) so a managed fleet PC keeps reporting even if
+        the person using it would rather it didn't. Locking never hides anything: the Setup page still shows
+        it is on, still shows the admin address, and 'What gets sent?' still works - only the switch itself
+        is greyed out. A locked install is always enabled (see `enabled` above)."""
+        return bool(self.store.get("telemetry", {}).get("locked", False))
 
     def set_enabled(self, on):
+        if self.locked:
+            return  # the console is the only way to change this while locked (see set_locked)
         self.store.setdefault("telemetry", {})["enabled"] = bool(on)
         if not on:
             with self.lock:
                 self._counts, self._crashes = {}, []
+        self.save_fn()
+
+    def set_locked(self, on):
+        """Only the console (physical access to this PC) can call this - there is no remote or phone path
+        to it. Locking also switches reporting on; unlocking leaves the enabled flag as it was."""
+        t = self.store.setdefault("telemetry", {})
+        t["locked"] = bool(on)
+        if on:
+            t["enabled"] = True
         self.save_fn()
 
     def admin_url(self):
