@@ -485,6 +485,9 @@ class App(tk.Tk):
         ttk.Checkbutton(top, text="Deep packet tests", variable=self.var_deep).pack(side="left", padx=6)
         self.var_fast = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Fast", variable=self.var_fast).pack(side="left")
+        self.var_allranges = tk.BooleanVar(value=self._settings().get("scan_all_ranges", True))
+        ttk.Checkbutton(top, text="All IP ranges", variable=self.var_allranges, command=self._save_allranges).pack(
+            side="left", padx=6)
         self.var_autoinfo = tk.StringVar(value="Auto checks: starting...")
         ttk.Label(top, textvariable=self.var_autoinfo, foreground="#1f7a3d").pack(side="left", padx=8)
         if core.IS_WIN and not core.is_admin():
@@ -876,10 +879,18 @@ class App(tk.Tk):
         c = RO.from_settings(self._settings(), self.gw)
         if not c:
             return None
+        extra = {}
         try:
             with c:
                 leases = c.leases()
                 arp = c.cmd("/ip/arp/print")
+                # read-only extras for "All IP ranges"; a router without one of them just gives an empty list
+                for key, path in (("addresses", "/ip/address/print"), ("dhcp_networks", "/ip/dhcp-server/network/print"),
+                                  ("hosts", "/interface/bridge/host/print"), ("neighbors", "/ip/neighbor/print")):
+                    try:
+                        extra[key] = c.cmd(path)
+                    except RO.RosError:
+                        extra[key] = []
         except RO.RosError as e:
             return {"error": str(e)}
         out_l = {}
@@ -893,7 +904,7 @@ class App(tk.Tk):
             mac = core.norm_mac(x.get("mac-address", ""))
             if mac and x.get("address") and x.get("invalid") != "true" and not core.is_bad_mac(mac):
                 out_a[x["address"]] = mac
-        return {"leases": out_l, "arp": out_a}
+        return {"leases": out_l, "arp": out_a, **extra}
 
     def router_forget(self):
         self._settings().pop("router_api", None)
@@ -1339,9 +1350,14 @@ class App(tk.Tk):
         self.btn_scan.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
+                "auto_ranges": self.var_allranges.get(),
                 "router_snmp": self._settings().get("router_snmp") or None,
                 "router_fetch": self._router_fetch if RO.from_settings(self._settings(), self.gw) else None}
         threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()
+
+    def _save_allranges(self):
+        self._settings()["scan_all_ranges"] = bool(self.var_allranges.get())
+        self._save_settings()
 
     def stop_scan(self):
         self.stop_ev.set()

@@ -29,3 +29,4 @@ nd_bwtab.py
 nd_reset.py
 nd_sweep.py
 nd_sweeptab.py
+nd_ranges.py
