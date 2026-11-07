@@ -64,7 +64,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.21.3"
+VERSION = "3.22.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -520,6 +520,7 @@ class App(tk.Tk):
 
         self.nav = nd_tabs.SectionNav(self, on_change=self._tab_changed)
         self._tab_home()
+        self._tab_assist()
         self._tab_devices()
         self._tab_map()
         self._tab_monitor()
@@ -595,6 +596,10 @@ class App(tk.Tk):
         f = self.nav.page("home")
         self.M = M
         self.home = nd_home.HomeTab(self, f)
+
+    def _tab_assist(self):
+        f = self.nav.page("assist")
+        self.assist = nd_tabs.AssistantTab(self, f)
 
     def _tab_slow(self):
         f = self.nav.page("slow")
@@ -1180,6 +1185,7 @@ class App(tk.Tk):
             return
         if core.IS_PRO and getattr(self, "defense", None):
             self.defense.gw_ip = self.gw
+            self.defense.own_ip = getattr(self, "lip", "")
             self._scan_watch()
         fs = mon.feed_status()
         self._note_feeds(mon)
@@ -1857,7 +1863,7 @@ class App(tk.Tk):
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
-            self.defense = DF.Defense(self._settings(), self.gw)
+            self.defense = DF.Defense(self._settings(), self.gw, getattr(self, "lip", ""))
             self._portscan_seen = {}
         self.quick_summary = "not run yet"
 

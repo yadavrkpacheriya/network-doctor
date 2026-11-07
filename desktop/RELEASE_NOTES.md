@@ -1,3 +1,24 @@
+## Network Doctor 3.22.0
+
+### New: the Fix Assistant (Assistant tab)
+- A new **Assistant** tab (next to Home). Type a network problem in plain words - "block YouTube on the Wi-Fi",
+  "internet is slow and pages hang", "a camera is open to the internet", "check my network for problems" - and
+  Network Doctor routes it to the right built-in, tested fix and applies it, with **Undo** on every fix. It never
+  invents raw router commands; it only runs fixes the app already ships and has tested.
+
+### Fixes
+- **Your NVR / DVR is no longer blocked with the cameras.** The camera-isolation feature now recognises a recorder
+  even when its name doesn't contain "NVR"/"DVR" - it also reads the model (e.g. Hikvision DS-7xxx), the channel
+  count ("16 CH") and the DVR port label - so the recorder keeps its internet (and your remote NVR viewing keeps
+  working) while only the individual cameras are blocked. You can still mark any device by hand on the Bandwidth
+  page, and a manual choice always wins.
+- **Auto-defense never cuts your own PC, the router, or a switch / AP.** The PC running Network Doctor, the
+  gateway, and the network backbone are now on a permanent "alert only, never cut" list - so a fix can no longer
+  take the Network Doctor PC (e.g. .70) or the network itself off the internet.
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install.
+
 ## Network Doctor 3.21.3
 
 ### Fix in this version

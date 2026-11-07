@@ -54,6 +54,17 @@ class Groups(unittest.TestCase):
         self.assertEqual(g["192.168.0.50"], "other")
         self.assertEqual(g["192.168.0.1"], "infra")
 
+    def test_recorder_detected_without_the_word(self):
+        # NVRs whose name does NOT contain nvr/dvr must still be kept online, via model / channel-count / port label
+        model_nvr = dev("192.168.0.203", core.CAT_CAM, "Office .203", model="DS-7608NI-K2")  # Hikvision NVR model
+        chan_nvr = dev("192.168.0.204", core.CAT_CAM, "Gate .204", services="16CH H.265")      # channel count
+        xmeye = dev("192.168.0.205", core.CAT_CAM, "Front .205", services="XMeye DVR")          # port label
+        plain_cam = dev("192.168.0.206", core.CAT_CAM, "Hikvision Camera .206", model="DS-2CD2042")
+        self.assertEqual(B.group_of(model_nvr), "nvr")
+        self.assertEqual(B.group_of(chan_nvr), "nvr")
+        self.assertEqual(B.group_of(xmeye), "nvr")
+        self.assertEqual(B.group_of(plain_cam), "cam")  # a real camera stays a camera (gets its internet blocked)
+
     def test_override_wins_and_boost_expires(self):
         d = NET[4]
         self.assertEqual(B.group_of(d, over={d["mac"]: "vip"}), "vip")

@@ -23,15 +23,21 @@ GROUPS = ("nvr", "vip", "mobile", "pc", "cam", "infra", "other")
 GROUP_TITLE = {"nvr": "NVR / DVR (remote viewing)", "vip": "VIP PCs (directors, backups, boost)",
                "mobile": "Mobiles / tablets", "pc": "Office PCs", "cam": "CCTV cameras (no internet)",
                "infra": "Router / switches / Wi-Fi", "other": "Printers / IoT / unknown"}
-RECORDER_RE = re.compile(r"\b(dvr|nvr|xvr|recorder)\b", re.I)
+# Recorder signals: the words dvr/nvr/xvr/hvr/cvr/recorder; a Hikvision NVR model (DS-7/8/9xxx, cameras are DS-2);
+# an XMeye/Dahua "DVR"/"NVR" port label; or a channel count ("16 ch", "8 channels") that only a recorder reports.
+RECORDER_RE = re.compile(r"(\b(dvr|nvr|xvr|hvr|cvr|recorder)\b|\bds-[789]\d{2,}|\b\d{1,3}\s*ch(?:annel)?s?\b)", re.I)
 
 
 def is_recorder(d, tag=None):
-    """A CCTV device that records (NVR / DVR) rather than a camera. Name, tag, web title and service text are used;
-    port numbers cannot tell them apart (cameras open 37777 / 8000 too), so the person can override in the page."""
+    """A CCTV device that records (NVR / DVR) rather than a camera. Name, tag, web title, model and service/port text
+    are used. Port numbers alone cannot tell them apart (cameras open 37777 / 8000 too), so the person can always
+    override in the page - a manual choice wins over this guess."""
     t = tag or {}
-    text = " ".join(str(x) for x in (d.get("name"), t.get("name"), d.get("services"), (d.get("http") or {}).get("title")
-                                     if isinstance(d.get("http"), dict) else d.get("http"), d.get("why")) if x)
+    http = d.get("http")
+    parts = [d.get("name"), t.get("name"), d.get("services"), d.get("model"), d.get("vendor"), d.get("why"),
+             (http.get("title") if isinstance(http, dict) else http),
+             (http.get("server") if isinstance(http, dict) else None)]
+    text = " ".join(str(x) for x in parts if x)
     return bool(RECORDER_RE.search(text))
 
 
