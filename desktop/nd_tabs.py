@@ -1798,12 +1798,21 @@ class AlertsTab:
         names = self.names()
         xs = self.items()
         xs.sort(key=lambda x: (x.get("status") != "open", x["prio"], -x["last"]))
+        seen = set()
         for x in xs[:1500]:
             dev = (names.get(x.get("ip")) or "-") + (f"  {x['ip']}" if x.get("ip") else "")
-            iid = tv.insert("", "end", iid=x["id"], text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
-                            values=(AL.PRIO[x["prio"]], dev, x["text"], x["fix"], x.get("count", 1),
-                                    x.get("status", "")),
-                            tags=("fixed",) if x.get("status") == "fixed" else (f"p{x['prio']}",))
+            # a tree row id must be unique; older logs can hold two alerts with the same id (both created in
+            # the same millisecond), so suffix any repeat here. x["id"] itself is untouched, so set_status works.
+            iid = x["id"]
+            n = 0
+            while iid in seen:
+                n += 1
+                iid = f"{x['id']}#{n}"
+            seen.add(iid)
+            tv.insert("", "end", iid=iid, text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
+                      values=(AL.PRIO[x["prio"]], dev, x["text"], x["fix"], x.get("count", 1),
+                              x.get("status", "")),
+                      tags=("fixed",) if x.get("status") == "fixed" else (f"p{x['prio']}",))
             self.rows[iid] = x
         for i in sel:
             if tv.exists(i):

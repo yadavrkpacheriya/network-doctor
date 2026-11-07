@@ -69,6 +69,15 @@ class Log(unittest.TestCase):
         with open(htmlp, encoding="utf-8") as f:
             self.assertIn("<ol>", f.read())
 
+    def test_ids_unique_within_same_millisecond(self):
+        # two different alerts created at the same instant must still get distinct ids, or the
+        # alerts table (which uses the id as the row id) crashes with "Item ... already exists".
+        log = AL.AlertLog(os.path.join(tempfile.mkdtemp(), "alerts.json"))
+        a = log.add("warning", "Loop detected on ether2", "Live monitor", now=1700.5)
+        b = log.add("critical", "IP conflict on 192.168.0.41 - x", "Live monitor", now=1700.5)
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertEqual(len({x["id"] for x in log.items}), len(log.items))
+
 
 if __name__ == "__main__":
     unittest.main()

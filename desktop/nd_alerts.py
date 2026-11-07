@@ -400,7 +400,12 @@ class AlertLog:
                     if x.get("status") == "fixed":
                         x["status"] = "open"
                     return x
-            e = {"id": f"{int(now * 1000)}", "t": now, "last": now, "sev": sev, "text": text[:600],
+            # unique id: the ms timestamp, nudged up if two alerts land in the same millisecond
+            base = int(now * 1000)
+            used = {x["id"] for x in self.items}
+            while str(base) in used:
+                base += 1
+            e = {"id": str(base), "t": now, "last": now, "sev": sev, "text": text[:600],
                  "source": source, "prio": r["prio"], "kind": r["kind"], "title": r["title"][:160],
                  "fix": r["fix"][:300], "ip": _ip_of(text), "count": 1, "status": "open"}
             self.items.append(e)
