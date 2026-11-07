@@ -1,3 +1,20 @@
+## Network Doctor 3.21.3
+
+### Fix in this version
+- **Crash on startup: "Failed to execute script NetworkDoctor ... Item ... already exists".** If two alerts were
+  recorded in the very same millisecond they were given the same internal id, and the Alerts table then refused to
+  show two rows with the same id - which crashed the whole app before it could even open. Alert ids are now always
+  unique, and the Alerts table tolerates any duplicate ids already saved from before, so the app opens normally again.
+
+### If your app is currently crashing on open
+The fix installs through the normal auto-update, but a crash on startup stops the app before it can update itself. To
+get going immediately, either download and run the latest installer from the GitHub releases page, or delete the saved
+alerts file so the app can open (it then auto-updates): press Win+R, paste **%APPDATA%\\NetworkDoctor**, press Enter,
+and delete **alerts.json** (only your alert history is cleared - devices, settings and your licence are untouched).
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install.
+
 ## Network Doctor 3.20.0
 
 ### New in this version
