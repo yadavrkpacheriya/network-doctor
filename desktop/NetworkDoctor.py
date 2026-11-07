@@ -64,7 +64,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.21.3"
+VERSION = "3.22.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -520,6 +520,7 @@ class App(tk.Tk):
 
         self.nav = nd_tabs.SectionNav(self, on_change=self._tab_changed)
         self._tab_home()
+        self._tab_assist()
         self._tab_devices()
         self._tab_map()
         self._tab_monitor()
@@ -595,6 +596,10 @@ class App(tk.Tk):
         f = self.nav.page("home")
         self.M = M
         self.home = nd_home.HomeTab(self, f)
+
+    def _tab_assist(self):
+        f = self.nav.page("assist")
+        self.assist = nd_tabs.AssistantTab(self, f)
 
     def _tab_slow(self):
         f = self.nav.page("slow")
@@ -1180,6 +1185,7 @@ class App(tk.Tk):
             return
         if core.IS_PRO and getattr(self, "defense", None):
             self.defense.gw_ip = self.gw
+            self.defense.own_ip = getattr(self, "lip", "")
             self._scan_watch()
         fs = mon.feed_status()
         self._note_feeds(mon)
@@ -1857,7 +1863,7 @@ class App(tk.Tk):
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
-            self.defense = DF.Defense(self._settings(), self.gw)
+            self.defense = DF.Defense(self._settings(), self.gw, getattr(self, "lip", ""))
             self._portscan_seen = {}
         self.quick_summary = "not run yet"
 
@@ -3073,6 +3079,36 @@ class App(tk.Tk):
             return {"ok": True, "message": "Category saved"}
         return {"ok": False, "message": f"unknown action '{name}'"}
 
+    def _remote_hint(self):
+        """A STABLE address the phone can use from outside the office: the PC's Tailscale IP plus the phone-link
+        port, when Tailscale is running. A Tailscale IP never changes (unlike a Cloudflare quick tunnel, whose
+        address dies when it restarts), so the phone can save it once and it keeps working. Cached for 5 minutes."""
+        now = time.time()
+        c = getattr(self, "_rhint", None)
+        if c and now - c[0] < 300:
+            return c[1]
+        hint = ""
+        try:
+            exe = "tailscale"
+            if core.IS_WIN:
+                alt = r"C:\Program Files\Tailscale\tailscale.exe"
+                if os.path.exists(alt):
+                    exe = alt
+            kw = dict(capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=4, errors="replace")
+            if core.IS_WIN:
+                kw["creationflags"] = 0x08000000
+            out = subprocess.run([exe, "ip", "-4"], **kw).stdout or ""
+            for line in out.splitlines():
+                ip = line.strip()
+                p = ip.split(".")
+                if len(p) == 4 and all(x.isdigit() for x in p) and p[0] == "100":  # 100.x = Tailscale (CGNAT range)
+                    hint = f"http://{ip}:{SH.HTTP_PORT}"
+                    break
+        except Exception:
+            hint = ""
+        self._rhint = (now, hint)
+        return hint
+
     def _snapshot(self):
         """Everything the phone app shows. Runs on the phone-link thread: reads data only, never Tk."""
         mon = self.mon
@@ -3092,7 +3128,8 @@ class App(tk.Tk):
         finds, missing = M.rca_network(mon, list(self.devices), list(self.issues), self.db)
         now = time.time()
         snap = {"pc": socket.gethostname(), "version": VERSION, "time": now, "network": self.net,
-                "gateway": self.gw, "pc_ip": self.lip, "devices": devs, "issues": list(self.issues),
+                "gateway": self.gw, "pc_ip": self.lip, "remote_hint": self._remote_hint(),
+                "devices": devs, "issues": list(self.issues),
                 "checks": [{"name": n, "result": r, "detail": x} for n, r, x in self.checks],
                 "rca": {"findings": finds, "missing": missing},
                 "scan": dict((self.raw or {}).get("meta", {}), tests=None) if self.raw else None,

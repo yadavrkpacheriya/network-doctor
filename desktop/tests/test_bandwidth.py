@@ -54,6 +54,17 @@ class Groups(unittest.TestCase):
         self.assertEqual(g["192.168.0.50"], "other")
         self.assertEqual(g["192.168.0.1"], "infra")
 
+    def test_recorder_detected_without_the_word(self):
+        # NVRs whose name does NOT contain nvr/dvr must still be kept online, via model / channel-count / port label
+        model_nvr = dev("192.168.0.203", core.CAT_CAM, "Office .203", model="DS-7608NI-K2")  # Hikvision NVR model
+        chan_nvr = dev("192.168.0.204", core.CAT_CAM, "Gate .204", services="16CH H.265")      # channel count
+        xmeye = dev("192.168.0.205", core.CAT_CAM, "Front .205", services="XMeye DVR")          # port label
+        plain_cam = dev("192.168.0.206", core.CAT_CAM, "Hikvision Camera .206", model="DS-2CD2042")
+        self.assertEqual(B.group_of(model_nvr), "nvr")
+        self.assertEqual(B.group_of(chan_nvr), "nvr")
+        self.assertEqual(B.group_of(xmeye), "nvr")
+        self.assertEqual(B.group_of(plain_cam), "cam")  # a real camera stays a camera (gets its internet blocked)
+
     def test_override_wins_and_boost_expires(self):
         d = NET[4]
         self.assertEqual(B.group_of(d, over={d["mac"]: "vip"}), "vip")
@@ -130,7 +141,16 @@ class Queues(unittest.TestCase):
         self.assertIn("name=ND-pc-up kind=pcq pcq-classifier=src-address pcq-rate=5M", a)
         self.assertIn("name=ND-pc-dn kind=pcq pcq-classifier=dst-address pcq-rate=5M", a)
         self.assertIn("name=ND-mobile-up kind=pcq pcq-classifier=src-address pcq-rate=4M", a)
-        self.assertIn("name=ND-vip-up kind=pcq pcq-classifier=src-address pcq-rate=20M", a)
+        # VIP / boosted devices are uncapped per device (pcq-rate=0): a boost means full speed
+        self.assertIn("name=ND-vip-up kind=pcq pcq-classifier=src-address pcq-rate=0", a)
+        self.assertIn("name=ND-vip-dn kind=pcq pcq-classifier=dst-address pcq-rate=0", a)
+
+    def test_vip_is_top_priority_and_full_line(self):
+        a, _ = self.build()
+        m = re.search(r"name=ND-VIP .*?priority=(\d)/\d limit-at=\d+M/\d+M max-limit=(\d+)M/", a)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "1")        # top priority, wins contention
+        self.assertEqual(m.group(2), "95")       # ceiling is the whole usable line, not the 5 Mbps pool
 
     def test_empty_groups_give_their_share_to_pcs(self):
         a, _ = self.build(groups={"nvr": ["192.168.0.20"]})

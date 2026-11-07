@@ -12,7 +12,7 @@ import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/tools_screen.dart';
 
-const appVersion = '1.11.0';
+const appVersion = '1.12.0';
 
 void main() {
   // Unhandled errors would otherwise just vanish - no console is open on a phone. Both hooks only

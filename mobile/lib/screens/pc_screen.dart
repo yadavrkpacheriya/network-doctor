@@ -271,6 +271,14 @@ class _PcDashboardState extends State<PcDashboard> {
     _loading = true;
     try {
       final s = await PcLink.state(widget.pc);
+      // The PC advertises a stable remote address (its Tailscale IP). Adopt it automatically when we have none yet,
+      // or when the saved one is an expiring Cloudflare quick-tunnel address - so remote access keeps working
+      // without the user pasting a new address each time.
+      final hint = (s['remote_hint'] ?? '').toString();
+      if (hint.isNotEmpty && hint != widget.pc.remote &&
+          (widget.pc.remote.isEmpty || widget.pc.remote.contains('trycloudflare'))) {
+        await PcLink.setRemote(widget.pc, hint);
+      }
       if (mounted) {
         setState(() {
           _s = s;

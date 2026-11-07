@@ -2120,8 +2120,113 @@ class TroubleshootWindow(tk.Toplevel):
 
 
 # ---------------------------------------------------------------- navigation: coloured sections with sub-tabs
+class AssistantTab:
+    """Plain-language 'Fix Assistant': type a problem, it routes to one of the app's built-in, tested fixes and
+    applies it (with undo). It never runs free-form router commands - only fixes Network Doctor already ships."""
+
+    def __init__(self, app, parent):
+        import nd_assistant as A
+        self.A, self.app = A, app
+        self._last_undo = ""
+        self._last_undo_label = ""
+        self._btns = None
+        self.var_status = tk.StringVar(value="")
+        intro = ('Tell me the problem in your own words and I\'ll fix it using Network Doctor\'s built-in, tested '
+                 'fixes - for example "block YouTube on the Wi-Fi", "internet is slow and pages hang", '
+                 '"a camera is open to the internet", or "check my network for problems". Every fix can be undone.')
+        ttk.Label(parent, text=intro, wraplength=1250, foreground="#344054", padding=(0, 6)).pack(anchor="w")
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        self.var_q = tk.StringVar()
+        e = ttk.Entry(row, textvariable=self.var_q)
+        e.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        e.bind("<Return>", lambda _=None: self._solve())
+        ttk.Button(row, text="Solve it", style="Big.TButton", command=self._solve).pack(side="left")
+        chips = ttk.Frame(parent)
+        chips.pack(fill="x", pady=(0, 6))
+        ttk.Label(chips, text="Try:").pack(side="left")
+        for ex in A.EXAMPLES:
+            ttk.Button(chips, text=ex,
+                       command=lambda x=ex: (self.var_q.set(x), self._solve())).pack(side="left", padx=2)
+        self.out = ttk.Frame(parent)
+        self.out.pack(fill="both", expand=True, pady=6)
+        ttk.Label(self.out, text="Type a problem above and press Solve it.", foreground="#667085").pack(anchor="w")
+
+    def _solve(self):
+        text = self.var_q.get().strip()
+        if not text:
+            return
+        p = self.A.plan(text, getattr(self.app, "net", ""), getattr(self.app, "lip", ""),
+                        getattr(self.app, "gw", ""))
+        for w in self.out.winfo_children():
+            w.destroy()
+        self.var_status.set("")
+        card = ttk.Frame(self.out)
+        card.pack(fill="x", anchor="w")
+        ttk.Label(card, text=p.get("title") or "", font=("Segoe UI", 12, "bold"),
+                  wraplength=1150).pack(anchor="w")
+        if p.get("detail"):
+            ttk.Label(card, text=p["detail"], wraplength=1150, foreground="#344054").pack(anchor="w", pady=(2, 6))
+        kind = p.get("kind")
+        if kind == "sites" and (p.get("sites")):
+            s = p["sites"]
+            ttk.Label(card, text="Sites: " + ", ".join(s[:20]) + (" ..." if len(s) > 20 else ""),
+                      foreground="#667085", wraplength=1150).pack(anchor="w", pady=(0, 4))
+        self._btns = ttk.Frame(card)
+        self._btns.pack(anchor="w", pady=4)
+        if kind == "sites":
+            ttk.Button(self._btns, text="Apply on the router now", style="Big.TButton",
+                       command=lambda: self._apply(p["router_script"], p["title"],
+                                                   p.get("undo_script", ""))).pack(side="left")
+        elif kind == "slow":
+            ttk.Button(self._btns, text="Open the slow-website fix", style="Big.TButton",
+                       command=lambda: self.app.show_tab("slow")).pack(side="left")
+        elif kind == "scan":
+            ttk.Button(self._btns, text="Scan the network now", style="Big.TButton",
+                       command=self._scan).pack(side="left")
+        elif kind == "recipe":
+            ttk.Button(self._btns, text="Troubleshoot & fix", style="Big.TButton",
+                       command=lambda: self._troubleshoot(p["recipe_text"])).pack(side="left")
+        if self._last_undo:
+            ttk.Button(self._btns, text="Undo last fix", command=self._undo).pack(side="left", padx=8)
+        ttk.Label(card, textvariable=self.var_status, foreground="#047857", wraplength=1150).pack(anchor="w",
+                                                                                                  pady=(6, 0))
+
+    def _apply(self, script, label, undo):
+        def done(err):
+            if not err:
+                self.var_status.set("Done: " + label + ("   (you can Undo it)" if undo else ""))
+                if undo:
+                    self._last_undo, self._last_undo_label = undo, label
+                    if self._btns is not None and self._btns.winfo_exists():
+                        ttk.Button(self._btns, text="Undo last fix", command=self._undo).pack(side="left", padx=8)
+        self.app.router_apply(script, label, done)
+
+    def _undo(self):
+        if not self._last_undo:
+            return
+        u, lbl = self._last_undo, self._last_undo_label
+        self._last_undo = ""
+        self.app.router_apply(u, "Undo: " + lbl[:40])
+        self.var_status.set("Undone: " + lbl)
+
+    def _scan(self):
+        try:
+            self.app.start_scan()
+        except Exception:
+            pass
+        self.app.nav.select("alerts")
+
+    def _troubleshoot(self, text):
+        now = time.time()
+        alert = {"id": str(int(now * 1000)), "text": text, "sev": "warning", "t": now, "last": now,
+                 "count": 1, "prio": 2, "ip": "", "fix": "", "status": "open"}
+        TroubleshootWindow(self.app, alert)
+
+
 SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
     ("home", "Home", "#334155", "#e2e8f0", [("home", "Overview")]),
+    ("assist_s", "Assistant", "#0e7490", "#cffafe", [("assist", "Fix Assistant")]),
     ("alerts_s", "Alerts", "#c2410c", "#ffedd5", [("alerts", "Alerts"), ("problems", "Problems"),
                                                   ("rca", "Root cause"), ("checks", "Health checks")]),
     ("devices_s", "Devices", "#1d4ed8", "#dbeafe", [("devices", "All devices"), ("inventory", "Inventory"),
