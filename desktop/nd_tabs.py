@@ -1800,11 +1800,17 @@ class AlertsTab:
         xs.sort(key=lambda x: (x.get("status") != "open", x["prio"], -x["last"]))
         for x in xs[:1500]:
             dev = (names.get(x.get("ip")) or "-") + (f"  {x['ip']}" if x.get("ip") else "")
-            iid = tv.insert("", "end", iid=x["id"], text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
+            iid = str(x["id"])
+            if tv.exists(iid):  # defend against any duplicate id in the log so the table can never crash
+                k = 1
+                while tv.exists(f"{iid}_{k}"):
+                    k += 1
+                iid = f"{iid}_{k}"
+            rid = tv.insert("", "end", iid=iid, text=time.strftime("%d-%b %H:%M:%S", time.localtime(x["t"])),
                             values=(AL.PRIO[x["prio"]], dev, x["text"], x["fix"], x.get("count", 1),
                                     x.get("status", "")),
                             tags=("fixed",) if x.get("status") == "fixed" else (f"p{x['prio']}",))
-            self.rows[iid] = x
+            self.rows[rid] = x
         for i in sel:
             if tv.exists(i):
                 tv.selection_add(i)

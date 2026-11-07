@@ -376,6 +376,25 @@ class AlertLog:
                 self.items = [x for x in json.load(f) if isinstance(x, dict)][-keep:]
         except Exception:
             self.items = []
+        self._ensure_unique_ids()
+
+    def _ensure_unique_ids(self):
+        """Give every alert a unique id. Older logs could hold two alerts with the same
+        millisecond-timestamp id (raised in the same instant), which crashed the alerts table
+        on load ("Item ... already exists"). Reassign any blank or duplicate id to a fresh one."""
+        seen, nxt = set(), 0
+        for x in self.items:
+            try:
+                nxt = max(nxt, int(x.get("id") or 0))
+            except (ValueError, TypeError):
+                pass
+        for x in self.items:
+            i = str(x.get("id") or "")
+            if not i or i in seen:
+                nxt += 1
+                i = str(nxt)
+                x["id"] = i
+            seen.add(i)
 
     def save(self):
         try:
@@ -400,7 +419,11 @@ class AlertLog:
                     if x.get("status") == "fixed":
                         x["status"] = "open"
                     return x
-            e = {"id": f"{int(now * 1000)}", "t": now, "last": now, "sev": sev, "text": text[:600],
+            nid = int(now * 1000)
+            used = {x["id"] for x in self.items}
+            while str(nid) in used:  # never collide with an id already in the log (same-millisecond alerts)
+                nid += 1
+            e = {"id": f"{nid}", "t": now, "last": now, "sev": sev, "text": text[:600],
                  "source": source, "prio": r["prio"], "kind": r["kind"], "title": r["title"][:160],
                  "fix": r["fix"][:300], "ip": _ip_of(text), "count": 1, "status": "open"}
             self.items.append(e)

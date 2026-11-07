@@ -117,3 +117,25 @@ class MtuFix(_ut.TestCase):
         cmd = [x for x in r["auto"] if x["where"] == "router"][0]["cmd"]
         self.assertIn("action=change-mss", cmd)
         self.assertIn("clamp-to-pmtu", cmd)
+
+
+class UniqueIds(_ut.TestCase):
+    def test_dedupe_on_load(self):
+        import json as _json
+        import tempfile as _tf
+        d = _tf.mkdtemp()
+        p = os.path.join(d, "alerts.json")
+        # two alerts sharing the same millisecond id - the shape that crashed the alerts table
+        with open(p, "w", encoding="utf-8") as f:
+            _json.dump([{"id": "1793942496935", "t": 1, "text": "a", "prio": 1},
+                        {"id": "1793942496935", "t": 2, "text": "b", "prio": 1}], f)
+        ids = [x["id"] for x in AL.AlertLog(p).items]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2)  # no duplicates after load
+
+    def test_add_never_collides(self):
+        import tempfile as _tf
+        log = AL.AlertLog(os.path.join(_tf.mkdtemp(), "alerts.json"))
+        a = log.add("warning", "alert one", now=1000.0)
+        b = log.add("warning", "alert two", now=1000.0)  # same millisecond, different text
+        self.assertNotEqual(a["id"], b["id"])
