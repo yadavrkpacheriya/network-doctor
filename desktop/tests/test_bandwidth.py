@@ -141,7 +141,16 @@ class Queues(unittest.TestCase):
         self.assertIn("name=ND-pc-up kind=pcq pcq-classifier=src-address pcq-rate=5M", a)
         self.assertIn("name=ND-pc-dn kind=pcq pcq-classifier=dst-address pcq-rate=5M", a)
         self.assertIn("name=ND-mobile-up kind=pcq pcq-classifier=src-address pcq-rate=4M", a)
-        self.assertIn("name=ND-vip-up kind=pcq pcq-classifier=src-address pcq-rate=20M", a)
+        # VIP / boosted devices are uncapped per device (pcq-rate=0): a boost means full speed
+        self.assertIn("name=ND-vip-up kind=pcq pcq-classifier=src-address pcq-rate=0", a)
+        self.assertIn("name=ND-vip-dn kind=pcq pcq-classifier=dst-address pcq-rate=0", a)
+
+    def test_vip_is_top_priority_and_full_line(self):
+        a, _ = self.build()
+        m = re.search(r"name=ND-VIP .*?priority=(\d)/\d limit-at=\d+M/\d+M max-limit=(\d+)M/", a)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "1")        # top priority, wins contention
+        self.assertEqual(m.group(2), "95")       # ceiling is the whole usable line, not the 5 Mbps pool
 
     def test_empty_groups_give_their_share_to_pcs(self):
         a, _ = self.build(groups={"nvr": ["192.168.0.20"]})

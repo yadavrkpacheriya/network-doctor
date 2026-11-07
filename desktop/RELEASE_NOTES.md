@@ -7,6 +7,15 @@
   invents raw router commands; it only runs fixes the app already ships and has tested.
 
 ### Fixes
+- **Remote access from the phone now uses a stable address automatically.** A Cloudflare quick-tunnel address
+  changes every time it restarts, so the one saved on the phone kept going dead ("address not available"). When
+  Tailscale is running on the PC, Network Doctor now advertises its permanent Tailscale address to the phone, and
+  the phone adopts it by itself while on the office Wi-Fi - so reaching the PC from home keeps working without
+  pasting a new address each time.
+- **VIP / Boost now means FULL SPEED, not a 5 Mbps cap.** Marking a device VIP, or pressing Boost, used to put it in
+  a small 5 Mbps pool - so a "boosted" PC actually ran slower. A VIP / boosted device is now top priority and
+  uncapped: it can use the whole internet line, so Windows updates and large downloads finish fast. Everyone else
+  still keeps their fair share, and the VIP's guaranteed floor is unchanged.
 - **Your NVR / DVR is no longer blocked with the cameras.** The camera-isolation feature now recognises a recorder
   even when its name doesn't contain "NVR"/"DVR" - it also reads the model (e.g. Hikvision DS-7xxx), the channel
   count ("16 CH") and the DVR port label - so the recorder keeps its internet (and your remote NVR viewing keeps

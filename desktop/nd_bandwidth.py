@@ -186,14 +186,17 @@ def queue_commands(plan, groups, lan, wan=""):
     a = [_header("bandwidth plan"),
          f"# Line {pl['down']:g} down / {pl['up']:g} up Mbps -> plan on {pl['line']:g}, usable {usable:g} "
          f"({pl['headroom']:g}% kept free).",
-         f"# NVR/DVR {pl['nvr']:g} | VIP {pl['vip']:g} (each up to {pl['vip_user']:g}) | mobiles {pl['mobile']:g} "
+         f"# NVR/DVR {pl['nvr']:g} | VIP {pl['vip']:g} guaranteed, no cap (full line when needed) | mobiles {pl['mobile']:g} "
          f"(each up to {pl['mobile_user']:g}) | office PCs {pc_at:g} (each up to {pl['pc_user']:g}).",
          "# Order matters: the first queue that matches a device wins. NVR, VIP, mobiles, then all other devices.",
          "/queue simple", ':do {remove [find where name~"^ND-"]} on-error={}',
          "/queue type", ':do {remove [find where name~"^ND-"]} on-error={}']
     for key, per in (("vip", pl["vip_user"]), ("mobile", pl["mobile_user"]), ("pc", pl["pc_user"])):
-        a.append(f"add name=ND-{key}-up kind=pcq pcq-classifier=src-address pcq-rate={rate(per)}")
-        a.append(f"add name=ND-{key}-dn kind=pcq pcq-classifier=dst-address pcq-rate={rate(per)}")
+        # VIP / boosted devices are NOT capped per device (pcq-rate=0 = no limit): a boost must give full speed so
+        # updates and big downloads finish fast. Mobiles and office PCs keep their fair per-device share.
+        pr = "0" if key == "vip" else rate(per)
+        a.append(f"add name=ND-{key}-up kind=pcq pcq-classifier=src-address pcq-rate={pr}")
+        a.append(f"add name=ND-{key}-dn kind=pcq pcq-classifier=dst-address pcq-rate={pr}")
     a += ["/queue simple",
           f'add name=ND-TOTAL target={lan} max-limit={rate(usable)}/{rate(usable)} comment="ND: whole internet line"']
 
@@ -205,7 +208,9 @@ def queue_commands(plan, groups, lan, wan=""):
         child("ND-NVR", groups["nvr"], 1, pl["nvr"], mx(pl["nvr"]), "default-small/default-small",
               "NVR / DVR remote viewing")
     if counts["vip"]:
-        child("ND-VIP", groups["vip"], 2, pl["vip"], mx(pl["vip"]), "ND-vip-up/ND-vip-dn", "VIP / boosted PCs")
+        # VIP = top priority (1) and the whole line as its ceiling, so a boosted device can use full speed when it
+        # needs it; limit-at keeps a guaranteed floor so it never drops below pl["vip"].
+        child("ND-VIP", groups["vip"], 1, pl["vip"], usable, "ND-vip-up/ND-vip-dn", "VIP / boosted PCs (full speed)")
     if counts["mobile"]:
         child("ND-MOBILE", groups["mobile"], 4, pl["mobile"], mx(pl["mobile"]), "ND-mobile-up/ND-mobile-dn", "mobiles")
     child("ND-PC", None, 3, pc_at, mx(pc_at), "ND-pc-up/ND-pc-dn", "office PCs and everything else")

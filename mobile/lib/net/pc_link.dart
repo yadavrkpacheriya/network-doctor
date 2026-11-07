@@ -82,6 +82,17 @@ class PcLink {
     }
   }
 
+  /// Save a remote address for this PC and keep the in-memory copy in step. Used to auto-adopt the stable address
+  /// the PC advertises (its Tailscale IP), so the user never has to paste an address that later expires.
+  static Future<void> setRemote(PairedPc pc, String remote) async {
+    pc.remote = remote;
+    final pcs = await load();
+    for (final p in pcs) {
+      if (p.token == pc.token) p.remote = remote;
+    }
+    await save(pcs);
+  }
+
   /// Demo / automatic screen test: --dart-define=ND_DEMO=true shows a recorded office PC (no network needed).
   static const demo = bool.fromEnvironment('ND_DEMO');
   static PairedPc demoPc() => PairedPc(name: 'OFFICE-PC (demo)', host: 'demo', port: pcPort, token: 'demo');
