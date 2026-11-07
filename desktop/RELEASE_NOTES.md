@@ -1,3 +1,16 @@
+## Network Doctor 3.21.3
+
+### Fix in this version
+- **App could fail to start with "Item ... already exists" (Unhandled exception in script).** When two alerts were
+  raised in the same instant they could be saved with the same internal id, and the Alerts table then refused to
+  load them, crashing the whole app on startup. Alert ids are now always unique: any duplicate already saved in
+  your alerts log is repaired automatically the next time the app opens, new alerts can never collide, and the
+  Alerts table is hardened so a stray duplicate can never crash it again.
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install - this build repairs the alerts log on the
+next start.
+
 ## Network Doctor 3.20.0
 
 ### New in this version
