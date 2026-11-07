@@ -44,7 +44,9 @@ DEFAULT = {
 }
 # Devices that are only ever ALERTED on, never cut off by themselves. A phone changes IP / uses a private Wi-Fi
 # address all the time, so a block keyed on its IP or MAC lands on the wrong phone and cuts many phones.
-NEVER_ACT_CATEGORIES = ("Phones / tablets",)
+# Phones (IP/MAC changes) and the network backbone (cutting a router/switch/AP takes everyone down) are never
+# auto-cut. CAT_NET from nd_core is the backbone category.
+NEVER_ACT_CATEGORIES = ("Phones / tablets", "Network equipment (router / switch / AP)")
 # Threats that describe the ROUTER (a port-forward, a rogue DHCP), not what a device does: cutting whoever holds
 # the IP now is wrong. Only a camera / recorder may be cut for 'exposed' (it really is open to the internet).
 ROUTER_SIDE = {"exposed": ("CCTV cameras / DVR / NVR",)}
@@ -73,9 +75,10 @@ def level_at_most(allowed, wanted):
 class Defense:
     """Holds the state of auto-actions. The app calls consider() for each live threat and the engine decides."""
 
-    def __init__(self, settings, gw_ip=""):
+    def __init__(self, settings, gw_ip="", own_ip=""):
         self.settings = settings
         self.gw_ip = gw_ip
+        self.own_ip = own_ip  # the PC running Network Doctor - never cut it off, or you lose the tool too
         self.last = {}        # (kind, key) -> time, for the cooldown
         self.active = {}      # key(ip/mac) -> {"kind","level","ip","mac","name","t","by"} currently contained
 
@@ -89,13 +92,17 @@ class Defense:
 
     def excluded(self, ip, mac):
         c = self.config()
-        if ip and (ip == self.gw_ip or ip in c["exclude_ips"]):
+        # never auto-act on the gateway, the Network Doctor PC itself, or a device the person listed
+        if ip and (ip == self.gw_ip or ip == self.own_ip or ip in c["exclude_ips"]):
             return True
         return bool(mac and mac.upper() in {m.upper() for m in c["exclude_macs"]})
 
     def guard(self, kind, category=""):
         """Why this threat must only be alerted on (never auto-acted), or '' when acting is allowed."""
         if category in NEVER_ACT_CATEGORIES:
+            if "Network equipment" in category:
+                return "the network backbone (router / switch / AP) is never cut off automatically - it would take " \
+                       "the whole network down"
             return "phones and tablets are never cut off automatically (their IP / MAC changes)"
         only = ROUTER_SIDE.get(kind)
         if only and category not in only:

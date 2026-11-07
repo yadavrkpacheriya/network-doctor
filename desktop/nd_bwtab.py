@@ -24,7 +24,7 @@ PLAN_FIELDS = (("down", "Internet download (Mbps)"), ("up", "Internet upload (Mb
                ("headroom", "Keep free (%)"), ("nvr", "NVR / DVR remote viewing (Mbps)"),
                ("mobile", "All mobiles together (Mbps)"), ("vip", "VIP PCs guaranteed (Mbps)"),
                ("pc_user", "Each office PC up to (Mbps)"), ("mobile_user", "Each mobile up to (Mbps)"),
-               ("vip_user", "Each VIP PC up to (Mbps)"))
+               ("vip_user", "VIP guaranteed floor each (Mbps)"))
 BOOST_HOURS = {"1 hour": 1, "4 hours": 4, "8 hours": 8, "Until I stop it": None}
 
 
@@ -384,7 +384,7 @@ class BandwidthPage:
         self.tv_live.delete(*self.tv_live.get_children())
         cnt = getattr(self, "counts", {})
         given = sum(pl[k] for k in ("nvr", "vip", "mobile") if cnt.get(k))
-        for g, pool, each in (("nvr", pl["nvr"], "-"), ("vip", pl["vip"], f"{pl['vip_user']:g} Mbps"),
+        for g, pool, each in (("nvr", pl["nvr"], "-"), ("vip", pl["vip"], "full line (uncapped)"),
                               ("mobile", pl["mobile"], f"{pl['mobile_user']:g} Mbps"),
                               ("pc", round(pl["usable"] - given, 2), f"{pl['pc_user']:g} Mbps"),
                               ("cam", 0, "no internet")):

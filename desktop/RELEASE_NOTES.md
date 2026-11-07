@@ -1,3 +1,33 @@
+## Network Doctor 3.22.0
+
+### New: the Fix Assistant (Assistant tab)
+- A new **Assistant** tab (next to Home). Type a network problem in plain words - "block YouTube on the Wi-Fi",
+  "internet is slow and pages hang", "a camera is open to the internet", "check my network for problems" - and
+  Network Doctor routes it to the right built-in, tested fix and applies it, with **Undo** on every fix. It never
+  invents raw router commands; it only runs fixes the app already ships and has tested.
+
+### Fixes
+- **Remote access from the phone now uses a stable address automatically.** A Cloudflare quick-tunnel address
+  changes every time it restarts, so the one saved on the phone kept going dead ("address not available"). When
+  Tailscale is running on the PC, Network Doctor now advertises its permanent Tailscale address to the phone, and
+  the phone adopts it by itself while on the office Wi-Fi - so reaching the PC from home keeps working without
+  pasting a new address each time.
+- **VIP / Boost now means FULL SPEED, not a 5 Mbps cap.** Marking a device VIP, or pressing Boost, used to put it in
+  a small 5 Mbps pool - so a "boosted" PC actually ran slower. A VIP / boosted device is now top priority and
+  uncapped: it can use the whole internet line, so Windows updates and large downloads finish fast. Everyone else
+  still keeps their fair share, and the VIP's guaranteed floor is unchanged.
+- **Your NVR / DVR is no longer blocked with the cameras.** The camera-isolation feature now recognises a recorder
+  even when its name doesn't contain "NVR"/"DVR" - it also reads the model (e.g. Hikvision DS-7xxx), the channel
+  count ("16 CH") and the DVR port label - so the recorder keeps its internet (and your remote NVR viewing keeps
+  working) while only the individual cameras are blocked. You can still mark any device by hand on the Bandwidth
+  page, and a manual choice always wins.
+- **Auto-defense never cuts your own PC, the router, or a switch / AP.** The PC running Network Doctor, the
+  gateway, and the network backbone are now on a permanent "alert only, never cut" list - so a fix can no longer
+  take the Network Doctor PC (e.g. .70) or the network itself off the internet.
+
+### Reminder
+Close and reopen Network Doctor once to let the auto-update install.
+
 ## Network Doctor 3.21.3
 
 ### Fix in this version
