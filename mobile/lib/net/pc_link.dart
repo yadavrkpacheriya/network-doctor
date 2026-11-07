@@ -159,7 +159,7 @@ class PcLink {
     if (pc.host == 'demo') {
       return Map<String, dynamic>.from(jsonDecode(await rootBundle.loadString('assets/demo_state.json')) as Map);
     }
-    final r = await _send(() => http.get(pc.uri('/api/state'), headers: _h(pc)), 'load data');
+    final r = await _withFallback((base) => http.get(base, headers: _h(pc)), pc, '/api/state', 'load data');
     if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
@@ -167,7 +167,7 @@ class PcLink {
 
   static Future<String> startScan(PairedPc pc) async {
     if (pc.host == 'demo') return '(demo) scan started';
-    final r = await _send(() => http.post(pc.uri('/api/scan'), headers: _h(pc)), 'start a scan');
+    final r = await _withFallback((base) => http.post(base, headers: _h(pc)), pc, '/api/scan', 'start a scan');
     if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
     return ((jsonDecode(r.body) as Map)['result'] ?? '').toString();
   }
@@ -184,10 +184,12 @@ class PcLink {
           ? {'ok': true, 'done': true, 'text': '(demo) the office PC would show the result here'}
           : {'ok': true, 'message': '(demo) $action sent to the office PC'};
     }
-    final r = await _send(
-        () => http.post(pc.uri('/api/action'),
+    final r = await _withFallback(
+        (base) => http.post(base,
             headers: {..._h(pc), 'Content-Type': 'application/json'},
             body: jsonEncode({'action': action, 'args': args})),
+        pc,
+        '/api/action',
         'reach the PC');
     if (r.statusCode == 404) {
       throw PcError('The PC app is too old for this - update Network Doctor on the PC (3.16 or newer).');
@@ -240,6 +242,70 @@ class PcLink {
   static Future<Map<String, dynamic>> hello2(PairedPc pc) async {
     final r = await _send(() => http.get(pc.uri('/api/hello')), 'reach the PC');
     return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  /// Sends a request to the PC against the best address, and recovers when it can't be reached:
+  ///  - tries the LAN first (or the remote address if we last succeeded there);
+  ///  - on a connection failure, transparently tries the OTHER address, so remote access kicks in by
+  ///    itself when the phone leaves the office Wi-Fi, and the LAN is used again when it comes back;
+  ///  - if neither answers, the PC's LAN IP may have changed, so it rediscovers the PC on the Wi-Fi,
+  ///    updates the saved address, and retries once.
+  /// [build] turns a base URI (already including the path) into the actual GET/POST request.
+  static Future<http.Response> _withFallback(
+      Future<http.Response> Function(Uri base) build, PairedPc pc, String path, String what) async {
+    final lan = Uri.parse('http://${pc.host}:${pc.port}$path');
+    final rem = pc.remote.isEmpty ? null : pc.uriVia(path, true);
+    final preferRemote = viaRemote.contains(pc.host) && rem != null;
+    final tries = <MapEntry<Uri, bool>>[];
+    if (preferRemote) {
+      tries.add(MapEntry(rem!, true));
+      tries.add(MapEntry(lan, false));
+    } else {
+      tries.add(MapEntry(lan, false));
+      if (rem != null) tries.add(MapEntry(rem, true));
+    }
+    PcError? last;
+    for (final t in tries) {
+      try {
+        final r = await _send(() => build(t.key), what);
+        if (t.value) {
+          viaRemote.add(pc.host);
+        } else {
+          viaRemote.remove(pc.host);
+        }
+        return r;
+      } on PcError catch (e) {
+        last = e;
+      }
+    }
+    // Neither address connected: the PC's LAN IP may have changed - rediscover it and retry once.
+    try {
+      final found = await discover();
+      FoundPc? pick;
+      for (final f in found) {
+        if (f.name == pc.name) {
+          pick = f;
+          break;
+        }
+      }
+      if (pick == null && found.isNotEmpty) pick = found.first;
+      if (pick != null) {
+        final np = pick;
+        pc.host = np.host;
+        pc.port = np.port;
+        viaRemote.remove(pc.host);
+        final pcs = await load();
+        for (final p in pcs) {
+          if (p.token == pc.token) {
+            p.host = np.host;
+            p.port = np.port;
+          }
+        }
+        await save(pcs);
+        return await _send(() => build(Uri.parse('http://${pc.host}:${pc.port}$path')), what);
+      }
+    } catch (_) {}
+    throw last ?? PcError('Could not $what.');
   }
 
   static Future<http.Response> _send(Future<http.Response> Function() f, String what) async {

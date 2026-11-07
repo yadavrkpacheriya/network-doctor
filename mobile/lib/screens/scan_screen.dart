@@ -6,6 +6,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../net/model.dart';
 import '../net/probe.dart';
 import '../net/scanner.dart';
+import '../net/speedtest.dart';
 import '../net/telemetry.dart';
 import '../net/wifi_security.dart';
 import 'common.dart';
@@ -33,6 +34,11 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   final List<double?> _gwPing = [];
   late final Ticker _gwTicker = Ticker(const Duration(seconds: 2), _pingGateway);
 
+  SpeedTest? _speed;
+  double _mbps = 0;
+  bool _speedRunning = false;
+  String _speedErr = '';
+
   @override
   bool get wantKeepAlive => true;
 
@@ -46,7 +52,34 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   void dispose() {
     _gwTicker.stop();
     _scanner?.cancel();
+    _speed?.cancel();
     super.dispose();
+  }
+
+  /// Live download-speed test. Works on Wi-Fi or mobile data (unlike the device scan).
+  Future<void> _runSpeed() async {
+    if (_speedRunning) {
+      _speed?.cancel();
+      return;
+    }
+    final s = SpeedTest();
+    setState(() {
+      _speed = s;
+      _speedRunning = true;
+      _mbps = 0;
+      _speedErr = '';
+    });
+    Telemetry.instance.note('speed_test');
+    final result = await s.downloadMbps(onProgress: (m, sec) {
+      if (mounted) setState(() => _mbps = m);
+    });
+    if (!mounted) return;
+    setState(() {
+      _speedRunning = false;
+      _speed = null;
+      _mbps = result;
+      if (result <= 0) _speedErr = 'Could not measure - this network may have no internet.';
+    });
   }
 
   Future<void> _readWifi() async {
@@ -186,6 +219,35 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
             if (_error.isNotEmpty) Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(_error, style: TextStyle(color: Colors.red.shade700)),
+            ),
+          ]),
+        ),
+      ),
+      Card(
+        margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(children: [
+            Icon(Icons.speed, color: _mbps > 0 && !_speedRunning ? Colors.green.shade700 : null),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  _speedRunning
+                      ? 'Testing...  ${_mbps.toStringAsFixed(1)} Mbps'
+                      : (_mbps > 0 ? 'Download  ${_mbps.toStringAsFixed(1)} Mbps' : 'Internet speed'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                if (_speedErr.isNotEmpty)
+                  Text(_speedErr, style: TextStyle(color: Colors.red.shade700, fontSize: 12))
+                else if (!_speedRunning && _mbps == 0)
+                  Text('Live download speed - works on Wi-Fi or mobile data',
+                      style: Theme.of(context).textTheme.bodySmall),
+              ]),
+            ),
+            FilledButton.tonal(
+              onPressed: _runSpeed,
+              child: Text(_speedRunning ? 'Stop' : 'Test'),
             ),
           ]),
         ),
