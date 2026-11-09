@@ -752,7 +752,8 @@ class FixScriptDialog(tk.Toplevel):
                           "shared folder, or a domain login script). It asks for administrator rights itself.",
                   wraplength=560, justify="left").pack(anchor="w", pady=(0, 8))
         self.v = {k: tk.BooleanVar(value=val) for k, val in
-                  (("random_off", True), ("renew", True), ("lock_gw", False), ("report", True), ("daily", True))}
+                  (("random_off", True), ("renew", True), ("lock_gw", False), ("report", True), ("daily", True),
+                   ("maint", False))}
         ttk.Checkbutton(f, text="Turn off random (private) MAC addresses for Wi-Fi - the PC keeps one MAC",
                         variable=self.v["random_off"]).pack(anchor="w")
         row = ttk.Frame(f)
@@ -772,6 +773,10 @@ class FixScriptDialog(tk.Toplevel):
                                 f"to this Network Doctor ({app.lip}) - fills the Inventory and tags it on the map", variable=self.v["report"]).pack(anchor="w")
         ttk.Checkbutton(f, text="Keep the details up to date: the PC reports again every day by itself (a small Windows "
                                 "task; the Undo script removes it)", variable=self.v["daily"]).pack(anchor="w", padx=(20, 0))
+        ttk.Checkbutton(f, text="Weekly disk maintenance (Sundays 3am): Windows' own TRIM on an SSD or defrag on a "
+                                "spinning disk, plus an online health check - never a live repair or a forced "
+                                "defrag while someone is using the PC; the Undo script removes the task",
+                        variable=self.v["maint"]).pack(anchor="w")
         ttk.Label(f, text="\nFor an unattended login script choose 'switch to automatic' or 'leave it' (nobody is "
                           "there to answer). Run from \\\\server\\share or a local copy - not a mapped drive letter, "
                           "which disappears when Windows asks for admin rights.", wraplength=560, foreground="#667085",
@@ -784,7 +789,7 @@ class FixScriptDialog(tk.Toplevel):
 
     def inventory_only(self):
         """Only read the PC details (RAM, SSD, printers, antivirus...) and report them; no network changes."""
-        for k in ("random_off", "renew", "lock_gw"):
+        for k in ("random_off", "renew", "lock_gw", "maint"):
             self.v[k].set(False)
         self.v["report"].set(True)
         self.v["daily"].set(True)
