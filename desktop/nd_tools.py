@@ -1745,3 +1745,19 @@ def mentioned_devices(text, devices):
         out.append({"name": d.get("name") or "", "category": d.get("category", ""), "ip": m.group(), "mac": mac,
                     "note": f"{cm.group(1)} pkt/s" if cm else ""})
     return out
+
+
+# ==========================================================================
+# mass disconnect - several watched devices going dark within minutes of each other
+def mass_disconnect(down_since, now, window=300, min_count=3):
+    """down_since: {name: down_since_timestamp} for every watched device currently down. Returns the names
+    that went down within `window` seconds of the most recent one, when at least `min_count` of them did -
+    several critical devices failing within a few minutes of each other usually means a shared switch, AP,
+    router or power strip failed, not that each one happened to break on its own at the same moment. A device
+    that has been down for hours before the others is never swept into a fresh cluster. Returns [] when
+    there's no such cluster (too few devices down, or they went down too far apart in time)."""
+    if len(down_since) < min_count:
+        return []
+    latest = max(down_since.values())
+    cluster = sorted(name for name, t in down_since.items() if latest - t <= window)
+    return cluster if len(cluster) >= min_count else []

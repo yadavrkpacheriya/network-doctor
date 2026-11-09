@@ -182,6 +182,22 @@ class Usage(unittest.TestCase):
         self.assertIn("Website firewall", busy["action"])
         self.assertIn("not work", titles)
 
+    def test_device_far_above_its_own_normal_is_tagged_for_alerting(self):
+        """3.22.5: this insight (not the others) is tagged kind="device_spike" with dev/day, so
+        NetworkDoctor.py's _usage_spike_check() can turn just this one into a real alert, once per device
+        per day, without guessing at it from the title text."""
+        import datetime as dt
+        for back in range(6, -1, -1):
+            day = dt.date.today() - dt.timedelta(days=back)
+            t = time.mktime((day.year, day.month, day.day, 10, 0, 0, 0, 0, -1))
+            self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 5_000_000, False, now=t)
+        self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 3_000_000_000, False, now=time.time())
+        spikes = [i for i in self.s.insights() if i.get("kind") == "device_spike"]
+        self.assertEqual(len(spikes), 1)
+        self.assertEqual(spikes[0]["dev"], "AA:00:00:00:00:01")
+        self.assertEqual(spikes[0]["day"], dt.date.today().isoformat())
+        self.assertIn("ACC-PC", spikes[0]["title"])
+
     def test_dashboard_html(self):
         self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 1000, False)
         html = U.dashboard_html(self.s, 30)

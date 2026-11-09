@@ -933,7 +933,8 @@ class UsageStore:
                             "text": f"About {per_day[last] / max(statistics.mean(hist), 1):.0f} times its usual "
                                     f"daily use. Mostly: {top}.",
                             "action": "Check what runs on it (Analyse in the Devices tab). A backup, update or video "
-                                      "download all day - limit its speed (Commands > Limit the speed of one device)."})
+                                      "download all day - limit its speed (Commands > Limit the speed of one device).",
+                            "kind": "device_spike", "dev": dev, "day": last})
         # one device eats a large part of the line
         dev_total = collections.Counter({d: sum(v.values()) for d, v in dev_day.items()})
         if dev_total and len(dev_total) >= 3:
