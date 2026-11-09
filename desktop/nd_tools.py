@@ -6,6 +6,7 @@ PC fix script and the command library. Pure logic only (no window code) so it ca
 
 import csv
 import io
+import ipaddress
 import os
 import re
 import socket
@@ -1623,6 +1624,41 @@ def undo_for(script):
         elif s.startswith("/ip dns set servers="):
             add("# DNS servers were changed - if you need the old ones back, set them by hand in /ip dns")
     return "\n".join(outs)
+
+
+# ==========================================================================
+# click-a-column-header sort, shared by every list in the app (NetworkDoctor.py's make_tree wires this in)
+_NUM_CELL_RE = re.compile(r"^(-?[\d,]+(?:\.\d+)?)\s*(ms|s|%|mbps|kbps|gbps|mb|gb|kb|pkt/s)?$", re.I)
+
+
+def tree_sort_key(text):
+    """Sort key for one list cell's displayed text, so clicking a column header sorts the way a person expects:
+    an IP address by its real value (192.168.0.9 before 192.168.0.80, not after - plain text sorting puts '8'
+    before '9'), a plain number (with common units like 'ms', '%', 'Mbps' or thousands commas) numerically, and
+    anything else as case-insensitive text. Numbers/IPs always sort before text within the same column so the
+    two groups do not interleave oddly."""
+    s = (text or "").strip()
+    if not s:
+        return (1, "")
+    try:
+        return (0, int(ipaddress.ip_address(s)))
+    except ValueError:
+        pass
+    m = _NUM_CELL_RE.match(s)
+    if m:
+        try:
+            return (0, float(m.group(1).replace(",", "")))
+        except ValueError:
+            pass
+    return (1, s.lower())
+
+
+def sorted_order(rows, reverse=False):
+    """rows: [(row_id, cell_text), ...] for one column, in whatever order a list currently shows them. Returns
+    the row_ids in the order a click on that column's header should put them - the pure, Tk-free half of the
+    click-to-sort feature every list in the app shares (the window code just re-reads this to reposition its
+    own rows; nothing about the sort decision itself needs a real window to test)."""
+    return [rid for rid, _ in sorted(rows, key=lambda r: tree_sort_key(r[1]), reverse=reverse)]
 
 
 # ==========================================================================
