@@ -985,15 +985,19 @@ def reporter_ps(url, key):
 
 
 def pc_fix_script(opts, gw, gw_mac, report_url, report_key):
-    """opts: random_off, renew, lock_gw, report (booleans); to_dhcp: "ask" / "yes" / "no".
+    """opts: random_off, renew, lock_gw, report, maint (booleans); to_dhcp: "ask" / "yes" / "no".
     Use to_dhcp "yes" or "no" when the script runs unattended (login script), "ask" when a person runs it.
+    maint: a weekly Windows task that runs Optimize-Volume (Windows itself picks TRIM for an SSD, defrag for a
+    spinning disk - never both) and Repair-Volume -Scan (an online NTFS health check that does not dismount the
+    drive). On purpose this never runs chkdsk's own live repair or a forced defrag while the PC is in use - a
+    disk found to need more than that is left for a person to decide on, not fixed automatically.
     Returns (fix_cmd, undo_cmd)."""
     b = lambda k: "$true" if opts.get(k) else "$false"
     to_dhcp = opts.get("to_dhcp") if opts.get("to_dhcp") in ("ask", "yes", "no") else ("ask" if opts.get("to_dhcp") else "no")
     gw_dash = (gw_mac or "").replace(":", "-").lower()
     ps = f"""
 $ErrorActionPreference = 'Continue'
-$opt = @{{ RandomOff = {b('random_off')}; ToDhcp = '{to_dhcp}'; Renew = {b('renew')}; LockGw = {b('lock_gw')}; Report = {b('report')}; Daily = {b('daily')} }}
+$opt = @{{ RandomOff = {b('random_off')}; ToDhcp = '{to_dhcp}'; Renew = {b('renew')}; LockGw = {b('lock_gw')}; Report = {b('report')}; Daily = {b('daily')}; Maint = {b('maint')} }}
 $GW = '{gw or ''}'; $GWMAC = '{gw_dash}'
 $URL = '{report_url}'; $KEY = '{report_key}'
 $REPORTER = @'
@@ -1057,6 +1061,25 @@ if ($opt.LockGw -and $GW -and $GWMAC) {{
     }}
 }}
 
+if ($opt.Maint) {{
+    Write-Host "5. Setting up weekly disk maintenance (TRIM / defrag + an online health check only)..."
+    $maint = @'
+foreach ($d in (Get-Volume -ErrorAction SilentlyContinue | Where-Object {{ $_.DriveType -eq 'Fixed' -and $_.DriveLetter }})) {{
+    Optimize-Volume -DriveLetter $d.DriveLetter -Verbose -ErrorAction SilentlyContinue  # Windows itself picks TRIM (SSD) or defrag (HDD) - never both, never forced
+    Repair-Volume -DriveLetter $d.DriveLetter -Scan -ErrorAction SilentlyContinue | Out-Null  # an online scan only - never dismounts the drive or repairs it live
+}}
+'@
+    $dir = Join-Path $env:ProgramData 'NetworkDoctor'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $mscr = Join-Path $dir 'nd-maintenance.ps1'
+    Set-Content -Path $mscr -Encoding UTF8 -Value $maint
+    $mact = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$mscr`""
+    $mtrg = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3am
+    $mset = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    Register-ScheduledTask -TaskName 'Network Doctor weekly maintenance' -Action $mact -Trigger $mtrg -Settings $mset -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+    [void]$done.Add("weekly disk maintenance scheduled (task 'Network Doctor weekly maintenance', Sundays 3am - TRIM/defrag + an online health check, never a live repair)")
+}}
+
 {ADS_PS}
 if ($opt.Report -and $URL) {{
 {HW_PS}
@@ -1097,7 +1120,8 @@ foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-
 }}
 if ($GW) {{ foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {{ netsh interface ipv4 delete neighbors interface="$($a.Name)" address=$GW 2>$null | Out-Null }} }}
 Unregister-ScheduledTask -TaskName 'Network Doctor report' -Confirm:$false -ErrorAction SilentlyContinue
-Write-Host "Undo finished: Wi-Fi MAC back to Windows settings, router MAC lock removed, daily report task removed." -ForegroundColor Green
+Unregister-ScheduledTask -TaskName 'Network Doctor weekly maintenance' -Confirm:$false -ErrorAction SilentlyContinue
+Write-Host "Undo finished: Wi-Fi MAC back to Windows settings, router MAC lock removed, daily report and weekly maintenance tasks removed." -ForegroundColor Green
 """
     return (_cmd_launcher("Network Doctor - PC network fix") + _crlf(ps),
             _cmd_launcher("Network Doctor - undo PC network fix") + _crlf(undo))
