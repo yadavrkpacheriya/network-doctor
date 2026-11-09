@@ -1661,6 +1661,26 @@ def sorted_order(rows, reverse=False):
     return [rid for rid, _ in sorted(rows, key=lambda r: tree_sort_key(r[1]), reverse=reverse)]
 
 
+def row_matches(query, cell_texts):
+    """True if every word typed into a list's "Find" box appears somewhere in that row (case-insensitive,
+    matched as substrings, order and column don't matter - "192 cam" finds a row with IP 192.168.0.31 and name
+    "Cam 31" just as well as "cam 192"). An empty / blank query matches every row."""
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    hay = " ".join(str(c) for c in cell_texts if c is not None).lower()
+    return all(word in hay for word in q.split())
+
+
+def filtered_rows(rows, query):
+    """rows: [(row_id, [cell_text, ...]), ...] for every row a list has ever held (even one a filter is
+    currently hiding), in the order each was first added. Returns the row_ids that should be shown for the
+    given "Find" box text, in that same order - the pure, Tk-free half of the quick-filter feature every list
+    in the app can share (the window code just re-reads this to decide what to detach/reattach; nothing about
+    the filter decision itself needs a real window to test)."""
+    return [rid for rid, cells in rows if row_matches(query, cells)]
+
+
 # ==========================================================================
 # alert text -> real devices (name / type / IP, not just a MAC buried in a sentence)
 _MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?:[:\-][0-9A-Fa-f]{2}){5}\b")

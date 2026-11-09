@@ -117,7 +117,7 @@ class AutoDefensePage:
                   font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(8, 2))
         self.tv = UI["make_tree"](f, ("ip", "mac", "kind", "level", "by"),
                                   ("IP", "MAC", "Why", "Action", "By"), (110, 140, 160, 90, 110),
-                                  first=("Device", 170))
+                                  first=("Device", 170), search=True)
         ttk.Button(f, text="Release selected device", command=self.release).pack(anchor="w", pady=4)
         self.load()
 
@@ -536,7 +536,7 @@ class AuditPage:
             core.DATA_DIR + "/pro")).pack(side="left", padx=4)
         self.tv = UI["make_tree"](f, ("user", "role", "action", "detail", "result", "ip"),
                                   ("User", "Role", "Action", "Detail", "Result", "From"),
-                                  (110, 80, 110, 300, 140, 110), first=("Time", 150))
+                                  (110, 80, 110, 300, 140, 110), first=("Time", 150), search=True)
         self.refresh()
 
     def refresh(self):
@@ -670,7 +670,7 @@ class TelemetryPage:
         ttk.Label(bar, textvariable=self.var_count, foreground="#344054").pack(side="left", padx=10)
         self.tv = UI["make_tree"](f, ("kind", "version", "platform", "events", "errors", "from"),
                                   ("Kind", "Version", "Platform", "Feature uses", "Errors / crashes", "From"),
-                                  (70, 80, 240, 100, 110, 120), first=("Received  /  install id", 190))
+                                  (70, 80, 240, 100, 110, 120), first=("Received  /  install id", 190), search=True)
         self.tv.bind("<Double-1>", self._show_detail)
         self._rows = {}
         self.refresh()

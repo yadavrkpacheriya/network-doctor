@@ -122,7 +122,7 @@ class BandwidthPage:
                   foreground="#667085").pack(side="left", padx=8)
         self.tv = nd_tabs.UI["make_tree"](f, ("name", "ip", "mac", "group", "note"),
                                           ("Name", "IP", "MAC address", "Group", "Note"), (220, 120, 150, 230, 380),
-                                          None, selectmode="extended")
+                                          None, selectmode="extended", search=True)
         self.var_cnt = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.var_cnt, foreground="#667085").pack(anchor="w", pady=(4, 0))
 
@@ -478,7 +478,7 @@ class BandwidthPage:
             ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
         self.tv_ip = nd_tabs.UI["make_tree"](f, ("group", "name", "now", "new", "act", "why"),
                                              ("Group", "Name", "IP now", "IP to use", "Action", "Note"),
-                                             (200, 200, 120, 120, 90, 420), None)
+                                             (200, 200, 120, 120, 90, 420), None, search=True)
         self.txt_i = nd_tabs.UI["text_box"](f)
         self.txt_i.configure(font=("Consolas", 9), height=7)
 
