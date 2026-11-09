@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.4"
+VERSION = "3.22.5"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -511,6 +511,7 @@ class App(tk.Tk):
         self._nb_count = 0
         self._auto_init()
         self.watch_state = {}
+        self._mass_cool = 0.0   # time.time() of the last "mass disconnect" alert (15 min cooldown while it persists)
         self.watch_wake = threading.Event()
         self.alive = True
         self._build()
@@ -1180,6 +1181,9 @@ class App(tk.Tk):
                 self._daily_update()
             if time.time() - getattr(self, "_self_inv_t", 0) > 86400:
                 self._self_inventory()
+            if time.time() - getattr(self, "_usage_insight_t", 0) > 86400:
+                self._usage_insight_t = time.time()
+                self._usage_spike_check()
             if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
@@ -2160,6 +2164,23 @@ class App(tk.Tk):
         if self.var_alerts.get() and time.time() >= self.alert_mute_until:
             self._popup(sev, text)
 
+    def _usage_spike_check(self):
+        """Once a day: a device using several times its own normal daily amount (nd_usage.insights()'s
+        "device_spike" entries) becomes a real alert, not just a line on the Usage tab nobody necessarily
+        visits - the same "far above its own normal" check, just surfaced where problems already get noticed."""
+        if not getattr(self, "usage", None):
+            return
+        now = time.time()
+        for i in self.usage.insights():
+            if i.get("kind") != "device_spike":
+                continue
+            key = f"usage_spike:{i['dev']}:{i['day']}"
+            if key in self.alerts_active:
+                continue
+            self.alerts_active[key] = {"title": i["title"], "sev": i["sev"], "first": now, "last": now,
+                                       "source": "Usage insights"}
+            self._raise_alert(i["sev"], i["title"], [i["text"], i["action"]], "Usage insights")
+
     def _record_alert(self, sev, text, source):
         """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""
         try:
@@ -2625,6 +2646,15 @@ class App(tk.Tk):
                     self.alerts_active[f"watch:{mac}"] = {"title": title, "sev": "critical", "first": now,
                                                           "last": now, "source": "Device watch"}
                     self._raise_alert("critical", title, [hint], "Device watch")
+        down_since = {v["name"]: v["down_since"] for v in self.watch_state.values() if v.get("down_since")}
+        cluster = T.mass_disconnect(down_since, now)
+        if cluster and now - self._mass_cool > 900:  # once per 15 min while the outage persists, not every 30 s
+            self._mass_cool = now
+            title = f"Possible shared failure: {len(cluster)} watched devices went offline within a few minutes"
+            self._raise_alert("critical", title,
+                               [f"{', '.join(cluster)} - check what they share (same switch, AP, power strip, or "
+                                "a router / firmware restart) rather than fixing each one separately"],
+                               "Device watch")
         self._auto_label()
         try:
             if self.nav.current() == "t_watch":
