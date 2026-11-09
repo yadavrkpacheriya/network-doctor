@@ -24,6 +24,41 @@ import nd_tools as T
 
 APP = "Network Doctor"
 
+
+# ------------------------------------------------------------------ website firewall / DNS name learning
+# Shared between the Tools tab's manual "Start firewall" button (one DnsFilter, stops when the page/app closes)
+# and the persistent one Setup can keep running across restarts (NetworkDoctor.py's App.dnsfilter) - both load
+# and build from the exact same settings file, so turning one on shows the other's state too.
+def fw_load():
+    try:
+        with open(DF.SETTINGS, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def fw_save(cfg):
+    try:
+        os.makedirs(core.DATA_DIR, exist_ok=True)
+        with open(DF.SETTINGS, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=1)
+    except OSError:
+        pass
+
+
+def build_dns_filter(cfg=None):
+    """A DnsFilter ready to .start(), built from the saved website-firewall settings (categories downloaded,
+    blocked/allowed lists, safe search) - or sane defaults if nothing was ever saved."""
+    cfg = cfg if cfg is not None else fw_load()
+    blocked = set(cfg.get("blocked", []))
+    for key in cfg.get("categories", ["ads", "adult", "gambling"]):
+        try:
+            blocked |= DF.load_category(key)
+        except Exception:
+            pass
+    return DF.DnsFilter(blocked=blocked, allowed=cfg.get("allowed", []), safe_search=cfg.get("safe_search", True))
+
+
 TOOLS = [
     ("watch", "Critical devices (alert if down)",
      "Ping the devices the office cannot work without (router, server, ERP PC, DVR, switches) every 30 seconds. "
@@ -774,19 +809,10 @@ class ToolsTab:
         self._out_box(f, "website")
 
     def _fw_load(self):
-        try:
-            with open(DF.SETTINGS, encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError):
-            return {}
+        return fw_load()
 
     def _fw_save(self, cfg):
-        try:
-            os.makedirs(core.DATA_DIR, exist_ok=True)
-            with open(DF.SETTINGS, "w", encoding="utf-8") as fh:
-                json.dump(cfg, fh, indent=1)
-        except OSError:
-            pass
+        fw_save(cfg)
 
     def _router_block_sites(self, remove=False):
         """Block (or unblock) the chosen site groups + 'Also block' list on the router itself, so the whole
@@ -828,6 +854,10 @@ class ToolsTab:
             blocked |= names
             out(f"  {DF.CATEGORIES[key][0]}: {len(names):,} sites")
         out(f"  Your own list: {len(cfg['blocked'])} sites, always allowed: {len(cfg['allowed'])}")
+        if getattr(self.app, "dnsfilter", None):
+            out("\nThe website filter is already running permanently (Setup > 'Always learn website names'). "
+                "Its own live counts are shown there; no need to start a second one here.", "warn")
+            return
         try:
             fw = DF.DnsFilter(blocked=blocked, allowed=cfg["allowed"], safe_search=cfg["safe_search"]).start()
         except OSError as e:
