@@ -43,6 +43,7 @@ import nd_home
 import nd_bwtab
 import nd_sweeptab
 import nd_telemetry as TL
+import nd_dnsfilter as DNSF
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -64,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.0"
+VERSION = "3.22.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -364,6 +365,10 @@ class DeviceWindow(tk.Toplevel):
                                 f"(checked against {app.threat.status}).\n", "ok")
             t.insert("end", "\nNote: HTTPS hides exact web pages; names come from the address owner, its DNS name "
                             "and the port used.\n", "mute")
+            if not (app.usage and (app.usage.ip_name or app.usage.dev_ip_name)):
+                t.insert("end", "Generic names (Akamai CDN, Google services...) instead of the real site? Website "
+                                "names are not being learned yet - turn on Setup > 'Always learn website names' "
+                                "(and point the router's DHCP DNS at this PC) to see the real ones.\n", "warn")
         if self.local_apps is not None:
             t.insert("end", "\nPrograms on this PC with internet connections now\n", "h")
             for name, n, ips in self.local_apps[:15]:
@@ -451,6 +456,8 @@ class App(tk.Tk):
         self.share = None
         if self.var_share.get() or self._settings().get("reports_enabled"):
             self.after(1200, self._ensure_share)
+        if self._settings().get("dnsfilter_always_on"):
+            self.after(1500, lambda: self.dns_filter_start(announce=False))
         self._self_inv_t = time.time() - 86400 + 45  # this PC's own inventory 45 s after start, then daily
         self.after(20000, self._daily_update)  # checks now only if today's 15:00 check was missed
         self.after(3000, self._after_update_note)
@@ -848,6 +855,23 @@ class App(tk.Tk):
                           "it on from this console - only someone sitting at this PC can unlock it - but never "
                           "hides it; this page keeps showing it is on.", foreground="#667085", wraplength=1100,
                   justify="left").pack(anchor="w", padx=8, pady=(0, 6))
+        dnsf = ttk.LabelFrame(f, text="Website names & filtering", padding=(8, 4))
+        dnsf.pack(fill="x", pady=(0, 6))
+        self.var_dnsfilter = tk.BooleanVar(value=bool(st.get("dnsfilter_always_on")))
+        ttk.Checkbutton(dnsf, text="Always learn website names / filter sites (keeps running across restarts)",
+                        variable=self.var_dnsfilter, command=self._dnsfilter_toggle).pack(side="left")
+        self.var_dnsfilter_info = tk.StringVar(value="")
+        ttk.Label(dnsf, textvariable=self.var_dnsfilter_info, foreground="#5b21b6").pack(side="left", padx=12)
+        ttk.Button(dnsf, text="Tools tab (block lists, categories)",
+                   command=lambda: self.show_tab("tools")).pack(side="left", padx=(8, 0))
+        self._dnsfilter_info_refresh()
+        ip = self.lip or "this PC's IP"
+        ttk.Label(f, text=f"Devices in 'Analyse' / Usage that only show a generic owner (Akamai CDN, Google "
+                          f"services...) have not had their real website name learned yet - Network Doctor learns "
+                          f"it by answering each device's own DNS look-ups. To get the real names (and be able "
+                          f"to filter sites): turn this on, AND set the router's DHCP DNS server to {ip} (Tools "
+                          f"tab has the exact place). Needs this PC kept on and administrator rights (port 53).",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(0, 6))
         ro = ttk.LabelFrame(f, text="Router login (optional) - lets Network Doctor apply its own changes on a MikroTik "
                                     "and run router commands", padding=(8, 4))
         ro.pack(fill="x", pady=(0, 6))
@@ -1096,6 +1120,10 @@ class App(tk.Tk):
             pass
         try:
             self._share_label()
+        except Exception:
+            pass
+        try:
+            self._dnsfilter_info_refresh()
         except Exception:
             pass
         try:
@@ -1645,6 +1673,45 @@ class App(tk.Tk):
         webbrowser.open(("https" if port in (443, 8443) else "http") + f"://{d['ip']}" +
                         ("" if port in (80, 443) else f":{port}"))
 
+    # ------------------------------------------------------------------ website filter / name learning (persistent)
+    def dns_filter_start(self, announce=False):
+        """Starts the website filter as a permanent background service (survives app restarts, unlike the
+        Tools tab's manual 'Start firewall' which stops when that page closes) - this is also how Network Doctor
+        learns real website/app names (Analyse a device, Usage tab) instead of only the generic address owner
+        ('Akamai CDN', 'Google services'): every look-up it answers feeds nd_usage.UsageStore.dns_seen()."""
+        if self.dnsfilter:
+            return True
+        try:
+            fw = nd_toolstab.build_dns_filter().start()
+        except OSError as e:
+            self.dnsfilter = None
+            if announce:
+                messagebox.showerror(APP, f"Could not start the website filter on port 53 ({e}).\n\nAnother DNS "
+                                          "service runs on this PC (Internet Connection Sharing, a VPN, Docker...), "
+                                          "or Network Doctor needs administrator rights.")
+            return False
+        if self.usage:
+            fw.on_answer = self.usage.dns_seen
+        self.dnsfilter = fw
+        return True
+
+    def dns_filter_stop(self):
+        if self.dnsfilter:
+            self.dnsfilter.stop()
+            self.dnsfilter = None
+
+    def dns_filter_toggle(self, on, announce=True):
+        """Setup checkbox: 'on' persists across restarts via settings; starting can fail (port 53 busy / no admin
+        rights), in which case the setting is NOT saved as on, so the app does not keep silently retrying forever."""
+        if on:
+            ok = self.dns_filter_start(announce=announce)
+            self._settings()["dnsfilter_always_on"] = ok
+        else:
+            self.dns_filter_stop()
+            self._settings()["dnsfilter_always_on"] = False
+        self._save_settings()
+        return self.dnsfilter is not None
+
     def trace(self, d):
         cmd = ["tracert", "-d", "-w", "700", "-h", "15", d["ip"]] if core.IS_WIN else ["traceroute", "-n", d["ip"]]
         CommandWindow(self, f"Traceroute {d['ip']}", cmd)
@@ -1860,6 +1927,7 @@ class App(tk.Tk):
         self.telemetry.install_hook()
         self.telemetry.install_tk_hook(self)
         self.telemetry.start_background()
+        self.dnsfilter = None
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
@@ -2551,6 +2619,24 @@ class App(tk.Tk):
             self._telemetry_save_url()  # commit whatever address is shown now, same as turning it on by hand
         self.telemetry.set_locked(not locked)
         self._telemetry_lock_refresh()
+
+    def _dnsfilter_toggle(self):
+        on = self.dns_filter_toggle(self.var_dnsfilter.get(), announce=True)
+        self.var_dnsfilter.set(on)
+        self._dnsfilter_info_refresh()
+
+    def _dnsfilter_info_refresh(self):
+        if not hasattr(self, "var_dnsfilter_info"):
+            return
+        if not self.dnsfilter:
+            self.var_dnsfilter_info.set("off" if not self.var_dnsfilter.get() else "")
+            return
+        snap = self.dnsfilter.snapshot()
+        if snap["queries"]:
+            self.var_dnsfilter_info.set(f"on - {snap['queries']:,} look-ups from {len(snap['clients'])} "
+                                        f"device(s), {snap['blocked']:,} blocked")
+        else:
+            self.var_dnsfilter_info.set("on - no device uses this PC as its DNS server yet (set it on the router)")
 
     def _telemetry_preview(self):
         rep = self.telemetry.pending_report()
@@ -3525,6 +3611,8 @@ class App(tk.Tk):
                 self.share.stop()
             if getattr(self, "telemetry", None):
                 self.telemetry.stop_background()
+            if getattr(self, "dnsfilter", None):
+                self.dnsfilter.stop()
         except Exception:
             pass
         self.destroy()

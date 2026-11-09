@@ -599,6 +599,22 @@ class TrafficStore:
         n = _ip_int(ip)
         return n is not None and any(lo <= n <= hi for lo, hi in self.ranges)
 
+    def is_noise(self, ip):
+        """255.255.255.255, a subnet's own broadcast address (x.x.x.255 for a /24), or multicast (224.0.0.0/4) -
+        never a real internet peer, however its port number happens to read. Without this, a broadcast such as
+        SSDP/WS-Discovery/NetBIOS that happens to land on a port also used by BitTorrent (51413, 6881, 6889) was
+        being recorded as the device 'downloading a torrent from 255.255.255.255' - a LAN broadcast can never
+        actually be an internet download, so it was never real P2P traffic to begin with."""
+        if ip == "255.255.255.255":
+            return True
+        try:
+            if ipaddress.ip_address(ip).is_multicast:
+                return True
+        except ValueError:
+            return False
+        n = _ip_int(ip)
+        return n is not None and any(n == hi for _, hi in self.ranges)
+
     def _d(self, ip):
         d = self.dev.get(ip)
         if d is None:
@@ -619,6 +635,8 @@ class TrafficStore:
             self.last = now
             if sl and dl:
                 return  # LAN-to-LAN routed traffic, not internet usage
+            if self.is_noise(dst) or self.is_noise(src):
+                return  # a broadcast/multicast packet is never a real internet destination
             if sl:  # LAN device sending to the internet
                 lan, remote, rport, lport, up = src, dst, dport, sport, True
                 pub = f.get("post_sport") or sport
