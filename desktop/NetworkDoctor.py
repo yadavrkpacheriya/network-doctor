@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.1"
+VERSION = "3.22.2"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -82,17 +82,39 @@ def setup_tags(tv):
     tv.tag_configure("hot", foreground="#5b21b6", background="#f3ecff")
 
 
+def tree_sort(tv, col, heads):
+    """Click-a-column-header sort, shared by every list in the app. Ascending on the first click of a column,
+    descending on a second click of the same one; only ever reorders the rows currently attached (a
+    filtered-out row stays filtered out), and shows a small arrow on the active column so sorted-by is never
+    a guess."""
+    rev = not tv._sort["rev"] if tv._sort["col"] == col else False
+    cell = (lambda iid: tv.item(iid, "text")) if col == "#0" else (lambda iid: tv.set(iid, col))
+    kids = list(tv.get_children(""))
+    order = T.sorted_order([(iid, cell(iid)) for iid in kids], reverse=rev)
+    for i, iid in enumerate(order):
+        tv.move(iid, "", i)
+    tv._sort["col"], tv._sort["rev"] = col, rev
+    for c, base in heads.items():
+        tv.heading(c, text=base + ((" ▼" if rev else " ▲") if c == col else ""))
+
+
 def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse"):
     fr = ttk.Frame(parent)
     fr.pack(fill="both", expand=True)
     kw = {"height": height} if height else {}
     tv = ttk.Treeview(fr, columns=cols, show="tree headings" if first else "headings", selectmode=selectmode, **kw)
+    tv._sort = {"col": None, "rev": False}
+    head_text = {}
     if first:
         tv.heading("#0", text=first[0])
         tv.column("#0", width=first[1], stretch=False)
+        head_text["#0"] = first[0]
     for c, h, w in zip(cols, heads, widths):
         tv.heading(c, text=h)
         tv.column(c, width=w, stretch=(c == cols[-1]))
+        head_text[c] = h
+    for c in head_text:
+        tv.heading(c, command=lambda c=c: tree_sort(tv, c, head_text))
     ys = ttk.Scrollbar(fr, orient="vertical", command=tv.yview)
     xs = ttk.Scrollbar(fr, orient="horizontal", command=tv.xview)
     tv.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
