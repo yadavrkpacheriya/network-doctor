@@ -483,7 +483,7 @@ class BindingTab:
         pw.add(b, weight=2)
         self.tv = UI["make_tree"](a, ("bind", "name", "dept", "ip", "mac", "type", "note"),
                                   ("Bind", "Name", "Department", "IP", "MAC", "IP type now", "Note"),
-                                  (50, 200, 130, 115, 140, 110, 420), first=None)
+                                  (50, 200, 130, 115, 140, 110, 420), first=None, search=True)
         self.tv.bind("<Button-1>", self.toggle)
         self.tv.bind("<Double-1>", self.edit_ip)
         self.want = {}  # mac -> IP chosen by the user for the reservation
@@ -1418,7 +1418,7 @@ class AppListDialog(tk.Toplevel):
         fr.pack(fill="both", expand=True)
         self.tv = UI["make_tree"](fr, ("group", "cat", "builtin", "depts", "domains"),
                                   ("Group", "Category now", "Built-in", "Per department", "Websites (endings)"),
-                                  (150, 105, 95, 190, 560), first=("App", 210))
+                                  (150, 105, 95, 190, 560), first=("App", 210), search=True)
         self.fill()
 
     def fill(self):

@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.2"
+VERSION = "3.22.3"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -98,7 +98,50 @@ def tree_sort(tv, col, heads):
         tv.heading(c, text=base + ((" ▼" if rev else " ▲") if c == col else ""))
 
 
-def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse"):
+def tree_filter(tv, query):
+    """Free-text "Find" box, shared by every list that opts into search=True in make_tree(): a row is shown
+    only while every typed word matches somewhere in it (across every column). Clearing the box shows every
+    row again, in the order it was first added - sort order is not remembered across a filter, the same
+    simplification nd_sweeptab.py's own Show: filter already makes."""
+    cols = tv["columns"]
+    rows = [(iid, [tv.item(iid, "text")] + [tv.set(iid, c) for c in cols]) for iid in tv._all_rows if tv.exists(iid)]
+    want = T.filtered_rows(rows, query)
+    for iid in tv.get_children(""):
+        tv.detach(iid)
+    for i, iid in enumerate(want):
+        tv.reattach(iid, "", i)
+
+
+def _wire_search(tv):
+    """Tracks every row a list ever held (tv._all_rows), even while a filter has hidden some of them, by
+    wrapping insert/delete on this one Treeview - so the list's own "clear everything, then redraw" refresh
+    (the pattern every page already uses) still clears rows a filter is currently hiding instead of leaking
+    them, and a cleared filter can bring every row back."""
+    tv._all_rows = []
+    real_insert, real_delete = tv.insert, tv.delete
+
+    def _insert(parent="", index="end", **kw):
+        iid = real_insert(parent, index, **kw)
+        tv._all_rows.append(iid)
+        return iid
+
+    def _delete(*iids):
+        ids = set(iids)
+        if ids == set(tv.get_children("")):
+            ids = set(tv._all_rows)  # a filter may be hiding rows "get_children()" can't see - drop those too
+        real_delete(*ids)
+        tv._all_rows = [i for i in tv._all_rows if i not in ids]
+
+    tv.insert, tv.delete = _insert, _delete
+
+
+def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse", search=False):
+    if search:
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x")
+        ttk.Label(bar, text="Find:").pack(side="left")
+        var_q = tk.StringVar()
+        ttk.Entry(bar, textvariable=var_q, width=28).pack(side="left", padx=(4, 0))
     fr = ttk.Frame(parent)
     fr.pack(fill="both", expand=True)
     kw = {"height": height} if height else {}
@@ -124,6 +167,9 @@ def make_tree(parent, cols, heads, widths, first, height=None, selectmode="brows
     fr.rowconfigure(0, weight=1)
     fr.columnconfigure(0, weight=1)
     setup_tags(tv)
+    if search:
+        _wire_search(tv)
+        var_q.trace_add("write", lambda *_a: tree_filter(tv, var_q.get()))
     return tv
 
 

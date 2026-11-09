@@ -260,7 +260,8 @@ class ToolsTab:
         ttk.Button(row, text="Watch router + all network equipment", command=self._watch_gear).pack(side="left", padx=8)
         self.wt = nd_tabs.UI["make_tree"](f, ("ip", "status", "up", "rtt", "downs", "since", "where"),
                                           ("IP", "Status", "Up (24 h)", "Last ping", "Times down", "Down since / last down",
-                                           "Connected to"), (115, 120, 85, 80, 95, 170, 220), first=("Device", 220))
+                                           "Connected to"), (115, 120, 85, 80, 95, 170, 220), first=("Device", 220),
+                                          search=True)
         ttk.Label(f, text="You can also tick 'Watch' in Tag... for any device. Watching works while Network Doctor runs "
                           "(turn on Setup > Start with Windows on the monitoring PC).", foreground="#667085").pack(
             anchor="w", pady=4)
@@ -1366,7 +1367,8 @@ class ToolsTab:
         pw.add(det, weight=2)
         cols = T.INV_COLS[1:]
         self.inv_tv = nd_tabs.UI["make_tree"](fr, tuple(c[0] for c in cols), tuple(c[1] for c in cols),
-                                             tuple(c[2] for c in cols), first=(T.INV_COLS[0][1], T.INV_COLS[0][2]))
+                                             tuple(c[2] for c in cols), first=(T.INV_COLS[0][1], T.INV_COLS[0][2]),
+                                             search=True)
         self.inv_tv.tag_configure("warn", foreground="#b42318")
         self.inv_tv.bind("<Double-1>", lambda e: self._inv_tag())
         self.inv_tv.bind("<<TreeviewSelect>>", lambda e: self._inv_detail())
