@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.23.10"
+VERSION = "3.23.11"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -3552,7 +3552,10 @@ class App(tk.Tk):
             self.check_updates(True)
 
     def _update_mode(self, code=False):
-        if core.IS_STORE or U.is_packaged_install():  # each is kept current by its own installer, not by us
+        # Microsoft Store keeps its package current by itself; the .deb install updates itself through
+        # pkexec (see apply_deb in nd_update.py) *if* pkexec is available - only fall back to "off" (manual
+        # 'sudo apt install') when that mechanism genuinely isn't there to use.
+        if core.IS_STORE or (U.is_packaged_install() and not U.pkexec_available()):
             return "off" if code else next(k for k, v in self.UPDATE_MODES.items() if v == "off")
         st = self._settings()
         m = st.get("update_mode")
@@ -3567,12 +3570,13 @@ class App(tk.Tk):
                 messagebox.showinfo(APP, "This copy is from the Microsoft Store: the Store installs new versions "
                                          "by itself (Microsoft Store > Library > Get updates).")
             return
-        if U.is_packaged_install():
+        if U.is_packaged_install() and not U.pkexec_available():
             self.var_upd.set(f"Version {VERSION} - update with a new .deb")
             if not auto:
-                messagebox.showinfo(APP, "This copy was installed from the .deb package: download the newest "
-                                         "NetworkDoctor_*_amd64.deb from the Releases page and install it with "
-                                         "'sudo apt install ./NetworkDoctor_*_amd64.deb' (or dpkg -i) to update.")
+                messagebox.showinfo(APP, "This copy was installed from the .deb package, and automatic updates "
+                                         "need 'pkexec' (policykit-1), which isn't installed here: download the "
+                                         "newest NetworkDoctor_*_amd64.deb from the Releases page and install it "
+                                         "with 'sudo apt install ./NetworkDoctor_*_amd64.deb' (or dpkg -i) instead.")
             return
         """auto=True: the scheduled check (daily at 15:00). auto=False: the user pressed a button."""
         if auto and self._update_mode(True) == "off":
@@ -3627,8 +3631,10 @@ class App(tk.Tk):
 
     def _ask_update(self, info):
         notes = info["notes"][:900] or "(no release notes)"
+        extra = ("\n\n(This installs the new .deb with 'pkexec' - you'll see your desktop's own password "
+                 "prompt.)" if U.is_packaged_install() else "")
         r = messagebox.askyesnocancel(
-            APP, f"Network Doctor {info['version']} is available - you have {VERSION}.\n\n{notes}\n\n"
+            APP, f"Network Doctor {info['version']} is available - you have {VERSION}.\n\n{notes}{extra}\n\n"
                  "Update now?\n\nYes = update and restart   No = later   Cancel = skip this version")
         if r is True:
             self.update_now()
