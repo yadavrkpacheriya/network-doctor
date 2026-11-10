@@ -7,10 +7,11 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 | Platform | Status | Get it |
 |---|---|---|
 | Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
-| macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Linux (x86-64, Ubuntu/Debian) | **Available** - full features, installs properly (app menu, icon, start at login) | `NetworkDoctor_*_amd64.deb` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Android | **Test version** - phone scan, Tools (ping, switch details over SNMP, speed test, port scan, DNS, Wake-on-LAN, subnet calculator) + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
-| Google Play, Microsoft Store, signed Mac | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
+| Google Play, Microsoft Store | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
+
+macOS builds are currently paused (Windows, Linux and Android only) - the last Mac build remains on older [releases](https://github.com/yadavrkpacheriya/network-doctor/releases) if needed.
 
 ## Install (Windows)
 
@@ -19,12 +20,6 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
    - If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app is not code-signed.
    - The app asks for Administrator permission. It needs this for the full IP-conflict and loop tests.
 3. You don't need to install anything else. Python is **not** needed.
-
-## Install (Mac)
-
-1. Download **NetworkDoctor-macOS.zip** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest), unzip it and move **NetworkDoctor** to *Applications*.
-2. The first time, **right-click → Open**. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway** (the app is not yet signed with an Apple Developer certificate).
-3. On the Mac the router log arrives on UDP **5514** (macOS reserves ports below 1024); *Setup → Copy router commands* already uses it.
 
 ## Install (Linux - Ubuntu/Debian)
 
@@ -40,7 +35,7 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 
 Open the [Android release](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true) on the phone, download **NetworkDoctor-Android.apk** and allow *Install unknown apps* for the browser when Android asks. The app scans the Wi-Fi network by itself and, once paired, shows everything the office PC finds. Android does not let apps read other devices' MAC addresses, so vendor names and IP-conflict detection come from the PC.
 
-**Updates are automatic** on Windows and Mac. Once a day the app checks this repository for a new release. When one is out, it asks you, downloads it, verifies the SHA-256 checksum, and restarts. You can also use **Setup → Check for updates**.
+**Updates are automatic** on Windows and on the portable Linux build. Once a day the app checks this repository for a new release. When one is out, it asks you, downloads it, verifies the SHA-256 checksum, and restarts. You can also use **Setup → Check for updates**. (The `.deb` install is updated with `apt` instead - see Install (Linux) above.)
 
 ## What it does
 
@@ -120,7 +115,7 @@ Nothing about your own network is uploaded.
 2. Raise `VERSION = "x.y.z"` near the top of `desktop/NetworkDoctor.py`, and update `desktop/RELEASE_NOTES.md`.
 3. Push to `main`. You can also edit the files directly on github.com and commit.
 
-The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and the Mac app on a free Mac machine, and publishes both in one Release with checksums. Every installed copy checks every day at 15:00 (or at start-up if it was off then) and installs it by itself (after a 60-second notice with a *Later* button), unless the user chose *Ask me first* in Setup.
+The **Desktop - build and release** workflow (see the Actions tab) builds `NetworkDoctor.exe` on a free Windows machine and the `.deb` / portable binary on a free Linux machine, and publishes them in one Release with checksums (the Mac build is currently paused - Windows, Linux and Android only). Every installed copy checks every day at 15:00 (or at start-up if it was off then) and installs it by itself (after a 60-second notice with a *Later* button), unless the user chose *Ask me first* in Setup.
 
 **Phone app:** change the code in `mobile/`, raise `version:` in `mobile/pubspec.yaml` (and `appVersion` in `mobile/lib/main.dart`), push. The **Mobile - build Android app** workflow checks the code, runs the tests and publishes a new APK. Once the Google Play upload-key secrets are added, it also builds the signed `.aab` for the Play Store.
 
