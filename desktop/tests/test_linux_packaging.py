@@ -111,14 +111,47 @@ class ApplyLinuxRefusesThePackagedInstall(unittest.TestCase):
 
 class BuildDebScript(unittest.TestCase):
     """End-to-end smoke test: build_deb.sh is a real, runnable packaging step, not just a code review -
-    this builds an actual .deb from a throwaway binary and checks what dpkg-deb put in it."""
+    this builds an actual .deb from a throwaway PyInstaller --onedir-shaped folder and checks what
+    dpkg-deb put in it. 3.23.1: build_deb.sh takes that folder, not a single --onefile binary - setcap on
+    a onefile binary breaks PyInstaller's own /proc self-check at startup (see build_deb.sh's comment for
+    why), so the .deb's payload is onedir and this fixture mirrors that shape: an executable plus a
+    sibling _internal/ directory that must survive the copy into the package."""
 
     @classmethod
     def setUpClass(cls):
         if subprocess.call(["which", "dpkg-deb"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
             raise unittest.SkipTest("dpkg-deb is not installed")
 
-    def test_the_built_package_has_the_app_menu_entry_icon_and_bin_symlink(self):
+    def test_the_built_package_has_the_app_menu_entry_icon_internal_libs_and_bin_symlink(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bindir = os.path.join(d, "NetworkDoctor")
+            os.makedirs(os.path.join(bindir, "_internal"))
+            with open(os.path.join(bindir, "NetworkDoctor"), "w") as f:
+                f.write("#!/bin/sh\necho hi\n")
+            os.chmod(os.path.join(bindir, "NetworkDoctor"), 0o755)
+            with open(os.path.join(bindir, "_internal", "fakelib.so"), "w") as f:
+                f.write("fake")
+            icon = os.path.join(HERE, "..", "mobile", "android", "app", "src", "main", "res",
+                                "mipmap-xxxhdpi", "ic_launcher.png")
+            out = os.path.join(d, "out.deb")
+            r = subprocess.run([os.path.join(HERE, "linux", "build_deb.sh"), bindir, "9.9.9", icon, out],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(os.path.exists(out))
+            contents = subprocess.run(["dpkg-deb", "--contents", out], capture_output=True, text=True).stdout
+            self.assertIn("./opt/networkdoctor/NetworkDoctor", contents)
+            self.assertIn("./opt/networkdoctor/_internal/fakelib.so", contents)  # the sibling libs survive
+            self.assertIn("./usr/share/applications/networkdoctor.desktop", contents)
+            self.assertIn("./usr/share/icons/hicolor/192x192/apps/networkdoctor.png", contents)
+            self.assertIn("./usr/bin/networkdoctor -> /opt/networkdoctor/NetworkDoctor", contents)
+            info = subprocess.run(["dpkg-deb", "--info", out], capture_output=True, text=True).stdout
+            self.assertIn("Version: 9.9.9", info)
+            self.assertIn("Package: networkdoctor", info)
+
+    def test_rejects_a_single_file_onefile_binary_instead_of_a_folder(self):
+        """A bare --onefile binary passed where a --onedir folder belongs must fail loudly at build time,
+        not silently produce a .deb that crashes for every user on first launch (3.23.0's actual bug)."""
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             fake_bin = os.path.join(d, "NetworkDoctor-Linux")
@@ -130,16 +163,8 @@ class BuildDebScript(unittest.TestCase):
             out = os.path.join(d, "out.deb")
             r = subprocess.run([os.path.join(HERE, "linux", "build_deb.sh"), fake_bin, "9.9.9", icon, out],
                                capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertTrue(os.path.exists(out))
-            contents = subprocess.run(["dpkg-deb", "--contents", out], capture_output=True, text=True).stdout
-            self.assertIn("./opt/networkdoctor/NetworkDoctor", contents)
-            self.assertIn("./usr/share/applications/networkdoctor.desktop", contents)
-            self.assertIn("./usr/share/icons/hicolor/192x192/apps/networkdoctor.png", contents)
-            self.assertIn("./usr/bin/networkdoctor -> /opt/networkdoctor/NetworkDoctor", contents)
-            info = subprocess.run(["dpkg-deb", "--info", out], capture_output=True, text=True).stdout
-            self.assertIn("Version: 9.9.9", info)
-            self.assertIn("Package: networkdoctor", info)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertFalse(os.path.exists(out))
 
 
 if __name__ == "__main__":

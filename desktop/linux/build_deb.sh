@@ -13,15 +13,24 @@
 #   - Setup > "Start at login" (NetworkDoctor.py's toggle_autostart()) then has somewhere sane to point an
 #     XDG autostart entry at, so the app can actually run in the background across reboots.
 #
-# Usage: build_deb.sh <path-to-NetworkDoctor-Linux-binary> <version e.g. 3.23.0> <path-to-icon.png> <output .deb path>
+# Takes a PyInstaller --onedir build (a folder: NetworkDoctor + its _internal/ support files), not a
+# --onefile binary. A file with capabilities set (setcap, just above) becomes a "secure-exec" process to
+# the kernel - the same treatment as a setuid binary - which makes /proc/<pid>/exe unreadable by other
+# processes including its own children. PyInstaller's --onefile bootloader forks a child that re-reads its
+# own parent's /proc/<ppid>/exe to confirm it wasn't hijacked, so a setcap'd onefile binary fails to start
+# with "Security validation failure: could not access /proc entry...". --onedir runs the real executable
+# directly - no self-extracting fork, so that check never happens. The portable NetworkDoctor-Linux
+# download stays --onefile (see the workflow) since it is never setcap'd.
+#
+# Usage: build_deb.sh <path-to-onedir-folder> <version e.g. 3.23.0> <path-to-icon.png> <output .deb path>
 set -eu
 
-BIN="$1"
+BINDIR="$1"
 VERSION="$2"
 ICON="$3"
 OUT="$4"
 
-if [ ! -f "$BIN" ]; then echo "build_deb.sh: binary not found: $BIN" >&2; exit 1; fi
+if [ ! -f "$BINDIR/NetworkDoctor" ]; then echo "build_deb.sh: $BINDIR/NetworkDoctor not found (expected a PyInstaller --onedir folder)" >&2; exit 1; fi
 if [ ! -f "$ICON" ]; then echo "build_deb.sh: icon not found: $ICON" >&2; exit 1; fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -31,7 +40,9 @@ PKG="$WORK/pkgroot"
 mkdir -p "$PKG/DEBIAN" "$PKG/opt/networkdoctor" "$PKG/usr/bin" \
          "$PKG/usr/share/applications" "$PKG/usr/share/icons/hicolor/192x192/apps"
 
-cp "$BIN" "$PKG/opt/networkdoctor/NetworkDoctor"
+# Copy the whole onedir folder's contents (the NetworkDoctor executable plus its _internal/ support files
+# as siblings) - not just the executable, or it can't find its bundled libraries at runtime.
+cp -r "$BINDIR"/. "$PKG/opt/networkdoctor/"
 chmod 755 "$PKG/opt/networkdoctor/NetworkDoctor"
 # 192x192: the real size of the shared source icon (mobile/.../ic_launcher.png) - placed under the matching
 # hicolor size bucket rather than upscaled into a larger one.
