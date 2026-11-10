@@ -33,12 +33,15 @@ Future<Probe> tcpProbe(String ip, int port, {Duration timeout = const Duration(m
 }
 
 /// "Ping" that works on every phone without special permissions: time to get any TCP answer.
+///
+/// Probes every port at once instead of one after another: a single filtered (non-responding) port used to
+/// eat its whole [timeout] before the next port was even tried, so a 5-port list could take up to 5x as long
+/// and report a dead/lossy link even when one of the later ports would have answered almost instantly.
 Future<int?> tcpPing(String ip, List<int> ports, {Duration timeout = const Duration(milliseconds: 1500)}) async {
-  for (final p in ports) {
-    final r = await tcpProbe(ip, p, timeout: timeout);
-    if (r.alive) return max(r.ms, 1);
-  }
-  return null;
+  final results = await Future.wait(ports.map((p) => tcpProbe(ip, p, timeout: timeout)));
+  final aliveMs = results.where((r) => r.alive).map((r) => r.ms);
+  if (aliveMs.isEmpty) return null;
+  return max(aliveMs.reduce(min), 1);
 }
 
 /// Runs [fn] over [items] with at most [n] running at the same time.

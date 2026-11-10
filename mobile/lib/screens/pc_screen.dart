@@ -656,7 +656,10 @@ class _MonitorTab extends StatelessWidget {
               LineChart(
                 height: 150,
                 markers: markers,
-                series: [ChartSeries('broadcasts/s', bcast, Colors.blue), ChartSeries('router ms', ping, Colors.orange)],
+                series: [
+                  ChartSeries('broadcasts', bcast, Colors.blue, unit: '/s'),
+                  ChartSeries('router', ping, Colors.orange, unit: 'ms'),
+                ],
               ),
               Text('Last 10 minutes · red lines = a router port went down', style: t.bodySmall),
             ]),

@@ -174,10 +174,11 @@ class LineChart extends StatelessWidget {
 }
 
 class ChartSeries {
-  ChartSeries(this.label, this.values, this.color);
+  ChartSeries(this.label, this.values, this.color, {this.unit = ''});
   final String label;
   final List<double?> values; // null = gap (e.g. lost ping)
   final Color color;
+  final String unit; // shown after every axis number, e.g. "ms" or "Mbps", so a value reads on its own
 }
 
 class _ChartPainter extends CustomPainter {
@@ -186,14 +187,18 @@ class _ChartPainter extends CustomPainter {
   final List<double> markers;
   final Color grid;
 
+  // Reserve room on the left for the 0 / mid / max numbers, so the line itself never overlaps its own scale.
+  static const _axisW = 44.0;
+
   @override
   void paint(Canvas canvas, Size size) {
+    final plotLeft = _axisW;
+    final plotW = (size.width - _axisW).clamp(0.0, size.width);
     final g = Paint()
       ..color = grid
       ..strokeWidth = 1;
-    canvas.drawLine(Offset(0, size.height - 1), Offset(size.width, size.height - 1), g);
     for (final m in markers) {
-      final x = m.clamp(0.0, 1.0).toDouble() * size.width;
+      final x = plotLeft + m.clamp(0.0, 1.0).toDouble() * plotW;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), Paint()
         ..color = Colors.red
         ..strokeWidth = 2);
@@ -204,6 +209,32 @@ class _ChartPainter extends CustomPainter {
       if (vals.isEmpty) continue;
       final present = vals.whereType<double>().toList();
       final double mx = present.isEmpty ? 1.0 : present.reduce((a, b) => a > b ? a : b).clamp(1.0, double.infinity).toDouble();
+      const top = 16.0, bottom = 6.0; // room for the series label up top and the "0" baseline readable below
+      final plotH = (size.height - top - bottom).clamp(1.0, size.height);
+      double yOf(double v) => top + plotH - plotH * v / mx;
+
+      // three gridlines with their own numbers (0, half, max) - so a reader can place any point on the line
+      // against an actual value instead of guessing from a single "(max N)" caption.
+      void gridline(double v) {
+        final y = yOf(v);
+        canvas.drawLine(Offset(plotLeft, y), Offset(size.width, y), g);
+        final tp = TextPainter(
+          text: TextSpan(
+              text: s.unit.isEmpty
+                  ? v.toStringAsFixed(0)
+                  : (s.unit.startsWith('/') || s.unit.startsWith('%')
+                      ? '${v.toStringAsFixed(0)}${s.unit}'
+                      : '${v.toStringAsFixed(0)} ${s.unit}'),
+              style: TextStyle(color: grid.withValues(alpha: 1), fontSize: 10)),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: _axisW - 4);
+        tp.paint(canvas, Offset(0, (y - tp.height / 2).clamp(0.0, size.height - tp.height)));
+      }
+
+      gridline(0);
+      gridline(mx / 2);
+      gridline(mx);
+
       final p = Paint()
         ..color = s.color
         ..strokeWidth = 2
@@ -211,14 +242,14 @@ class _ChartPainter extends CustomPainter {
       final path = Path();
       var started = false;
       for (var i = 0; i < vals.length; i++) {
-        final x = vals.length == 1 ? size.width : i * size.width / (vals.length - 1);
+        final x = plotLeft + (vals.length == 1 ? plotW : i * plotW / (vals.length - 1));
         final v = vals[i];
         if (v == null) {
           canvas.drawLine(Offset(x, size.height - 8), Offset(x, size.height), Paint()..color = Colors.red);
           started = false;
           continue;
         }
-        final y = size.height - 4 - (size.height - 18) * v / mx;
+        final y = yOf(v);
         if (!started) {
           path.moveTo(x, y);
           started = true;
@@ -228,10 +259,10 @@ class _ChartPainter extends CustomPainter {
       }
       canvas.drawPath(path, p);
       final tp = TextPainter(
-        text: TextSpan(text: '${s.label} (max ${mx.toStringAsFixed(0)})', style: TextStyle(color: s.color, fontSize: 11)),
+        text: TextSpan(text: s.label, style: TextStyle(color: s.color, fontSize: 11, fontWeight: FontWeight.w600)),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, Offset(4, ty));
+      tp.paint(canvas, Offset(plotLeft + 4, ty));
       ty += 14;
     }
   }
