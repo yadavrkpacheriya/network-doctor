@@ -1,3 +1,18 @@
+## Network Doctor 3.23.4
+
+### Fix: the .deb still would not open on a clean machine (libtk8.6.so, for real this time)
+- 3.23.3's CI run passed its new smoke tests, but the installed app still failed on a clean Ubuntu machine
+  with the same `ImportError: libtk8.6.so: cannot open shared object file`. Root cause: the CI build machine
+  has `python3-tk` installed (needed to build the app at all), so the smoke test could still find
+  `libtk8.6.so` on the *system*, even when PyInstaller had failed to actually bundle it into the package -
+  the test was accidentally checking the build machine, not the package.
+- Fixed two ways: the build now explicitly force-bundles Tcl/Tk's shared libraries into both the portable
+  binary and the `.deb` payload (`pyinstaller --add-binary`), instead of relying on PyInstaller's automatic
+  detection, which was silently skipping them. And CI now **removes `python3-tk`/`tcl8.6`/`tk8.6` from the
+  build machine** right after building, before running any of the verification or smoke-test steps, so
+  nothing can pass by quietly falling back to a system copy that a real user's machine won't have.
+- Sorry for the back-and-forth on this one - thanks for testing and reporting exactly what broke each time.
+
 ## Network Doctor 3.23.3
 
 ### Fix: the release pipeline now actually proves the Linux build runs before publishing it
