@@ -132,7 +132,7 @@ jobs:
           # "ImportError: libtk8.6.so: cannot open shared object file" (3.23.1's real-world failure).
           # xvfb: a virtual display so the GUI can actually be launched and smoke-tested below, headless.
           sudo apt-get update -y
-          sudo apt-get install -y python3-tk xvfb
+          sudo apt-get install -y python3-tk xvfb patchelf
 
       - name: Check that the code loads
         run: |
@@ -167,7 +167,7 @@ jobs:
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts --hidden-import nd_auth --hidden-import nd_defense --hidden-import nd_vuln --hidden-import nd_capture --hidden-import nd_expose --hidden-import nd_protab --hidden-import nd_license --hidden-import nd_arpblock \
             --collect-all scapy NetworkDoctor.py
 
-      - name: "Co-locate Tcl/Tk next to _tkinter's own extension module (onedir can nest it below the top level, where --add-binary's '.' destination and _tkinter's own $ORIGIN rpath don't meet - the real cause of the libtk8.6.so crash on a real machine)"
+      - name: "Co-locate Tcl/Tk next to _tkinter's own extension module, and bake the path in with patchelf (the actual, final cause: setcap puts the installed binary into the kernel's 'secure execution' mode, where glibc flatly ignores LD_LIBRARY_PATH - the exact mechanism PyInstaller's onedir bootloader normally relies on to find bundled libraries. The portable binary is never setcap'd, which is why only the installed .deb kept crashing. A baked-in RPATH, unlike an env var, is still honoured in that mode.)"
         run: |
           TKINTER_SO="$(find dist-deb/NetworkDoctor -name '_tkinter*.so' | head -1)"
           test -n "$TKINTER_SO" || { echo "::error::_tkinter*.so was not found anywhere in the onedir build - tkinter wasn't bundled at all"; exit 1; }
@@ -175,6 +175,11 @@ jobs:
           echo "_tkinter lives at: $TKINTER_SO - copying Tcl/Tk into its own directory: $DEST_DIR"
           cp -v "$TCL_LIB" "$DEST_DIR/"
           cp -v "$TK_LIB" "$DEST_DIR/"
+          patchelf --add-rpath '$ORIGIN' "$TKINTER_SO"
+          patchelf --add-rpath '$ORIGIN' "$DEST_DIR/$(basename "$TK_LIB")"
+          patchelf --add-rpath '$ORIGIN' "$DEST_DIR/$(basename "$TCL_LIB")"
+          echo "RPATH after patching:"
+          patchelf --print-rpath "$TKINTER_SO"
 
       - name: "Remove the build machine's own Tcl/Tk (so the checks below can only pass using what's actually bundled, not a system copy that masks a missing one - this masking is exactly how 3.23.1/3.23.2 slipped through CI and still failed on real machines)"
         run: |
@@ -219,13 +224,11 @@ jobs:
 
       - name: "Verify no bundled library is missing (would have caught 3.23.1's libtk8.6.so bug)"
         run: |
-          # PyInstaller's own onedir bootloader points LD_LIBRARY_PATH at _internal/ before the real app
-          # starts - that's how a module nested below it (like _tkinter, under
-          # _internal/python3.12/lib-dynload/) finds a sibling library placed at the top level. A bare ldd
-          # here, with no LD_LIBRARY_PATH, reports a false "not found" for exactly that kind of dependency -
-          # it isn't actually missing, ldd just isn't checking it the way the real app will. Set it the same
-          # way before checking, so a real "not found" here means a real one at runtime, not a false alarm.
-          export LD_LIBRARY_PATH="$PWD/dist-deb/NetworkDoctor/_internal"
+          # Deliberately NOT setting LD_LIBRARY_PATH here: the installed .deb's binary is setcap'd, and
+          # glibc ignores LD_LIBRARY_PATH entirely for a setcap'd ("secure-exec") process - an env var would
+          # pass here but still crash for real, which is exactly how 3.23.7 slipped through. A bare ldd,
+          # relying only on each file's own baked-in RPATH (patchelf, previous step), is what actually
+          # matches what the installed binary gets to use.
           missing=$(find dist-deb/NetworkDoctor -type f \( -name "*.so*" -o -perm -u+x \) -exec sh -c \
             'ldd "$1" 2>/dev/null | grep "not found"' _ {} \;)
           if [ -n "$missing" ]; then

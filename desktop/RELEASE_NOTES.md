@@ -1,3 +1,20 @@
+## Network Doctor 3.23.9
+
+### Found the final cause: setcap itself breaks how the bundle finds its own libraries
+- 3.23.8's CI run got further than ever - every static check passed, and the *portable* binary genuinely
+  launched clean in its own smoke test - but the real, installed `.deb` still crashed with the same
+  `libtk8.6.so` error. The difference between the two finally explains the whole saga: the installed copy
+  gets `setcap`'d (so scans work without `sudo`), and Linux puts a `setcap`'d binary into a stricter
+  "secure execution" mode - in which `glibc` **ignores `LD_LIBRARY_PATH` entirely**, for security reasons.
+  That's exactly the mechanism PyInstaller's own packaging normally relies on to find bundled libraries, so
+  it silently stopped working the moment `setcap` was added, on every version since 3.23.0's `.deb`.
+- Fixed by baking the library location directly into the binary itself (via `patchelf`, an `RPATH` entry),
+  instead of relying on an environment variable - which is unaffected by secure-execution mode and is how
+  the portable (never-`setcap`'d) build was finding things correctly all along.
+- This is also why the CI pipeline itself took several small, visible steps to land on: each one closed a
+  real gap in a different part of the chain (bundling, a masked test machine, a directory mismatch, a
+  verification blind spot) until the checks and the real `.deb` finally agreed.
+
 ## Network Doctor 3.23.8
 
 ### CI fix: the library check itself was giving a false alarm
