@@ -177,11 +177,19 @@ class LinuxCapabilityAwareAdmin(unittest.TestCase):
     def setUp(self):
         self._geteuid = os.geteuid if hasattr(os, "geteuid") else None
         self._is_linux = core.IS_LINUX
+        self._is_win = core.IS_WIN
+        # is_admin() branches on IS_WIN (not IS_LINUX) to decide Windows vs. POSIX logic, so simulating
+        # Linux on a real Windows CI runner needs IS_WIN forced False too - otherwise these tests silently
+        # exercise ctypes.windll.shell32.IsUserAnAdmin() instead of the Linux code path they're meant to.
+        core.IS_WIN = False
 
     def tearDown(self):
         if self._geteuid is not None:
             os.geteuid = self._geteuid
+        elif hasattr(os, "geteuid"):
+            del os.geteuid  # platform (e.g. Windows) never had this attribute until a test added it
         core.IS_LINUX = self._is_linux
+        core.IS_WIN = self._is_win
 
     def _status_with_caps(self, eff_hex):
         import tempfile
