@@ -1,3 +1,17 @@
+## Network Doctor 3.23.5
+
+### Fix: found the actual reason CI kept saying "fine" when the .deb wasn't
+- 3.23.4's CI run reported every check green - the libraries were confirmed bundled, `ldd` said every
+  dependency resolved, both the portable binary and the actually-installed `.deb` passed their self-test -
+  and it still failed on a real machine with the same `libtk8.6.so` error.
+- The real cause: GitHub's own Python setup step sets `LD_LIBRARY_PATH` to its own Python install's library
+  folder **for the whole CI job**, not just while it builds. That folder ships its own private copy of
+  Tcl/Tk's libraries. `apt purge` (3.23.4's fix) only removes Debian packages, so it never touched that
+  folder - every check in that job kept quietly succeeding against GitHub's copy, never the actual package.
+- Fixed by clearing `LD_LIBRARY_PATH` for the rest of the job right after both builds finish, so every
+  verification and smoke-test step from then on can only pass using what's genuinely inside the `.deb`/the
+  portable binary - nothing else on the build machine is left that could paper over a real gap.
+
 ## Network Doctor 3.23.4
 
 ### Fix: the .deb still would not open on a clean machine (libtk8.6.so, for real this time)

@@ -172,6 +172,17 @@ jobs:
           sudo apt-get purge -y python3-tk tcl8.6 tk8.6
           sudo apt-get autoremove -y
           sudo ldconfig
+          # actions/setup-python sets LD_LIBRARY_PATH to its own hosted Python's lib/ dir for the WHOLE job
+          # (visible in every step's env above) - that's a self-contained python-build-standalone install,
+          # not an apt package, so the purge above never touches it. It carries its own libtcl8.6.so/
+          # libtk8.6.so, which was silently satisfying every check below regardless of whether PyInstaller
+          # actually bundled them (3.23.4's real bug, despite this exact job reporting every check green).
+          # Clearing it for the rest of the job is what finally makes those checks mean something.
+          echo "setup-python's own lib dir ($pythonLocation/lib) - this is what was masking the missing bundle:"
+          ls "$pythonLocation/lib" 2>/dev/null | grep -iE 'tcl|tk' || echo "(nothing matched, but clearing LD_LIBRARY_PATH anyway)"
+          echo "LD_LIBRARY_PATH=" >> "$GITHUB_ENV"
+          echo "Cleared LD_LIBRARY_PATH for the rest of the job; remaining Tcl/Tk visible to ldconfig (should be none):"
+          ldconfig -p | grep -iE 'libtcl8\.6\.so|libtk8\.6\.so' && exit 1 || echo "none"
 
       - name: "Verify the required libraries are actually inside the bundle, by filename, not just resolvable (ldd alone can be fooled by a leftover system copy)"
         run: |
