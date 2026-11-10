@@ -32,10 +32,16 @@
       </uap:VisualElements>
     </Application>
   </Applications>
+  <!-- No rescap:allowElevation: the Store exe is built without the uac-admin flag (see build_msix.ps1) so it
+       never auto-elevates on launch, and it does not relaunch itself elevated via UAC either - App.elevate() in
+       NetworkDoctor.py checks core.IS_STORE and shows an explanation instead for a Store-installed copy,
+       since Microsoft Store policy 10.6.3 treats allowElevation as a restricted capability needing detailed
+       justification and is unlikely to approve it for what is here only a convenience shortcut, not something
+       the app depends on (Setup > "Start with Windows" already gets the same admin-only checks running,
+       without a UAC prompt, via a Scheduled Task registered with /RL HIGHEST). -->
   <Capabilities>
     <Capability Name="internetClient" />
     <Capability Name="privateNetworkClientServer" />
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="allowElevation" />
   </Capabilities>
 </Package>
