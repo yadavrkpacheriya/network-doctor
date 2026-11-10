@@ -1,3 +1,19 @@
+## Network Doctor 3.23.0
+
+### New: a real install on Linux (Ubuntu/Debian)
+- Linux went from "download a raw file, `chmod +x`, run it from a terminal with `sudo`" to a proper
+  **`NetworkDoctor_*_amd64.deb`** package: `sudo apt install ./NetworkDoctor_*_amd64.deb` puts **Network
+  Doctor** in your app menu / Activities search with its own icon, so it can be pinned to the taskbar or
+  favourites like any other installed app.
+- The raw-socket scans and the ARP-based device block (3.22.9) now work **without `sudo`** - the package
+  grants the installed binary the specific network capability it needs (`setcap`), not full root.
+- **Setup > "Start at login"** now actually works on Linux (an XDG autostart entry, honoured by every
+  desktop environment) - previously it was Windows/Mac only, so Linux had no way to keep the 24/7 checks
+  running in the background after a reboot.
+- The portable **NetworkDoctor-Linux** binary is still published on every release for non-Debian distros or
+  anyone who prefers a no-install file; it keeps self-updating in place as before. The new `.deb` is managed
+  by `apt` instead (download the newest `.deb` and reinstall it over the old one to update).
+
 ## Network Doctor 3.22.0
 
 ### New: the Fix Assistant (Assistant tab)

@@ -191,10 +191,21 @@ jobs:
           chmod +x dist/NetworkDoctor-Linux
           (cd dist && sha256sum NetworkDoctor-Linux > NetworkDoctor-Linux.sha256 && cat NetworkDoctor-Linux.sha256)
 
+      - name: "Build the .deb package (proper install - app menu, icon, autostart-ready, setcap)"
+        run: |
+          chmod +x linux/build_deb.sh
+          ./linux/build_deb.sh dist/NetworkDoctor-Linux "${{ needs.windows.outputs.version }}" \
+            ../mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png \
+            "dist/NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb"
+          (cd dist && sha256sum "NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb" \
+            > "NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb.sha256")
+
       - name: Add the Linux app to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "v${{ needs.windows.outputs.version }}" \
             dist/NetworkDoctor-Linux dist/NetworkDoctor-Linux.sha256 \
+            "dist/NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb" \
+            "dist/NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb.sha256" \
             --repo "${{ github.repository }}" --clobber

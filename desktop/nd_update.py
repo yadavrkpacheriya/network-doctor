@@ -31,6 +31,20 @@ IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 # the file each kind of computer downloads from a release
 ASSET = "NetworkDoctor-macOS.zip" if IS_MAC else ("NetworkDoctor-Linux" if IS_LINUX else "NetworkDoctor.exe")
+# Where the .deb package installs the binary (see linux/build_deb.sh) - owned by root and tracked by dpkg,
+# so the in-place self-update the portable NetworkDoctor-Linux build uses (apply_linux() below) must never
+# touch it: that copy is kept current with `apt`/a new .deb, the same way the Microsoft Store keeps its
+# package current (see core.IS_STORE).
+PACKAGED_INSTALL_DIR = "/opt/networkdoctor"
+
+
+def is_packaged_install():
+    """True for the .deb-installed copy. A call-time check (not a module-load constant) so it can be
+    exercised with a patched sys.executable in tests, same as is_frozen() below."""
+    try:
+        return IS_LINUX and os.path.dirname(os.path.abspath(sys.executable)) == PACKAGED_INSTALL_DIR
+    except Exception:
+        return False
 
 
 class UpdateError(Exception):
@@ -208,7 +222,15 @@ def apply_update(path, args=()):
 
 
 def apply_linux(new_path, args=()):
-    """Linux lets a running program's file be replaced: swap it in, then start the new one. Caller must exit."""
+    """Linux lets a running program's file be replaced: swap it in, then start the new one. Caller must exit.
+    Not for the .deb install (see PACKAGED_INSTALL_DIR above) - NetworkDoctor.py never reaches this for one
+    (it turns automatic/manual updates off for is_packaged_install(), mirroring core.IS_STORE), but the check
+    stays here too in case something else ever calls apply_update() directly."""
+    if is_packaged_install():
+        _rm(new_path)
+        raise UpdateError("This copy was installed from the .deb package, which apt manages - download the "
+                           "newest NetworkDoctor_*_amd64.deb from the releases page and run "
+                           "'sudo apt install ./NetworkDoctor_*_amd64.deb' to update.")
     exe = sys.executable
     try:
         os.chmod(new_path, 0o755)

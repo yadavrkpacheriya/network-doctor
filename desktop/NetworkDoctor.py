@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.9"
+VERSION = "3.23.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2563,6 +2563,7 @@ class App(tk.Tk):
                 return r.returncode == 0
             if core.IS_MAC:
                 return os.path.exists(self._plist_path())
+            return os.path.exists(core.LINUX_AUTOSTART_FILE)  # Linux: an XDG autostart .desktop entry
         except Exception:
             pass
         return False
@@ -2595,8 +2596,13 @@ class App(tk.Tk):
                                 "<key>RunAtLoad</key><true/></dict></plist>\n")
                 elif os.path.exists(p):
                     os.remove(p)
-            else:
-                ok, err = False, "only available on Windows and Mac"
+            else:  # Linux: an XDG autostart .desktop entry - every desktop environment honours it, no root needed
+                if on:
+                    os.makedirs(core.LINUX_AUTOSTART_DIR, exist_ok=True)
+                    with open(core.LINUX_AUTOSTART_FILE, "w", encoding="utf-8") as f:
+                        f.write(core.linux_autostart_entry(self._launch_cmd()))
+                elif os.path.exists(core.LINUX_AUTOSTART_FILE):
+                    os.remove(core.LINUX_AUTOSTART_FILE)
         except Exception as e:
             ok, err = False, str(e)
         if not ok:
@@ -3546,7 +3552,7 @@ class App(tk.Tk):
             self.check_updates(True)
 
     def _update_mode(self, code=False):
-        if core.IS_STORE:  # the Store installs updates itself; Pro features now ship in this same app
+        if core.IS_STORE or U.is_packaged_install():  # each is kept current by its own installer, not by us
             return "off" if code else next(k for k, v in self.UPDATE_MODES.items() if v == "off")
         st = self._settings()
         m = st.get("update_mode")
@@ -3560,6 +3566,13 @@ class App(tk.Tk):
             if not auto:
                 messagebox.showinfo(APP, "This copy is from the Microsoft Store: the Store installs new versions "
                                          "by itself (Microsoft Store > Library > Get updates).")
+            return
+        if U.is_packaged_install():
+            self.var_upd.set(f"Version {VERSION} - update with a new .deb")
+            if not auto:
+                messagebox.showinfo(APP, "This copy was installed from the .deb package: download the newest "
+                                         "NetworkDoctor_*_amd64.deb from the Releases page and install it with "
+                                         "'sudo apt install ./NetworkDoctor_*_amd64.deb' (or dpkg -i) to update.")
             return
         """auto=True: the scheduled check (daily at 15:00). auto=False: the user pressed a button."""
         if auto and self._update_mode(True) == "off":
