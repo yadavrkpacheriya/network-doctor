@@ -38,9 +38,13 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   double _mbps = 0;
   bool _speedRunning = false;
   String _speedErr = '';
+  final List<double?> _speedHist = [];
 
   @override
   bool get wantKeepAlive => true;
+
+  double get _speedPeak =>
+      _speedHist.isEmpty ? 0 : _speedHist.whereType<double>().fold(0.0, (a, b) => a > b ? a : b);
 
   @override
   void initState() {
@@ -68,10 +72,17 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       _speedRunning = true;
       _mbps = 0;
       _speedErr = '';
+      _speedHist.clear();
     });
     Telemetry.instance.note('speed_test');
     final result = await s.downloadMbps(onProgress: (m, sec) {
-      if (mounted) setState(() => _mbps = m);
+      if (mounted) {
+        setState(() {
+          _mbps = m;
+          _speedHist.add(m);
+          if (_speedHist.length > 60) _speedHist.removeAt(0);
+        });
+      }
     });
     if (!mounted) return;
     setState(() {
@@ -214,7 +225,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
                   ? 'Router not answering'
                   : 'Router: ${ok.last.toStringAsFixed(0)} ms now, avg ${(ok.reduce((a, b) => a + b) / ok.length).toStringAsFixed(0)} ms, '
                       'lost ${loss.toStringAsFixed(0)}%'),
-              LineChart(height: 60, series: [ChartSeries('router ms', _gwPing, Colors.orange)]),
+              LineChart(height: 60, series: [ChartSeries('router', _gwPing, Colors.orange, unit: 'ms')]),
             ],
             if (_error.isNotEmpty) Padding(
               padding: const EdgeInsets.only(top: 6),
@@ -227,28 +238,34 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
         margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(children: [
-            Icon(Icons.speed, color: _mbps > 0 && !_speedRunning ? Colors.green.shade700 : null),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(
-                  _speedRunning
-                      ? 'Testing...  ${_mbps.toStringAsFixed(1)} Mbps'
-                      : (_mbps > 0 ? 'Download  ${_mbps.toStringAsFixed(1)} Mbps' : 'Internet speed'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (_speedErr.isNotEmpty)
-                  Text(_speedErr, style: TextStyle(color: Colors.red.shade700, fontSize: 12))
-                else if (!_speedRunning && _mbps == 0)
-                  Text('Live download speed - works on Wi-Fi or mobile data',
-                      style: Theme.of(context).textTheme.bodySmall),
-              ]),
-            ),
-            FilledButton.tonal(
-              onPressed: _runSpeed,
-              child: Text(_speedRunning ? 'Stop' : 'Test'),
-            ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(Icons.speed, color: _mbps > 0 && !_speedRunning ? Colors.green.shade700 : null),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                    _speedRunning
+                        ? 'Testing...  now ${_mbps.toStringAsFixed(1)} Mbps  ·  peak ${_speedPeak.toStringAsFixed(1)} Mbps'
+                        : (_mbps > 0 ? 'Download  ${_mbps.toStringAsFixed(1)} Mbps' : 'Internet speed'),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  if (_speedErr.isNotEmpty)
+                    Text(_speedErr, style: TextStyle(color: Colors.red.shade700, fontSize: 12))
+                  else if (!_speedRunning && _mbps == 0)
+                    Text('Live download speed - works on Wi-Fi or mobile data',
+                        style: Theme.of(context).textTheme.bodySmall),
+                ]),
+              ),
+              FilledButton.tonal(
+                onPressed: _runSpeed,
+                child: Text(_speedRunning ? 'Stop' : 'Test'),
+              ),
+            ]),
+            if (_speedHist.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              LineChart(height: 70, series: [ChartSeries('download', _speedHist, Colors.blue, unit: 'Mbps')]),
+            ],
           ]),
         ),
       ),

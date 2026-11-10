@@ -160,7 +160,7 @@ class _PingScreenState extends State<PingScreen> {
           else if (n > 2)
             const Text('No replies - the device is off, asleep, or blocks everything.'),
           const SizedBox(height: 12),
-          LineChart(height: 220, series: [ChartSeries('reply ms', _res, Colors.blue)]),
+          LineChart(height: 220, series: [ChartSeries('reply', _res, Colors.blue, unit: 'ms')]),
           const SizedBox(height: 8),
           Text('Red marks = no reply. Phones cannot send classic ICMP ping, so this measures how fast the device '
               'answers a network connection - the result is comparable to ping.', style: t.bodySmall),
