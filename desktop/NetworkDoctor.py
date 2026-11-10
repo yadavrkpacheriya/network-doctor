@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.7"
+VERSION = "3.22.8"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -945,7 +945,7 @@ class App(tk.Tk):
                                     "and run router commands", padding=(8, 4))
         ro.pack(fill="x", pady=(0, 6))
         r = st.get("router_api") or {}
-        self.var_ro_host = tk.StringVar(value=r.get("host") or self.gw or "")
+        self.var_ro_host = tk.StringVar(value=RO.clean_host(r.get("host")) or self.gw or "")
         self.var_ro_user = tk.StringVar(value=r.get("user", ""))
         self.var_ro_pw = tk.StringVar(value=RO.unprotect(r.get("pw", "")) if r.get("pw") else "")
         self.var_ro_ssl = tk.BooleanVar(value=bool(r.get("ssl")))
@@ -973,8 +973,14 @@ class App(tk.Tk):
                                      "for Network Doctor in WinBox > System > Users (group 'full', or 'write' + api), "
                                      "and in IP > Services allow 'api' only from this PC's IP.")
             return
+        host = RO.clean_host(self.var_ro_host.get())
+        if not host:
+            messagebox.showinfo(APP, "Type the router's IP first, e.g. 192.168.1.1 - just the address, no "
+                                     "http:// and no :port (the API-SSL box above already picks 8728 vs 8729).")
+            return
+        self.var_ro_host.set(host)  # reflect what was actually cleaned/saved, e.g. a pasted "http://x/80" -> "x"
         st = self._settings()
-        st["router_api"] = {"host": self.var_ro_host.get().strip(), "user": user,
+        st["router_api"] = {"host": host, "user": user,
                             "pw": RO.protect(self.var_ro_pw.get()), "ssl": self.var_ro_ssl.get()}
         self._save_settings()
         self.var_ro_info.set("testing...")
