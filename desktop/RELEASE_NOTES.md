@@ -1,3 +1,18 @@
+## Network Doctor 3.23.11
+
+### The .deb install can now update itself automatically
+Until now, the .deb-packaged copy always refused to self-update (it's managed by `apt`, which the app must
+never silently overwrite) and could only tell you to run `sudo apt install` by hand. It now does that step
+for you:
+- Checks GitHub for a new version the same way the Windows/Mac builds already do, and (per your "New
+  versions" setting on the Setup tab) can download and install it automatically.
+- Installs the new `.deb` with `pkexec`, which pops your desktop's own native password prompt - Network
+  Doctor itself never sees, asks for, or stores your password. This needs `pkexec` (part of
+  `policykit-1`), which ships by default with GNOME/KDE/XFCE desktop sessions on Ubuntu.
+- If `pkexec` isn't available, automatic updates are turned off and the Setup tab goes back to pointing you
+  at the manual `sudo apt install ./NetworkDoctor_*_amd64.deb` command, exactly as before.
+- After installing, it restarts itself automatically - no separate relaunch needed.
+
 ## Network Doctor 3.23.10
 
 ### Linux had been getting a second-class version of several features

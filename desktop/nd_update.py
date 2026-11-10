@@ -17,6 +17,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,20 @@ def is_packaged_install():
         return IS_LINUX and posixpath.dirname(posixpath.abspath(sys.executable)) == PACKAGED_INSTALL_DIR
     except Exception:
         return False
+
+
+def deb_asset_name(version):
+    """The release asset name build_deb.sh publishes for a given version tag's number (e.g. '3.23.10' ->
+    'NetworkDoctor_3.23.10_amd64.deb') - the one filename that varies by version, unlike the other platforms'
+    fixed ASSET names."""
+    return f"NetworkDoctor_{version}_amd64.deb"
+
+
+def pkexec_available():
+    """True when this Linux desktop has pkexec (ships with policykit-1, a default dependency of GNOME/KDE/
+    XFCE desktop sessions on Ubuntu) - what apply_deb() below uses to show the OS's own native password
+    prompt for installing the update, without Network Doctor itself ever seeing or handling the password."""
+    return shutil.which("pkexec") is not None
 
 
 class UpdateError(Exception):
@@ -103,11 +118,15 @@ def check(current_version, timeout=15):
     tag = data.get("tag_name", "")
     if parse_version(tag) <= parse_version(current_version):
         return None
+    version = tag.lstrip("v")
+    # the .deb-installed copy downloads and installs the .deb itself (apply_deb), not the bare
+    # NetworkDoctor-Linux binary - its asset name carries the version number, unlike every other ASSET
+    asset_name = deb_asset_name(version) if (IS_LINUX and is_packaged_install()) else ASSET
     assets = {a.get("name"): a for a in data.get("assets", [])}
-    exe = assets.get(ASSET)
-    sha = assets.get(ASSET + ".sha256")
-    return {"version": tag.lstrip("v"), "tag": tag, "notes": (data.get("body") or "").strip(),
-            "page": data.get("html_url") or RELEASES_PAGE,
+    exe = assets.get(asset_name)
+    sha = assets.get(asset_name + ".sha256")
+    return {"version": version, "tag": tag, "notes": (data.get("body") or "").strip(),
+            "page": data.get("html_url") or RELEASES_PAGE, "asset_name": asset_name,
             "exe_url": exe and exe.get("browser_download_url"), "exe_size": exe and exe.get("size"),
             "sha_url": sha and sha.get("browser_download_url"), "published": data.get("published_at", "")}
 
@@ -117,9 +136,11 @@ def _get(url, timeout=60):
 
 
 def download_exe(info, progress=lambda done, total: None):
-    """Downloads and verifies the new exe. Returns the path of the verified file."""
+    """Downloads and verifies the new exe (or, for a .deb-packaged Linux install, the new .deb itself).
+    Returns the path of the verified file."""
     if not info.get("exe_url") or not info.get("sha_url"):
-        raise UpdateError(f"This release has no {ASSET} yet (it may still be building - try in a few minutes).")
+        raise UpdateError(f"This release has no {info.get('asset_name', ASSET)} yet "
+                          "(it may still be building - try in a few minutes).")
     try:
         expected = _get(info["sha_url"], 30).read().decode("ascii", "replace").strip().split()[0].lower()
     except Exception as e:
@@ -129,6 +150,11 @@ def download_exe(info, progress=lambda done, total: None):
     if IS_MAC:
         folder = tempfile.gettempdir()
         dest = os.path.join(folder, "NetworkDoctor-update.zip")
+    elif IS_LINUX and is_packaged_install():
+        # installed with apt/dpkg, never swapped in place like the portable build below, so this just
+        # needs a scratch spot for apply_deb() to hand to 'pkexec apt-get install -y <path>'
+        folder = tempfile.gettempdir()
+        dest = os.path.join(folder, info.get("asset_name") or deb_asset_name(info["version"]))
     else:
         folder = os.path.dirname(sys.executable) if is_frozen() else tempfile.gettempdir()
         dest = os.path.join(folder, "NetworkDoctor.new" if IS_LINUX else "NetworkDoctor.new.exe")
@@ -219,10 +245,46 @@ def apply_update(path, args=()):
     Caller must exit."""
     if IS_MAC:
         apply_mac(path, args)
+    elif IS_LINUX and is_packaged_install():
+        apply_deb(path, args)
     elif IS_LINUX:
         apply_linux(path, args)
     else:
         apply_exe(path, args)
+
+
+def apply_deb(path, args=()):
+    """Installs the downloaded .deb over the current /opt/networkdoctor install - the .deb-packaged
+    counterpart to apply_mac/apply_linux/apply_exe above. dpkg can't replace a binary while it's running, so
+    (same pattern as apply_exe's helper on Windows) a tiny detached shell script waits for this process to
+    exit, then runs the install and restarts the app from the same path dpkg just updated in place.
+
+    The install itself goes through 'pkexec', which pops the desktop's own native password prompt (the same
+    one any other installer uses) - Network Doctor never sees, asks for, or stores the password. Needs
+    policykit-1, which ships by default with GNOME/KDE/XFCE desktop sessions on Ubuntu; pkexec_available()
+    lets the caller check first and fall back to the manual 'sudo apt install' instructions instead."""
+    if not pkexec_available():
+        _rm(path)
+        raise UpdateError("Automatic updates need 'pkexec' (part of policykit-1), which isn't installed here. "
+                          "Download the .deb from the Releases page and run "
+                          "'sudo apt install ./NetworkDoctor_*_amd64.deb' instead.")
+    exe = sys.executable
+    helper = os.path.join(tempfile.gettempdir(), f"nd_update_{int(time.time())}.sh")
+    log = os.path.join(tempfile.gettempdir(), "NetworkDoctor_update.log")
+    script = f"""#!/bin/sh
+while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done
+if pkexec apt-get install -y "{path}" > "{log}" 2>&1; then
+    rm -f "{path}"
+else
+    echo "Network Doctor could not install the update automatically - see {log}" >> "{log}"
+fi
+env PYINSTALLER_RESET_ENVIRONMENT=1 "{exe}" {" ".join(args)} &
+rm -f "$0"
+"""
+    with open(helper, "w") as f:
+        f.write(script)
+    os.chmod(helper, 0o755)
+    subprocess.Popen(["/bin/sh", helper], start_new_session=True, close_fds=True, env=clean_env())
 
 
 def apply_linux(new_path, args=()):
@@ -326,6 +388,12 @@ def cleanup_leftovers():
     """Removes a half-downloaded update file left from an earlier attempt."""
     if is_frozen():
         _rm(os.path.join(os.path.dirname(sys.executable), "NetworkDoctor.new" if IS_LINUX else "NetworkDoctor.new.exe"))
+    if IS_LINUX and is_packaged_install():
+        # the .deb's name carries a version number we don't know ahead of time, so sweep the temp dir
+        # instead of a single fixed path - same spirit as the exe/zip cleanup above
+        import glob
+        for p in glob.glob(os.path.join(tempfile.gettempdir(), "NetworkDoctor_*_amd64.deb")):
+            _rm(p)
 
 
 def _rm(p):
