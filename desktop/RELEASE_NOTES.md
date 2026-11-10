@@ -1,3 +1,14 @@
+## Network Doctor 3.23.6
+
+### CI fix: 3.23.5 never actually published (the new safety check caught something real)
+- 3.23.5 was meant to fix the `libtk8.6.so` saga for good, but its own build never finished: the CI job's
+  new check (`ldconfig` should show nothing after removing the build machine's Tcl/Tk) found that
+  `libtcl8.6.so`/`libtk8.6.so` were *still* resolvable even after `apt purge` reported them removed - a
+  stray copy outside the package manager's own tracking survived the purge. The job correctly refused to
+  continue rather than risk testing against that leftover copy, so no 3.23.5 release was ever published.
+- This version deletes those files directly (not just via `apt purge`) and re-confirms they're gone before
+  any verification or smoke-test step is allowed to run, closing that gap.
+
 ## Network Doctor 3.23.5
 
 ### Fix: found the actual reason CI kept saying "fine" when the .deb wasn't

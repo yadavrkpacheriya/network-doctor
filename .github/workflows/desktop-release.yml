@@ -178,11 +178,27 @@ jobs:
           # libtk8.6.so, which was silently satisfying every check below regardless of whether PyInstaller
           # actually bundled them (3.23.4's real bug, despite this exact job reporting every check green).
           # Clearing it for the rest of the job is what finally makes those checks mean something.
-          echo "setup-python's own lib dir ($pythonLocation/lib) - this is what was masking the missing bundle:"
-          ls "$pythonLocation/lib" 2>/dev/null | grep -iE 'tcl|tk' || echo "(nothing matched, but clearing LD_LIBRARY_PATH anyway)"
+          echo "setup-python's own lib dir ($pythonLocation/lib) - checking in case it also masks the bundle:"
+          ls "$pythonLocation/lib" 2>/dev/null | grep -iE 'tcl|tk' || echo "(nothing matched)"
           echo "LD_LIBRARY_PATH=" >> "$GITHUB_ENV"
-          echo "Cleared LD_LIBRARY_PATH for the rest of the job; remaining Tcl/Tk visible to ldconfig (should be none):"
-          ldconfig -p | grep -iE 'libtcl8\.6\.so|libtk8\.6\.so' && exit 1 || echo "none"
+          # apt purge alone isn't always enough: a stray copy outside dpkg's own tracked paths (seen once on
+          # this runner image, cause unconfirmed) can survive the purge and still show up in ldconfig's
+          # cache. If anything still resolves after the purge, delete those exact files directly and refresh
+          # the cache again, so the checks below can't be fooled a second way.
+          remaining="$(ldconfig -p | grep -iE 'libtcl8\.6\.so |libtk8\.6\.so ' || true)"
+          if [ -n "$remaining" ]; then
+            echo "Still present after apt purge - removing the files directly:"
+            echo "$remaining"
+            echo "$remaining" | awk '{print $NF}' | sudo xargs -r rm -fv
+            sudo ldconfig
+            remaining="$(ldconfig -p | grep -iE 'libtcl8\.6\.so |libtk8\.6\.so ' || true)"
+          fi
+          if [ -n "$remaining" ]; then
+            echo "$remaining"
+            echo "::error::Could not remove the system Tcl/Tk libraries - later checks would still be unreliable"
+            exit 1
+          fi
+          echo "Confirmed: no system-wide libtcl8.6.so/libtk8.6.so remain"
 
       - name: "Verify the required libraries are actually inside the bundle, by filename, not just resolvable (ldd alone can be fooled by a leftover system copy)"
         run: |
