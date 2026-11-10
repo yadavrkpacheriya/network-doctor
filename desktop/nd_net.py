@@ -819,6 +819,31 @@ def chan_to_band(ch):
     return "2.4 GHz" if 1 <= ch <= 14 else "6 GHz" if ch > 196 else "5 GHz"
 
 
+def parse_nmcli_wifi(text):
+    """'nmcli -t -f ACTIVE,SSID,BSSID,CHAN,RATE,SIGNAL,SECURITY device wifi list' -> (connected dict, networks
+    list). nmcli's -t (terse) format is colon-separated with ':' and '\\' inside a field backslash-escaped, so
+    fields can't just be text.split(':')."""
+    cur, nets = {}, []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = [p.replace("\\:", ":").replace("\\\\", "\\") for p in re.split(r"(?<!\\):", line)]
+        if len(parts) < 7:
+            continue
+        active, ssid, bssid, chan, rate, signal, security = parts[:7]
+        ch = int(chan) if chan.strip().isdigit() else None
+        sig = int(signal) if signal.strip().isdigit() else None
+        auth = security.strip() if security.strip() and security.strip() != "--" else "Open"
+        e = {"ssid": ssid or "(hidden)", "auth": auth, "enc": "", "bssid": bssid,
+             "signal": sig, "rssi": f"{sig}%" if sig is not None else "", "radio": "",
+             "band": chan_to_band(ch) if ch else "", "channel": ch}
+        if active.strip().lower() == "yes":
+            e["tx"] = rate.strip()
+            cur = dict(e)
+        nets.append(e)
+    return cur, nets
+
+
 def parse_netsh_networks(text):
     """netsh wlan show networks mode=bssid -> [{"ssid","auth","enc","bssid","signal","radio","band","channel"}]"""
     nets = []
@@ -951,7 +976,14 @@ def wifi_scan():
         if nets and all(n["ssid"] in ("", "(hidden)", "<redacted>") for n in nets):
             note = "macOS hides network names unless Network Doctor is allowed Location (System Settings > Privacy)."
         return cur, nets, note
-    return {}, [], "Wi-Fi analysis works on Windows and Mac."
+    if core.IS_LINUX:
+        out = run(["nmcli", "-t", "-f", "ACTIVE,SSID,BSSID,CHAN,RATE,SIGNAL,SECURITY", "device", "wifi", "list"], 15)
+        if not out.strip():
+            return {}, [], ("No Wi-Fi networks found - check that Wi-Fi is on, or that NetworkManager's "
+                             "'nmcli' is installed (it ships with Ubuntu by default).")
+        cur, nets = parse_nmcli_wifi(out)
+        return cur, nets, "" if nets else "No Wi-Fi networks found (is Wi-Fi on?)."
+    return {}, [], "Wi-Fi analysis works on Windows, Mac, and Linux (needs NetworkManager)."
 
 
 CH24_BEST = (1, 6, 11)
@@ -1244,6 +1276,21 @@ def lan_advice(mbps):
 # ==========================================================================
 # web / server check
 # ==========================================================================
+def _tls_fail_hint(e):
+    """A short, actionable reason for a TLS handshake that threw something other than a cert error - the
+    bare exception text (e.g. '[Errno 104] Connection reset by peer') told the user nothing to do about it."""
+    if isinstance(e, ConnectionResetError) or "reset by peer" in str(e).lower() or "connection reset" in str(e).lower():
+        return (" - the connection was actively cut during the handshake. That's typically a content/DNS "
+                "filter, proxy, or firewall blocking this site (on this PC, the router, or further upstream "
+                "with the ISP), not a fault with your network itself.")
+    if isinstance(e, socket.timeout):
+        return " - no reply during the handshake. The site may be down, or something on the path is silently dropping the traffic."
+    if isinstance(e, ssl.SSLError):
+        return (" - the server dropped or rejected the TLS handshake (unsupported protocol/cipher, or it closed the "
+                "connection outright). Try again, or test from Internet & Usage > Speed test to rule out this PC's connection.")
+    return ""
+
+
 def web_check(target, timeout=6):
     """DNS, TCP, TLS and HTTP timings plus certificate expiry for a URL or host[:port]. Returns list of (label, value, sev)."""
     t = target.strip()
@@ -1290,7 +1337,7 @@ def web_check(target, timeout=6):
             c2.verify_mode = ssl.CERT_NONE
             sock = c2.wrap_socket(raw, server_hostname=host)
         except Exception as e:
-            rows.append(("TLS", f"failed: {e}", "critical"))
+            rows.append(("TLS", f"failed: {e}{_tls_fail_hint(e)}", "critical"))
             raw.close()
             return rows
     t3 = time.time()

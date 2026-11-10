@@ -931,7 +931,8 @@ class CommandsTab:
         self.var_use.set(f"{c[2]}\n{c[4]}\n{where}" + (f"\nStill to fill: {', '.join(missing)} (asked when you run it)"
                                                        if missing else "")
                          + (f"\n\nPaste these lines one after the other:\n{text}" if "\n" in text else ""))
-        can = c[1] == "This PC" and ((c[0] == "Mac") == core.IS_MAC or c[0] == "My commands")
+        plat = "Windows" if core.IS_WIN else "Mac" if core.IS_MAC else "Linux" if core.IS_LINUX else None
+        can = c[1] == "This PC" and (c[0] == plat or c[0] == "My commands")
         self.btn_run.configure(state="normal" if can else "disabled")
         self.btn_router.configure(state="normal" if c[1] == "Router" else "disabled")
 
@@ -1648,7 +1649,8 @@ class SlowTab:
             t.insert("end", "\nAll measurements\n", "h")
             for line in self._numbers(m):
                 t.insert("end", f"  {line}\n")
-            t.insert("end", "\nCompare on the user's own PC (Command Prompt), then compare with the numbers above:\n", "h")
+            where = "Command Prompt" if core.IS_WIN else "Terminal"
+            t.insert("end", f"\nCompare on the user's own PC ({where}), then compare with the numbers above:\n", "h")
             t.insert("end", self.S.compare_command(m.get("url", "")) + "\n")
         t.configure(state="disabled")
         a = (f or {}).get("action") or ""

@@ -51,6 +51,7 @@ APP = "Network Doctor"
 VERSION = "3.18.0"
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
+IS_LINUX = not IS_WIN and not IS_MAC  # covers Linux and other Unix-likes - this app ships a Linux build only
 # Installed from the Microsoft Store (MSIX): Windows keeps it under ...\WindowsApps\ and the Store updates it
 IS_STORE = IS_WIN and "\\windowsapps\\" in (getattr(sys, "executable", "") or "").lower()
 if getattr(sys, "frozen", False):
@@ -247,9 +248,29 @@ def ip_key(ip):
         return 1 << 40
 
 
+def _linux_has_net_caps():
+    """True when this process holds CAP_NET_RAW and CAP_NET_ADMIN - what the .deb's postinst grants via
+    setcap (see linux/build_deb.sh) instead of full root, specifically so the app never needs sudo to run.
+    is_admin() below used to miss this entirely (a plain euid==0 check), so every Linux .deb install showed
+    "need administrator" and skipped the extra IP-conflict ARP rounds even though it already had everything
+    those rounds need."""
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as f:
+            for line in f:
+                if line.startswith("CapEff:"):
+                    eff = int(line.split()[1], 16)
+                    CAP_NET_ADMIN, CAP_NET_RAW = 1 << 12, 1 << 13
+                    return bool(eff & CAP_NET_ADMIN) and bool(eff & CAP_NET_RAW)
+    except Exception:
+        pass
+    return False
+
+
 def is_admin():
     if not IS_WIN:
-        return os.geteuid() == 0 if hasattr(os, "geteuid") else False
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return True
+        return IS_LINUX and _linux_has_net_caps()
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
@@ -330,6 +351,23 @@ def win_sendarp(ip):
         if _SENDARP(dest, 0, buf, ctypes.byref(size)) == 0 and size.value == 6:
             mac = norm_mac(buf.raw[:6])
             return None if is_bad_mac(mac) else mac
+    except Exception:
+        pass
+    return None
+
+
+def scapy_active_arp(ip, wait=0.6):
+    """Linux/Mac equivalent of win_sendarp(): a single ARP request for one IP, used for the 'second chance'
+    retry below. Needs scapy_ok() to have already returned True; swallows its own failures (e.g. no
+    CAP_NET_RAW) the same way win_sendarp does, so a missing capability just means no retry, not a crash."""
+    try:
+        from scapy.all import ARP, Ether, srp, conf
+        conf.verb = 0
+        ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip), timeout=wait, retry=0)
+        for _, r in ans:
+            mac = norm_mac(r.hwsrc)
+            if not is_bad_mac(mac):
+                return mac
     except Exception:
         pass
     return None
@@ -1119,14 +1157,18 @@ def scan(subnet, opts, progress, stop):
             if ttl is not None:
                 raw["ping"][ip] = ttl
     chk()
-    # Second chance for phones / cameras in Wi-Fi power-save, which often miss the first ARP request.
-    if IS_WIN and local:
+    # Second chance for phones / cameras in Wi-Fi power-save, which often miss the first ARP request. Used
+    # to be Windows-only (win_sendarp); Linux/Mac now get the same retry via scapy_active_arp, so an
+    # unknown device no longer stays MAC-less on those platforms just because it slept through round one.
+    if local:
         missed = [ip for ip in hosts if is_local(ip) and ip != lip and ip not in raw["arp"]]
-        progress(34, f"Second ARP round for {len(missed)} addresses (sleeping phones / cameras)...")
-        with ThreadPoolExecutor(96) as ex:
-            for ip, mac in zip(missed, ex.map(win_sendarp, missed)):
-                if mac:
-                    raw["arp"][ip].add(mac)
+        resolver = win_sendarp if IS_WIN else (scapy_active_arp if scapy_ok() else None)
+        if missed and resolver:
+            progress(34, f"Second ARP round for {len(missed)} addresses (sleeping phones / cameras)...")
+            with ThreadPoolExecutor(96) as ex:
+                for ip, mac in zip(missed, ex.map(resolver, missed)):
+                    if mac:
+                        raw["arp"][ip].add(mac)
     chk()
     if local:  # what the operating system learned on its own (all systems, Windows included)
         hostset = set(hosts)

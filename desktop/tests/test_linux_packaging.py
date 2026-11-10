@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
@@ -165,6 +166,57 @@ class BuildDebScript(unittest.TestCase):
                                capture_output=True, text=True)
             self.assertNotEqual(r.returncode, 0)
             self.assertFalse(os.path.exists(out))
+
+
+class LinuxCapabilityAwareAdmin(unittest.TestCase):
+    """is_admin() used to be a plain euid==0 check on Linux, so a .deb install - which gets CAP_NET_RAW /
+    CAP_NET_ADMIN via setcap instead of full root (see linux/build_deb.sh's postinst) - always showed "need
+    administrator" and skipped the extra IP-conflict ARP rounds, even though it already had everything
+    those rounds need."""
+
+    def setUp(self):
+        self._geteuid = os.geteuid if hasattr(os, "geteuid") else None
+        self._is_linux = core.IS_LINUX
+
+    def tearDown(self):
+        if self._geteuid is not None:
+            os.geteuid = self._geteuid
+        core.IS_LINUX = self._is_linux
+
+    def _status_with_caps(self, eff_hex):
+        import tempfile
+        f = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".status")
+        f.write(f"Name:\tNetworkDoctor\nCapEff:\t{eff_hex}\n")
+        f.close()
+        return f.name
+
+    def test_net_caps_count_as_admin_on_linux(self):
+        core.IS_LINUX = True
+        os.geteuid = lambda: 1000
+        path = self._status_with_caps("0000000000003000")  # CAP_NET_ADMIN (12) | CAP_NET_RAW (13)
+        real_open = open
+        try:
+            with mock.patch("builtins.open", lambda p, *a, **k: real_open(path, *a, **k) if p == "/proc/self/status" else real_open(p, *a, **k)):
+                self.assertTrue(core._linux_has_net_caps())
+                self.assertTrue(core.is_admin())
+        finally:
+            os.remove(path)
+
+    def test_no_caps_and_not_root_is_not_admin(self):
+        core.IS_LINUX = True
+        os.geteuid = lambda: 1000
+        path = self._status_with_caps("0000000000000000")
+        real_open = open
+        try:
+            with mock.patch("builtins.open", lambda p, *a, **k: real_open(path, *a, **k) if p == "/proc/self/status" else real_open(p, *a, **k)):
+                self.assertFalse(core.is_admin())
+        finally:
+            os.remove(path)
+
+    def test_real_root_is_still_admin_without_reading_caps(self):
+        core.IS_LINUX = True
+        os.geteuid = lambda: 0
+        self.assertTrue(core.is_admin())
 
 
 if __name__ == "__main__":

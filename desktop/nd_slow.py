@@ -448,8 +448,12 @@ def judge(m):
 
 
 def compare_command(url):
-    """What to run on the user's own PC (Windows 10/11 has curl) to compare with this PC's numbers."""
-    return (f'curl.exe -o NUL -s -w "DNS %{{time_namelookup}}s  connect %{{time_connect}}s  secure '
+    """What to run on the user's own PC to compare with this PC's numbers - curl ships with Windows 10/11,
+    and with virtually every Linux and Mac install, but the Windows binary is specifically 'curl.exe' and
+    needs 'NUL' instead of '/dev/null' for the discarded output."""
+    out = "NUL" if core.IS_WIN else "/dev/null"
+    exe = "curl.exe" if core.IS_WIN else "curl"
+    return (f'{exe} -o {out} -s -w "DNS %{{time_namelookup}}s  connect %{{time_connect}}s  secure '
             f'%{{time_appconnect}}s  first answer %{{time_starttransfer}}s  total %{{time_total}}s\\n" "{url}"')
 
 
