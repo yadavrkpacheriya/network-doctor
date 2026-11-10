@@ -1,3 +1,15 @@
+## Network Doctor 3.23.3
+
+### Fix: the release pipeline now actually proves the Linux build runs before publishing it
+- 3.23.0, 3.23.1 and 3.23.2 each shipped a Linux build that looked fine in CI but failed to launch for real
+  users, three times in a row - the pipeline only checked that the build *compiled*, never that it *ran*.
+- The CI build now launches both Linux outputs for real, headless (via a virtual display), using the app's
+  own built-in self-test: the portable `NetworkDoctor-Linux` binary, and the actual installed `.deb` -
+  including its real `postinst` and the real `setcap` grant, exactly as it lands on a user's machine. Either
+  one failing to start now fails the build instead of reaching the Releases page.
+- This is also the first release where that installed-`.deb` self-test runs for real, which is what the
+  previous two fixes (the `/proc` crash and the missing Tk library) were only ever checked against by hand.
+
 ## Network Doctor 3.23.2
 
 ### Fix: the .deb package still would not open (this time: missing Tk library)
