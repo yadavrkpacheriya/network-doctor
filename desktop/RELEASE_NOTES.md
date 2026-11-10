@@ -1,3 +1,15 @@
+## Network Doctor 3.23.8
+
+### CI fix: the library check itself was giving a false alarm
+- 3.23.7 fixed the real bundling problem but still didn't publish: the `ldd`-based verification step checks
+  each bundled file in isolation, with none of the environment the app itself gets at real startup -
+  specifically, PyInstaller's own `onedir` build points `LD_LIBRARY_PATH` at its `_internal/` folder right
+  before the real app runs, which is how a nested module finds a sibling library placed at the top level.
+  The check didn't set that, so it reported Tcl/Tk as "not found" even after 3.23.7 genuinely fixed where
+  they live - a false alarm, not a real bug.
+- Fixed by setting `LD_LIBRARY_PATH` the same way before running the check, so it now matches what actually
+  happens when the app starts for real.
+
 ## Network Doctor 3.23.7
 
 ### Found the actual, final cause of the libtk8.6.so crash
