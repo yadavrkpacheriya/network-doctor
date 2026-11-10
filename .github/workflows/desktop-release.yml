@@ -219,6 +219,13 @@ jobs:
 
       - name: "Verify no bundled library is missing (would have caught 3.23.1's libtk8.6.so bug)"
         run: |
+          # PyInstaller's own onedir bootloader points LD_LIBRARY_PATH at _internal/ before the real app
+          # starts - that's how a module nested below it (like _tkinter, under
+          # _internal/python3.12/lib-dynload/) finds a sibling library placed at the top level. A bare ldd
+          # here, with no LD_LIBRARY_PATH, reports a false "not found" for exactly that kind of dependency -
+          # it isn't actually missing, ldd just isn't checking it the way the real app will. Set it the same
+          # way before checking, so a real "not found" here means a real one at runtime, not a false alarm.
+          export LD_LIBRARY_PATH="$PWD/dist-deb/NetworkDoctor/_internal"
           missing=$(find dist-deb/NetworkDoctor -type f \( -name "*.so*" -o -perm -u+x \) -exec sh -c \
             'ldd "$1" 2>/dev/null | grep "not found"' _ {} \;)
           if [ -n "$missing" ]; then
