@@ -15,6 +15,7 @@ How it works
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -40,9 +41,12 @@ PACKAGED_INSTALL_DIR = "/opt/networkdoctor"
 
 def is_packaged_install():
     """True for the .deb-installed copy. A call-time check (not a module-load constant) so it can be
-    exercised with a patched sys.executable in tests, same as is_frozen() below."""
+    exercised with a patched sys.executable in tests, same as is_frozen() below. Uses posixpath explicitly
+    (not os.path) because PACKAGED_INSTALL_DIR is always a POSIX path - this only ever matters when
+    IS_LINUX is true, but the test suite also runs on Windows/Mac CI runners, where os.path's backslash
+    rules would otherwise mangle the comparison and silently always say False."""
     try:
-        return IS_LINUX and os.path.dirname(os.path.abspath(sys.executable)) == PACKAGED_INSTALL_DIR
+        return IS_LINUX and posixpath.dirname(posixpath.abspath(sys.executable)) == PACKAGED_INSTALL_DIR
     except Exception:
         return False
 
