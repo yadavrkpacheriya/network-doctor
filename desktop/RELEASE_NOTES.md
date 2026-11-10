@@ -1,3 +1,15 @@
+## Network Doctor 3.23.1
+
+### Fix: the .deb package would not open at all
+- 3.23.0's `.deb` package failed on every launch with `Security validation failure: could not access /proc
+  entry...`. Cause: granting the raw-socket capability directly to the installed binary (`setcap`, so scans
+  work without `sudo`) makes Linux treat it like a setuid program - which blocks PyInstaller's single-file
+  bootloader from reading its own process entry at startup. Fixed by building the `.deb`'s payload as a
+  plain folder (PyInstaller `--onedir`) instead of a self-extracting single file, which needs no such
+  self-check. The portable `NetworkDoctor-Linux` download is unaffected (it was never `setcap`'d).
+- Also: the Linux build never actually included Scapy, so the ARP-based device block (3.22.9) silently
+  could not run on Linux at all, on either the `.deb` or the portable binary. Both now bundle it.
+
 ## Network Doctor 3.23.0
 
 ### New: a real install on Linux (Ubuntu/Debian)
