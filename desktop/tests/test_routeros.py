@@ -12,6 +12,32 @@ import nd_routeros as R  # noqa: E402
 from fake_routeros import FakeRouter  # noqa: E402
 
 
+class CleanHost(unittest.TestCase):
+    def test_bare_ip_is_untouched(self):
+        self.assertEqual(R.clean_host("192.168.1.1"), "192.168.1.1")
+        self.assertEqual(R.clean_host("  192.168.1.1  "), "192.168.1.1")
+
+    def test_hostname_is_untouched(self):
+        self.assertEqual(R.clean_host("router.lan"), "router.lan")
+
+    def test_a_pasted_web_url_is_reduced_to_the_host(self):
+        # the exact mistake that produced "cannot connect to 192.168.1.1/80:8728" - the stray "/80"
+        # (a path, not a port) was handed to DNS as part of the hostname.
+        self.assertEqual(R.clean_host("192.168.1.1/80"), "192.168.1.1")
+        self.assertEqual(R.clean_host("http://192.168.1.1/80"), "192.168.1.1")
+        self.assertEqual(R.clean_host("https://192.168.1.1/webfig?x=1"), "192.168.1.1")
+        self.assertEqual(R.clean_host("192.168.1.1#frag"), "192.168.1.1")
+
+    def test_a_typed_port_is_dropped_since_the_ssl_checkbox_already_picks_one(self):
+        self.assertEqual(R.clean_host("192.168.1.1:8728"), "192.168.1.1")
+        self.assertEqual(R.clean_host("router.lan:8729"), "router.lan")
+
+    def test_empty_or_none_is_empty(self):
+        self.assertEqual(R.clean_host(""), "")
+        self.assertEqual(R.clean_host(None), "")
+        self.assertEqual(R.clean_host("   "), "")
+
+
 class Wire(unittest.TestCase):
     def test_length_encoding_round_trip(self):
         for n in (0, 1, 0x7F, 0x80, 0x3FFF, 0x4000, 0x1FFFFF, 0x200000, 0xFFFFFFF, 0x10000000):

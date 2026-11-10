@@ -22,6 +22,22 @@ IS_WIN = os.name == "nt"
 API_PORT, API_SSL_PORT = 8728, 8729
 
 
+def clean_host(raw):
+    """Router IP/host field: a bare address, nothing else. Strips a scheme, path or query a user may have
+    pasted by mistake off a browser address bar ("http://192.168.1.1/80", "192.168.1.1/webfig") and a
+    typo'd ":port" suffix (the API-SSL checkbox already picks 8728 vs 8729, so the field never needs one) -
+    all of which socket.create_connection() would otherwise hand to DNS as the hostname, failing with a
+    cryptic "Name or service not known" instead of ever reaching the router."""
+    s = (raw or "").strip()
+    s = re.sub(r"^\w+://", "", s)
+    s = s.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if s.count(":") == 1:  # a single colon - likely ":port", never IPv6 (which has several)
+        host, maybe_port = s.split(":", 1)
+        if maybe_port.isdigit():
+            s = host
+    return s.strip()
+
+
 class RosError(Exception):
     pass
 
@@ -289,5 +305,5 @@ def from_settings(st, gw=None):
     r = (st or {}).get("router_api") or {}
     if not r.get("user"):
         return None
-    return RouterOS(r.get("host") or gw, r["user"], unprotect(r.get("pw", "")), int(r.get("port") or 0) or None,
-                    bool(r.get("ssl")))
+    return RouterOS(clean_host(r.get("host")) or gw, r["user"], unprotect(r.get("pw", "")),
+                    int(r.get("port") or 0) or None, bool(r.get("ssl")))
