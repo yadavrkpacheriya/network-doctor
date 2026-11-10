@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Network Doctor
+Comment=Scan your office network, find problems, and keep devices safe
+Exec=/opt/networkdoctor/NetworkDoctor
+Icon=networkdoctor
+Terminal=false
+Categories=Network;System;Utility;
+StartupWMClass=NetworkDoctor

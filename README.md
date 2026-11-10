@@ -8,7 +8,7 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 |---|---|---|
 | Windows | **Available** - full features | `NetworkDoctor.exe` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | macOS (Apple silicon) | **Available** - full features (IP-conflict rounds need admin) | `NetworkDoctor-macOS.zip` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
-| Linux (x86-64) | **From the next release** - full features (run with `sudo` for the IP-conflict rounds) | `NetworkDoctor-Linux` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
+| Linux (x86-64, Ubuntu/Debian) | **Available** - full features, installs properly (app menu, icon, start at login) | `NetworkDoctor_*_amd64.deb` from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) |
 | Android | **Test version** - phone scan, Tools (ping, switch details over SNMP, speed test, port scan, DNS, Wake-on-LAN, subnet calculator) + office PC link | `NetworkDoctor-Android.apk` from the [Android releases](https://github.com/yadavrkpacheriya/network-doctor/releases?q=mobile&expanded=true); Google Play coming |
 | Google Play, Microsoft Store, signed Mac | waiting for developer accounts | see [docs/STORES.md](docs/STORES.md) |
 
@@ -26,11 +26,15 @@ A standalone network scanner, live monitor and root-cause tool for office LANs. 
 2. The first time, **right-click → Open**. If macOS still blocks it, go to **System Settings → Privacy & Security → Open Anyway** (the app is not yet signed with an Apple Developer certificate).
 3. On the Mac the router log arrives on UDP **5514** (macOS reserves ports below 1024); *Setup → Copy router commands* already uses it.
 
-## Install (Linux)
+## Install (Linux - Ubuntu/Debian)
 
-1. Download **NetworkDoctor-Linux** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest) into a folder you own, for example `~/NetworkDoctor`.
-2. Make it runnable once: `chmod +x NetworkDoctor-Linux`, then start it: `./NetworkDoctor-Linux`.
-3. Updates are automatic, as on Windows and Mac. Keep the file in a folder you can write to so the updater can replace it.
+1. Download **NetworkDoctor_*_amd64.deb** from the [latest release](https://github.com/yadavrkpacheriya/network-doctor/releases/latest).
+2. Install it: `sudo apt install ./NetworkDoctor_*_amd64.deb` (or `sudo dpkg -i` then `sudo apt install -f` if you don't have `apt`). This is a real install, not a loose file:
+   - **Network Doctor** appears in your app menu / Activities search with its own icon, so you can launch it, pin it to the taskbar/Dash, or add it to favourites like any other app.
+   - The raw-socket scans and the ARP-based device block work **without `sudo`** - the installer grants the app the specific network capability it needs (`setcap`), not full root.
+   - **Setup > "Start at login"** then actually works: the app starts minimised in the background after a reboot.
+3. **Updates:** the self-updater is off for this package (apt owns the file) - download the newest `.deb` from this page and `sudo apt install ./NetworkDoctor_*_amd64.deb` again over it when a new version is out.
+4. Prefer a portable file instead, or on a non-Debian distro (Fedora, Arch, ...)? **NetworkDoctor-Linux** is still published on every release: `chmod +x NetworkDoctor-Linux && ./NetworkDoctor-Linux` (run with `sudo` for the raw-socket tests). It self-updates in place, but has none of the app-menu/icon/autostart integration above.
 
 ## Install (Android phone)
 

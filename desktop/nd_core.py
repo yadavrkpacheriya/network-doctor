@@ -31,6 +31,7 @@ import json
 import os
 import random
 import re
+import shlex
 import socket
 import ssl
 import struct
@@ -65,6 +66,28 @@ else:
 DB_PATH = os.path.join(DATA_DIR, "devices_db.json")
 OUI_PATH = os.path.join(DATA_DIR, "oui_cache.json")
 REPORT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "NetworkDoctor Reports")
+
+# Linux "start at login" (Setup > "Start at login" - see NetworkDoctor.py's toggle_autostart()): every
+# desktop environment (GNOME, KDE, XFCE, Cinnamon, ...) honours a .desktop file dropped in
+# ~/.config/autostart - no systemd unit, service, or root needed, unlike the Scheduled Task (Windows) or
+# LaunchAgent plist (Mac) used for the same checkbox on those platforms.
+LINUX_AUTOSTART_DIR = os.path.join(os.path.expanduser("~"), ".config", "autostart")
+LINUX_AUTOSTART_FILE = os.path.join(LINUX_AUTOSTART_DIR, "networkdoctor.desktop")
+
+
+def linux_autostart_entry(cmd_args):
+    """The .desktop file content that starts Network Doctor minimised at login by running `cmd_args`
+    (e.g. ["/opt/networkdoctor/NetworkDoctor", "--minimized"]) - shell-quoted so a path with spaces still
+    works."""
+    exec_line = " ".join(shlex.quote(a) for a in cmd_args)
+    return ("[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Network Doctor\n"
+            f"Exec={exec_line}\n"
+            "Terminal=false\n"
+            "Hidden=false\n"
+            "NoDisplay=false\n"
+            "X-GNOME-Autostart-enabled=true\n")
 
 # Advanced ("Pro") features (auto-defense, remote access, packet capture, security check, exposure, users &
 # audit) ship INSIDE this one public app but stay locked. They unlock only when a licence signed with the
