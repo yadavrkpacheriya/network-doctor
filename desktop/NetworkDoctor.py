@@ -32,6 +32,7 @@ import nd_share as SH
 import nd_alerts as AL
 import nd_auth as AU
 import nd_defense as DF
+import nd_arpblock as AB
 import nd_protab
 import nd_tabs
 import nd_tools as T
@@ -65,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.8"
+VERSION = "3.22.9"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -962,6 +963,13 @@ class App(tk.Tk):
         self.var_ro_info = tk.StringVar(value="saved - " + (r.get("ident") or "") if r.get("user") else
                                         "not set: commands are shown to paste in WinBox instead")
         ttk.Label(f, textvariable=self.var_ro_info, foreground="#5b21b6").pack(anchor="w", padx=8)
+        ttk.Label(f, text="Not a MikroTik, or no router login? Blocking a single device's internet (the phone "
+                          "app's Block button, the right-click menu's \"Block internet\", and Auto-defense) "
+                          "still works on any router or access point - it runs from this PC (ARP method) "
+                          "instead of the router, and needs administrator rights plus Npcap (Tools > \"Setup "
+                          "check - what is missing\" has 'Get Npcap'). Site-wide whitelist/blocklist (above), "
+                          "connected devices and usage already work on any router too, without any of this.",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
         self.tsetup = text_box(f)
         self._fill_setup()
 
@@ -1194,6 +1202,12 @@ class App(tk.Tk):
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
                                          for ok, t, d, _, _ in self.home.checklist()]
+            if time.time() - getattr(self, "_arpblock_t", 0) > 30:  # release any LAN block past its time limit -
+                self._arpblock_t = time.time()                      # a safety net independent of how it started
+                for ip in self.arpblock.expired():
+                    e = self.arpblock.active.get(ip) or {}
+                    self.arpblock.stop(ip)
+                    self._health_log("LAN block", "info", f"Released {e.get('name') or ip} after the time limit.")
         except Exception:
             pass
         try:
@@ -1606,6 +1620,8 @@ class App(tk.Tk):
         self.fill_checks()
         if self.mon:
             self.mon.self_mac = self.raw.get("self_mac")
+        self.arpblock.self_mac = self.raw.get("self_mac") or self.arpblock.self_mac
+        self.arpblock.gw_ip = self.gw or self.arpblock.gw_ip
         self._evaluate("Full scan", self.issues, dhcp_tested=True)
         self._auto_label()
         self._tab_changed()
@@ -1733,6 +1749,7 @@ class App(tk.Tk):
                        ("Port scan", "ports"), ("Website / server check", "webcheck"),
                        ("Watch: alert if it stops answering", "watch"),
                        ("Open shared folders", "share"), ("Remote Desktop", "rdp"), ("Wake on LAN", "wol"),
+                       (None, None), ("Block internet (keep local network)", "block"), ("Unblock", "unblock"),
                        (None, None), ("Copy IP", "cip"), ("Copy MAC", "cmac"), ("Copy all details", "call")):
             if lab is None:
                 m.add_separator()
@@ -1844,6 +1861,19 @@ class App(tk.Tk):
                 port = (d.get("http") or {}).get("port") or 80
                 self.tools.var_url.set(("https://" if port in (443, 8443) else "http://") + ip +
                                        ("" if port in (80, 443) else f":{port}"))
+            elif what in ("block", "unblock"):
+                if not mac:
+                    messagebox.showinfo(APP, "This device has no MAC address yet - wait for the next scan.")
+                    return
+                on = what == "block"
+                verb = "Block this device's internet access (it keeps the local network)?" if on else \
+                      "Unblock this device?"
+                if not messagebox.askyesno(APP, f"{verb}\n\n{d['name'] or ip}"):
+                    return
+                res = self._remote("block", {"mac": mac, "ip": ip, "on": on})
+                self.var_status.set(res.get("message") or ("Blocked." if on else "Unblocked."))
+                if not res.get("ok") and not res.get("job"):
+                    messagebox.showerror(APP, res.get("message") or "Could not do this.")
             elif what == "watch" and mac:
                 T.set_tag(self.db, mac, watch="1")
                 core.save_db(self.db)
@@ -2023,6 +2053,10 @@ class App(tk.Tk):
         self.telemetry.install_tk_hook(self)
         self.telemetry.start_background()
         self.dnsfilter = None
+        # Router-agnostic per-device internet block (ARP spoofing from this PC) - the "block" phone action's
+        # fallback when no MikroTik login is saved, so it is NOT Pro-gated: self_mac/gw_ip are filled in once
+        # a scan completes (see fill_devices() / the self.mon.self_mac assignment) and kept current from there.
+        self.arpblock = AB.ArpBlocker(self_mac="", gw_ip=self.gw)
         if core.IS_PRO:
             self.accounts = AU.Accounts()
             self.audit = AU.AuditLog()
@@ -2913,6 +2947,33 @@ class App(tk.Tk):
             jobs.pop(k, None)
         return {"ok": True, "job": jid, "message": title + " started"}
 
+    def _arp_fallback_block(self, d, mac, ip, on):
+        """Router-agnostic internet block (nd_arpblock) for the "block"/"isolate" phone actions when no
+        MikroTik login is saved - works on any router, but only ever cuts internet, never full LAN
+        isolation (see nd_arpblock.py's module docstring for why). Always answers the same {ok, message}
+        shape as _router_job() so callers do not need to care which path ran."""
+        name = (d or {}).get("name") or mac
+        if not on:
+            was = self.arpblock.stop(ip)
+            return {"ok": True, "message": f"Unblocked {name}." if was else f"{name} was not blocked."}
+        if not self.arpblock.available():
+            return {"ok": False, "message": "No router login is saved, and the LAN block needs administrator "
+                                            "rights plus Npcap (Tools > \"Setup check - what is missing\" has "
+                                            "'Get Npcap'). Either save a router login (Setup > Router login), "
+                                            "or install Npcap and restart Network Doctor as Administrator."}
+        category = (d or {}).get("category", "")
+        why = AB.plan(category, ip, mac, DF.Defense(self._settings(), self.gw, getattr(self, "lip", "")))
+        if why:
+            return {"ok": False, "message": f"Not blocking {name}: {why}."}
+        mins = (self._settings().get("defense") or {}).get("release_min", 60) or 0
+        ok, msg = self.arpblock.start(ip, mac, name=name, minutes=mins)
+        if not ok:
+            return {"ok": False, "message": msg}
+        self._health_log("LAN block", "info", f"Blocked internet of {name} ({ip}) - LAN method, no router login")
+        until = f" for up to {mins} min" if mins else ""
+        return {"ok": True, "message": f"Blocked internet of {name}{until} (LAN method, works without a router "
+                                       "login - the local network is still reachable)."}
+
     def _router_job(self, title, script):
         c = self.router_client(ask=False)
         if not c:
@@ -3040,8 +3101,11 @@ class App(tk.Tk):
         if name == "block":
             d = self._dev_by(a)
             mac = (d or {}).get("mac") or core.norm_mac(str(a.get("mac", "")))
+            ip = (d or {}).get("ip") or str(a.get("ip", ""))
             if not mac:
                 return {"ok": False, "message": "device not found"}
+            if not self.router_client(ask=False):
+                return self._arp_fallback_block(d, mac, ip, a.get("on", True))
             if a.get("on", True):
                 # Cut the device off from the INTERNET in BOTH directions while keeping the local network:
                 #   out: it cannot reach the internet (dst-address=!LAN)
@@ -3049,7 +3113,6 @@ class App(tk.Tk):
                 # So a camera is no longer exposed to the internet (hackers can't reach it) but the NVR and
                 # PCs on the LAN still see it; a printer/PC keeps the LAN and loses only the internet.
                 lan = self.net if (self.net and "/" in (self.net or "")) else ""
-                ip = (d or {}).get("ip") or str(a.get("ip", ""))
                 top = "place-before=([/ip firewall filter find]->0)"
                 dst = f" dst-address=!{lan}" if lan else ""
                 out_rule = f'chain=forward src-mac-address={mac}{dst} action=drop comment="ND phone block {mac}"'
@@ -3071,6 +3134,17 @@ class App(tk.Tk):
             if not mac:
                 return {"ok": False, "message": "device not found (need its MAC)"}
             who = (d or {}).get("name") or mac
+            if not self.router_client(ask=False):
+                # No MikroTik login: fall back to the internet-only LAN block (nd_arpblock) - full two-way
+                # quarantine needs a router firewall rule, which this fallback deliberately does not attempt
+                # (see nd_arpblock.py's docstring), so say plainly that only the internet side is cut.
+                res = self._arp_fallback_block(d, mac, ip, name == "isolate")
+                if res.get("ok") and name == "unisolate":
+                    getattr(self, "defense", None) and self.defense.release(mac)
+                elif res.get("ok") and name == "isolate":
+                    res["message"] += (" Note: without a router login this only cuts the internet, not the "
+                                       "local network - full quarantine needs a MikroTik login (Setup).")
+                return res
             if name == "unisolate":
                 res = self._router_job(f"Release {who} from quarantine",
                                        f'/ip firewall filter remove [find where comment="ND isolate {mac}"]')
@@ -3745,6 +3819,8 @@ class App(tk.Tk):
                 self.telemetry.stop_background()
             if getattr(self, "dnsfilter", None):
                 self.dnsfilter.stop()
+            if getattr(self, "arpblock", None):
+                self.arpblock.shutdown()  # heals every active LAN block before the app that refreshes it exits
         except Exception:
             pass
         self.destroy()
