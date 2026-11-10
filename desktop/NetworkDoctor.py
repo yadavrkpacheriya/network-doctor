@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.5"
+VERSION = "3.22.6"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2560,6 +2560,8 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- critical-device watch
     WATCH_EVERY = 30   # seconds between pings
     WATCH_FAILS = 3    # missed rounds before "down" (about 1.5 minutes)
+    WATCH_LATENCY_MS = 150    # a LAN device answers in a few ms; sustained triple digits means real trouble
+    WATCH_LATENCY_STREAK = 10  # consecutive slow rounds (5 min) before "high latency" fires - ignores one slow reply
 
     def watch_now(self):
         self.watch_wake.set()
@@ -2631,6 +2633,15 @@ class App(tk.Tk):
                     st["last_down"] = st["down_since"]
                     st["down_since"] = None
                 st["fails"] = 0
+                st["bad_rtt"] = T.latency_streak(st.get("bad_rtt", 0), rtt, self.WATCH_LATENCY_MS)
+                if st["bad_rtt"] == self.WATCH_LATENCY_STREAK:
+                    mins = self.WATCH_LATENCY_STREAK * self.WATCH_EVERY // 60
+                    title = f"High latency to {name} ({ip}): {rtt:.0f} ms for {mins} min"
+                    self._raise_alert("warning", title,
+                                      [f"Usually a few ms on a LAN - check its cable or Wi-Fi signal, a switch "
+                                       "port, or something on it saturating the network; if it's a stale ARP/DNS "
+                                       "entry, PC fix script's 'Renew the IP and clear old address caches' can help"],
+                                      "Device watch")
             else:
                 st["fails"] += 1
                 if st["fails"] >= self.WATCH_FAILS and not st["down_since"]:
