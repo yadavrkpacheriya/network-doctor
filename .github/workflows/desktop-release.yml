@@ -130,8 +130,9 @@ jobs:
           # default. PyInstaller only bundles what it can find and load at BUILD time, so without this the
           # build still "succeeds" but silently ships a binary that fails at startup on every machine with
           # "ImportError: libtk8.6.so: cannot open shared object file" (3.23.1's real-world failure).
+          # xvfb: a virtual display so the GUI can actually be launched and smoke-tested below, headless.
           sudo apt-get update -y
-          sudo apt-get install -y python3-tk
+          sudo apt-get install -y python3-tk xvfb
 
       - name: Check that the code loads
         run: |
@@ -147,6 +148,17 @@ jobs:
           mv dist/NetworkDoctor dist/NetworkDoctor-Linux
           chmod +x dist/NetworkDoctor-Linux
           (cd dist && sha256sum NetworkDoctor-Linux > NetworkDoctor-Linux.sha256 && cat NetworkDoctor-Linux.sha256)
+
+      - name: "Smoke-test the portable build (actually launches the GUI, headless - catches a build that 'succeeds' but can't run)"
+        timeout-minutes: 5
+        run: |
+          rm -rf /tmp/selftest-onefile
+          xvfb-run -a dist/NetworkDoctor-Linux --selftest /tmp/selftest-onefile || {
+            echo "::error::NetworkDoctor-Linux failed its self-test - see selftest.txt below"
+            cat /tmp/selftest-onefile/selftest.txt 2>/dev/null
+            exit 1
+          }
+          cat /tmp/selftest-onefile/selftest.txt
 
       - name: "Build the .deb payload (onedir, not onefile - setcap on a onefile binary breaks PyInstaller's own /proc self-check, see linux/build_deb.sh)"
         run: |
@@ -173,6 +185,22 @@ jobs:
             "dist/NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb"
           (cd dist && sha256sum "NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb" \
             > "NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb.sha256")
+
+      - name: "Install the .deb for real and smoke-test it (exactly what a user's machine does - postinst, setcap, the works)"
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y "./dist/NetworkDoctor_${{ needs.windows.outputs.version }}_amd64.deb"
+          test -x /opt/networkdoctor/NetworkDoctor
+          getcap /opt/networkdoctor/NetworkDoctor | grep -q cap_net_raw || \
+            echo "::warning::setcap did not apply (libcap2-bin missing?) - raw-socket tests will need sudo on a real machine too"
+          rm -rf /tmp/selftest-deb
+          xvfb-run -a /opt/networkdoctor/NetworkDoctor --selftest /tmp/selftest-deb || {
+            echo "::error::The installed .deb failed its self-test - see selftest.txt below"
+            cat /tmp/selftest-deb/selftest.txt 2>/dev/null
+            exit 1
+          }
+          cat /tmp/selftest-deb/selftest.txt
+          sudo apt-get remove -y networkdoctor
 
       - name: Add the Linux app to the release
         env:
