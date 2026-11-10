@@ -60,7 +60,11 @@ void main() {
       final t = Telemetry();
       await t.load();
       expect(t.installId.length, 16);
-      expect(int.tryParse(t.installId, radix: 16), isNotNull);
+      // Every character is a hex digit - checked this way, not via int.tryParse(id, radix: 16), because a
+      // 16-hex-char id covers the full 64-bit range and about half the time (whenever the leading nibble is
+      // 8-f) that overflows Dart's signed 64-bit int on the VM, making tryParse return null for a perfectly
+      // valid id and failing this test on a coin flip unrelated to anything actually wrong.
+      expect(RegExp(r'^[0-9a-f]{16}$').hasMatch(t.installId), isTrue);
     });
 
     test('the same preferences store keeps its id across instances', () async {
