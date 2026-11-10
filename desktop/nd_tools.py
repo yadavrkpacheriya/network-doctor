@@ -1761,3 +1761,14 @@ def mass_disconnect(down_since, now, window=300, min_count=3):
     latest = max(down_since.values())
     cluster = sorted(name for name, t in down_since.items() if latest - t <= window)
     return cluster if len(cluster) >= min_count else []
+
+
+def latency_streak(prev_streak, rtt_ms, threshold_ms=150):
+    """Tracks consecutive samples of unusually high round-trip time for one watched device (Tools > Critical
+    devices). Returns the new streak count: resets to 0 the moment a sample comes back fast, or the device
+    didn't answer at all (that's a down, handled separately, not a latency problem), otherwise increments.
+    A caller fires its "high latency" alert the one time this returns exactly its chosen streak length, so a
+    device stuck at high latency is reported once per incident, not on every single check."""
+    if rtt_ms is None or rtt_ms <= threshold_ms:
+        return 0
+    return prev_streak + 1
