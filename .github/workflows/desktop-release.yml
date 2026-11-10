@@ -140,31 +140,46 @@ jobs:
           python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, nd_home, nd_slow, nd_smbinfo, nd_alerts; print('modules OK')"
           python -m unittest discover -s tests -v
 
+      - name: "Locate Tcl/Tk's shared libraries (to force-bundle them below - PyInstaller's own tkinter hook silently skipped them in 3.23.1/3.23.2)"
+        run: |
+          TCL_LIB="$(ldconfig -p | awk '/libtcl8\.6\.so /{print $NF; exit}')"
+          TK_LIB="$(ldconfig -p | awk '/libtk8\.6\.so /{print $NF; exit}')"
+          test -f "$TCL_LIB" || { echo "::error::could not locate libtcl8.6.so via ldconfig"; exit 1; }
+          test -f "$TK_LIB" || { echo "::error::could not locate libtk8.6.so via ldconfig"; exit 1; }
+          echo "TCL_LIB=$TCL_LIB" >> "$GITHUB_ENV"
+          echo "TK_LIB=$TK_LIB" >> "$GITHUB_ENV"
+          echo "Found: $TCL_LIB and $TK_LIB"
+
       - name: Build NetworkDoctor-Linux (portable, onefile - self-updates in place, no setcap)
         run: |
           python -m PyInstaller --noconfirm --onefile --windowed --name NetworkDoctor \
+            --add-binary "$TCL_LIB:." --add-binary "$TK_LIB:." \
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts --hidden-import nd_auth --hidden-import nd_defense --hidden-import nd_vuln --hidden-import nd_capture --hidden-import nd_expose --hidden-import nd_protab --hidden-import nd_license --hidden-import nd_arpblock \
             --collect-all scapy NetworkDoctor.py
           mv dist/NetworkDoctor dist/NetworkDoctor-Linux
           chmod +x dist/NetworkDoctor-Linux
           (cd dist && sha256sum NetworkDoctor-Linux > NetworkDoctor-Linux.sha256 && cat NetworkDoctor-Linux.sha256)
 
-      - name: "Smoke-test the portable build (actually launches the GUI, headless - catches a build that 'succeeds' but can't run)"
-        timeout-minutes: 5
-        run: |
-          rm -rf /tmp/selftest-onefile
-          xvfb-run -a dist/NetworkDoctor-Linux --selftest /tmp/selftest-onefile || {
-            echo "::error::NetworkDoctor-Linux failed its self-test - see selftest.txt below"
-            cat /tmp/selftest-onefile/selftest.txt 2>/dev/null
-            exit 1
-          }
-          cat /tmp/selftest-onefile/selftest.txt
-
       - name: "Build the .deb payload (onedir, not onefile - setcap on a onefile binary breaks PyInstaller's own /proc self-check, see linux/build_deb.sh)"
         run: |
           python -m PyInstaller --noconfirm --onedir --windowed --name NetworkDoctor --distpath dist-deb --workpath build-deb \
+            --add-binary "$TCL_LIB:." --add-binary "$TK_LIB:." \
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts --hidden-import nd_auth --hidden-import nd_defense --hidden-import nd_vuln --hidden-import nd_capture --hidden-import nd_expose --hidden-import nd_protab --hidden-import nd_license --hidden-import nd_arpblock \
             --collect-all scapy NetworkDoctor.py
+
+      - name: "Remove the build machine's own Tcl/Tk (so the checks below can only pass using what's actually bundled, not a system copy that masks a missing one - this masking is exactly how 3.23.1/3.23.2 slipped through CI and still failed on real machines)"
+        run: |
+          sudo apt-get purge -y python3-tk tcl8.6 tk8.6
+          sudo apt-get autoremove -y
+          sudo ldconfig
+
+      - name: "Verify the required libraries are actually inside the bundle, by filename, not just resolvable (ldd alone can be fooled by a leftover system copy)"
+        run: |
+          for pattern in 'libtcl8.6.so*' 'libtk8.6.so*'; do
+            found="$(find dist/NetworkDoctor-Linux dist-deb/NetworkDoctor -iname "$pattern" 2>/dev/null | head -1)"
+            test -n "$found" || { echo "::error::$pattern was not bundled into the build - PyInstaller's --add-binary did not take effect"; exit 1; }
+            echo "OK - $found"
+          done
 
       - name: "Verify no bundled library is missing (would have caught 3.23.1's libtk8.6.so bug)"
         run: |
@@ -176,6 +191,17 @@ jobs:
             exit 1
           fi
           echo "OK - every bundled binary resolves its shared libraries"
+
+      - name: "Smoke-test the portable build (actually launches the GUI, headless - catches a build that 'succeeds' but can't run, now with the system's own Tcl/Tk removed so this can't be masked)"
+        timeout-minutes: 5
+        run: |
+          rm -rf /tmp/selftest-onefile
+          xvfb-run -a dist/NetworkDoctor-Linux --selftest /tmp/selftest-onefile || {
+            echo "::error::NetworkDoctor-Linux failed its self-test - see selftest.txt below"
+            cat /tmp/selftest-onefile/selftest.txt 2>/dev/null
+            exit 1
+          }
+          cat /tmp/selftest-onefile/selftest.txt
 
       - name: "Build the .deb package (proper install - app menu, icon, autostart-ready, setcap)"
         run: |
