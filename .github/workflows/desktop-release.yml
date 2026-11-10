@@ -126,9 +126,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller scapy
+          # The Tk GUI toolkit's shared libraries (libtk8.6.so / libtcl8.6.so) are not on this image by
+          # default. PyInstaller only bundles what it can find and load at BUILD time, so without this the
+          # build still "succeeds" but silently ships a binary that fails at startup on every machine with
+          # "ImportError: libtk8.6.so: cannot open shared object file" (3.23.1's real-world failure).
+          sudo apt-get update -y
+          sudo apt-get install -y python3-tk
 
       - name: Check that the code loads
         run: |
+          python -c "import tkinter; print('tkinter OK', tkinter.TkVersion)"
           python -c "import nd_core, nd_monitor, nd_update, nd_share, nd_tools, nd_tabs, nd_net, nd_toolstab, nd_snmp, nd_plugins, nd_linux, nd_dnsfilter, nd_routeros, nd_usage, nd_home, nd_slow, nd_smbinfo, nd_alerts; print('modules OK')"
           python -m unittest discover -s tests -v
 
@@ -146,6 +153,17 @@ jobs:
           python -m PyInstaller --noconfirm --onedir --windowed --name NetworkDoctor --distpath dist-deb --workpath build-deb \
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts --hidden-import nd_auth --hidden-import nd_defense --hidden-import nd_vuln --hidden-import nd_capture --hidden-import nd_expose --hidden-import nd_protab --hidden-import nd_license --hidden-import nd_arpblock \
             --collect-all scapy NetworkDoctor.py
+
+      - name: "Verify no bundled library is missing (would have caught 3.23.1's libtk8.6.so bug)"
+        run: |
+          missing=$(find dist-deb/NetworkDoctor -type f \( -name "*.so*" -o -perm -u+x \) -exec sh -c \
+            'ldd "$1" 2>/dev/null | grep "not found"' _ {} \;)
+          if [ -n "$missing" ]; then
+            echo "$missing"
+            echo "::error::A bundled binary is missing a shared library - the Linux build would not run."
+            exit 1
+          fi
+          echo "OK - every bundled binary resolves its shared libraries"
 
       - name: "Build the .deb package (proper install - app menu, icon, autostart-ready, setcap)"
         run: |

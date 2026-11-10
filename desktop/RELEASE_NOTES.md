@@ -1,3 +1,14 @@
+## Network Doctor 3.23.2
+
+### Fix: the .deb package still would not open (this time: missing Tk library)
+- 3.23.1 fixed the `/proc` crash but the app still failed to start, now with `ImportError: libtk8.6.so:
+  cannot open shared object file`. The Linux build machine never had the Tk GUI toolkit's system libraries
+  installed, so PyInstaller silently built a binary without them - nothing failed at build time, only at
+  startup, on every machine. Fixed by installing `python3-tk` on the build machine before building.
+- The CI build now also verifies every bundled binary resolves its shared libraries (`ldd ... | grep "not
+  found"`) before packaging the `.deb`, specifically so this class of "builds fine, never runs" bug fails
+  the build instead of shipping.
+
 ## Network Doctor 3.23.1
 
 ### Fix: the .deb package would not open at all
