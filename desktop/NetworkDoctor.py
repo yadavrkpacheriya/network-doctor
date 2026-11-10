@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Network Doctor - standalone network scanner, live monitor and root-cause tool for Windows and Mac.
+Network Doctor - standalone network scanner, live monitor and root-cause tool for Windows, Mac and Linux.
 
 Files: NetworkDoctor.py (this window), nd_core.py (scan engine), nd_monitor.py (monitor / traffic / RCA),
 nd_tools.py + nd_tabs.py (tags, map, IP-MAC binding, commands), nd_net.py + nd_toolstab.py (engineer tools).
@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.23.9"
+VERSION = "3.23.10"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 

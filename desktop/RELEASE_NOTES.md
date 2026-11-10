@@ -1,3 +1,35 @@
+## Network Doctor 3.23.10
+
+### Linux had been getting a second-class version of several features
+With the `.deb` finally launching reliably, a round of real usage on Ubuntu surfaced a batch of
+feature gaps where Linux was quietly getting less than Windows and Mac:
+- **Unknown devices with no MAC/vendor (e.g. two phones on Devices tab)**: the "second chance" ARP retry
+  for devices that miss the first round (phones/cameras asleep on Wi-Fi) only ran on Windows. Linux and Mac
+  now get the same retry via `scapy`, so a device that answers late no longer stays stuck as an unlabeled
+  "Unknown device" with MAC `-`.
+- **Fix & Commands > Commands tab had nothing for Linux**: "This PC" commands were Windows/Mac only. Added
+  a full set of Linux equivalents (IP/MAC/gateway info, renew DHCP lease, flush DNS, ARP/neighbour table,
+  ping, traceroute, Wi-Fi details, switch to DHCP, lock the router's MAC, restart networking, test a TCP
+  port, cable speed/duplex, DNS lookup, firewall status, sync clock, and more) - also fixed a bug that could
+  incorrectly enable a Windows/Mac command's Run button on Linux.
+- **"Need administrator" shown on a correctly-installed `.deb`**: the `.deb` install never needs `sudo` -
+  it gets network capabilities (`setcap`) instead of root - but the app's admin check only recognized
+  literal root, so it always showed the "need administrator" label and skipped some extra scanning it
+  already had everything needed for. It now recognizes those capabilities too.
+- **Slow website? > "compare on your own PC" only worked on Windows**: the suggested `curl` command and
+  its label ("Command Prompt") are now OS-aware, so the comparison step actually works on Ubuntu and Mac.
+- **Website check gave an unhelpful raw error**: a TLS handshake failure other than a bad certificate (e.g.
+  "Connection reset by peer") used to show only Python's bare exception text. It now explains what that
+  specific failure usually means (a content/DNS filter, proxy, or firewall cutting the connection; a
+  timeout; or a server-side TLS rejection) instead of leaving the user with nothing to act on.
+- **Wi-Fi analyzer said "works on Windows and Mac" and did nothing on Linux**: it now scans and ranks
+  nearby Wi-Fi networks on Linux too, using NetworkManager's `nmcli` (installed by default on Ubuntu).
+
+### Usage tab blank - not a bug
+If Internet & Usage > Usage shows no traffic, check Setup > "What is missing": this tab needs the router
+to be sending it NetFlow data (or, for some routers, API/log access) - it's the same on every platform and
+just means that hasn't been turned on yet for this router.
+
 ## Network Doctor 3.23.9
 
 ### Found the final cause: setcap itself breaks how the bundle finds its own libraries

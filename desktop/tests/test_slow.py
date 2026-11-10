@@ -7,6 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import nd_core as core  # noqa: E402
 import nd_slow as S  # noqa: E402
 
 
@@ -42,7 +43,8 @@ class Diagnosis(unittest.TestCase):
     def test_healthy_says_so_and_gives_the_compare_command(self):
         f = first(healthy())
         self.assertEqual(f["sev"], "ok")
-        self.assertIn('curl.exe -o NUL', S.compare_command("https://docs.google.com/"))
+        expect = 'curl.exe -o NUL' if core.IS_WIN else 'curl -o /dev/null'
+        self.assertIn(expect, S.compare_command("https://docs.google.com/"))
 
     def test_weak_wifi_of_that_user(self):
         f = first(healthy(dev_ping=ping(loss=8, avg=45, jitter=40)))
