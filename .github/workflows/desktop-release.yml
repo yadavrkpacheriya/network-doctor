@@ -167,6 +167,15 @@ jobs:
             --hidden-import nd_core --hidden-import nd_monitor --hidden-import nd_update --hidden-import nd_share --hidden-import nd_tools --hidden-import nd_tabs --hidden-import nd_net --hidden-import nd_toolstab --hidden-import nd_snmp --hidden-import nd_plugins --hidden-import nd_linux --hidden-import nd_dnsfilter --hidden-import nd_routeros --hidden-import nd_usage --hidden-import nd_home --hidden-import nd_slow --hidden-import nd_smbinfo --hidden-import nd_alerts --hidden-import nd_auth --hidden-import nd_defense --hidden-import nd_vuln --hidden-import nd_capture --hidden-import nd_expose --hidden-import nd_protab --hidden-import nd_license --hidden-import nd_arpblock \
             --collect-all scapy NetworkDoctor.py
 
+      - name: "Co-locate Tcl/Tk next to _tkinter's own extension module (onedir can nest it below the top level, where --add-binary's '.' destination and _tkinter's own $ORIGIN rpath don't meet - the real cause of the libtk8.6.so crash on a real machine)"
+        run: |
+          TKINTER_SO="$(find dist-deb/NetworkDoctor -name '_tkinter*.so' | head -1)"
+          test -n "$TKINTER_SO" || { echo "::error::_tkinter*.so was not found anywhere in the onedir build - tkinter wasn't bundled at all"; exit 1; }
+          DEST_DIR="$(dirname "$TKINTER_SO")"
+          echo "_tkinter lives at: $TKINTER_SO - copying Tcl/Tk into its own directory: $DEST_DIR"
+          cp -v "$TCL_LIB" "$DEST_DIR/"
+          cp -v "$TK_LIB" "$DEST_DIR/"
+
       - name: "Remove the build machine's own Tcl/Tk (so the checks below can only pass using what's actually bundled, not a system copy that masks a missing one - this masking is exactly how 3.23.1/3.23.2 slipped through CI and still failed on real machines)"
         run: |
           sudo apt-get purge -y python3-tk tcl8.6 tk8.6

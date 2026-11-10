@@ -1,3 +1,15 @@
+## Network Doctor 3.23.7
+
+### Found the actual, final cause of the libtk8.6.so crash
+- 3.23.6's CI run never published either - but this time because its new, honest checks finally caught the
+  real bug instead of a masked one: `libtk8.6.so`/`libtcl8.6.so` were genuinely bundled inside the `.deb`'s
+  files, but not in the same folder as `_tkinter`, the Python module that actually needs them. PyInstaller's
+  `--onedir` layout can nest `_tkinter` below the top level of the bundle, while the two Tcl/Tk libraries
+  were being force-added to the top level - two directories that never met, so the app looked for them in
+  the one place they weren't, on every real machine, every time.
+- Fixed by finding wherever `_tkinter`'s own file actually ends up in each build and copying Tcl/Tk's
+  libraries directly into that same folder, instead of guessing a fixed destination.
+
 ## Network Doctor 3.23.6
 
 ### CI fix: 3.23.5 never actually published (the new safety check caught something real)
