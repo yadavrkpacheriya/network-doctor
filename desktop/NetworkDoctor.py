@@ -65,7 +65,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.22.6"
+VERSION = "3.22.7"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1963,6 +1963,23 @@ class App(tk.Tk):
         self.var_status.set(f"Saved {p}")
 
     def elevate(self):
+        if core.IS_STORE:
+            # The Store package does not declare the "allowElevation" restricted capability (Microsoft Store
+            # policy 10.6.3 flags it for review and is unlikely to approve it for what is, here, a convenience
+            # button rather than a feature the app cannot work without), so a packaged, Store-installed copy
+            # cannot relaunch itself elevated via UAC - that call would fail silently inside the MSIX container.
+            # Admin-only checks (IP-conflict rounds, the firewall rule, raw tests) stay reachable another way:
+            # Setup > "Start with Windows" registers a Scheduled Task with /RL HIGHEST, which Task Scheduler
+            # runs elevated at logon without a UAC prompt (see toggle_autostart() below), and the full,
+            # non-Store build (GitHub releases) can elevate itself on demand for anyone who wants that instead.
+            messagebox.showinfo(APP, "The Microsoft Store version can't restart itself as Administrator (the "
+                                      "Store doesn't allow that for this kind of app).\n\nTo still get the "
+                                      "admin-only checks (IP-conflict rounds, the firewall rule, raw tests):\n"
+                                      "- Turn on Setup > \"Start with Windows\" - it then starts as Administrator "
+                                      "every time, without asking.\n"
+                                      "- Or install the full version from GitHub, which can restart itself as "
+                                      "Administrator on demand.")
+            return
         try:
             if getattr(sys, "frozen", False):
                 exe, params = sys.executable, ""
