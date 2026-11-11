@@ -75,12 +75,14 @@ class _UpdateCardState extends State<UpdateCard> {
   String _msg = '';
   bool _busy = false;
   bool _auto = true;
+  double? _progress; // 0..1 while downloading; null when not downloading or the size is unknown
   AppUpdate? _u;
 
   @override
   void initState() {
     super.initState();
     _loadAuto();
+    cleanupDownloadedApk(); // clears a half-finished download left from a previous attempt
   }
 
   Future<void> _loadAuto() async {
@@ -108,6 +110,43 @@ class _UpdateCardState extends State<UpdateCard> {
     }
   }
 
+  Future<void> _updateNow() async {
+    final u = _u;
+    if (u == null) return;
+    setState(() {
+      _busy = true;
+      _progress = 0;
+      _msg = 'Downloading ${u.version}...';
+    });
+    try {
+      final apk = await downloadApk(u, onProgress: (received, total) {
+        if (!mounted) return;
+        setState(() => _progress = total > 0 ? received / total : null);
+      });
+      if (!mounted) return;
+      setState(() {
+        _progress = null;
+        _msg = 'Opening the installer...';
+      });
+      final err = await installApk(apk);
+      if (!mounted) return;
+      setState(() => _msg = err ?? 'Follow the prompt to finish installing, then reopen Network Doctor.');
+    } on UpdateError catch (e) {
+      if (!mounted) return;
+      setState(() => _msg = e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _msg = 'Update failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _progress = null;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final u = _u;
@@ -125,21 +164,30 @@ class _UpdateCardState extends State<UpdateCard> {
           if (u != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Wrap(spacing: 8, children: [
+              child: Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
                 FilledButton.icon(
-                    onPressed: () => launchUrl(Uri.parse(u.apkUrl), mode: LaunchMode.externalApplication),
-                    icon: const Icon(Icons.download),
-                    label: Text('Download ${u.version}')),
+                    onPressed: _busy ? null : _updateNow,
+                    icon: const Icon(Icons.system_update_alt),
+                    label: Text('Update to ${u.version}')),
                 OutlinedButton(
                     onPressed: () => launchUrl(Uri.parse(u.pageUrl), mode: LaunchMode.externalApplication),
                     child: const Text("What's new")),
               ]),
             ),
+          if (_progress != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                LinearProgressIndicator(value: _progress),
+                const SizedBox(height: 2),
+                Text('${(_progress! * 100).round()}%', style: Theme.of(context).textTheme.bodySmall),
+              ]),
+            ),
           if (u != null)
             const Padding(
               padding: EdgeInsets.only(top: 6),
-              child: Text('After the download, open the file and tap Install (allow "Install unknown apps" for the '
-                  'browser once). Your pairing with the PC is kept.'),
+              child: Text('Downloads and installs itself - Android will ask you to allow "Install unknown apps" '
+                  'for Network Doctor the first time. Your pairing with the PC is kept.'),
             ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,

@@ -30,7 +30,10 @@ def edit(path, fn):
 
 # ---------------------------------------------------------------- Android manifest
 PERMS = ["android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE",
-         "android.permission.ACCESS_WIFI_STATE", "android.permission.CHANGE_WIFI_MULTICAST_STATE"]
+         "android.permission.ACCESS_WIFI_STATE", "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+         # lets the app launch Android's own package installer on the update APK it downloaded itself
+         # (net/update.dart) - without this, Android refuses to let the app request that install at all.
+         "android.permission.REQUEST_INSTALL_PACKAGES"]
 
 
 def manifest(s):
