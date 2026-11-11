@@ -43,6 +43,18 @@ void main() {
       expect(h.last, '192.168.0.254');
       expect(hostsOf('10.0.0.5', 16).length, 1022); // never more than a /22
     });
+    test('CGNAT address detection (RFC 6598, 100.64.0.0/10)', () {
+      expect(isCgnatAddress('100.64.0.1'), true);
+      expect(isCgnatAddress('100.67.2.76'), true); // the range reported in the field
+      expect(isCgnatAddress('100.127.255.254'), true);
+      expect(isCgnatAddress('100.63.255.255'), false); // just below the range
+      expect(isCgnatAddress('100.128.0.0'), false); // just above the range
+      expect(isCgnatAddress('192.168.1.1'), false);
+      expect(isCgnatAddress('10.0.0.1'), false);
+      expect(isCgnatAddress('172.16.0.1'), false);
+      expect(isCgnatAddress(null), false);
+      expect(isCgnatAddress('not an ip'), false);
+    });
     test('broadcast', () {
       expect(broadcastOf('192.168.0.70', 24), '192.168.0.255');
       expect(broadcastOf('10.1.2.3', 22), '10.1.3.255');

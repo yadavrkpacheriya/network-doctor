@@ -300,13 +300,30 @@ class _PcDashboardState extends State<PcDashboard> {
           _load();
           return;
         }
-        setState(() => _err = e.message);
+        final msg = connErr ? await _withCgnatNote(e.message) : e.message;
+        if (mounted) setState(() => _err = msg);
       }
     } catch (e) {
       if (mounted) setState(() => _err = 'Unexpected answer from the PC: $e');
     } finally {
       _loading = false;
     }
+  }
+
+  /// Appends a plain-language note when the phone's own Wi-Fi address looks like a mobile/4G hotspot
+  /// (CGNAT range) rather than a normal router - a topology where the phone and PC genuinely cannot see
+  /// each other on the LAN, no matter what either app does, so the generic "did not answer" message would
+  /// otherwise read as a bug. Falls back to the plain message if the phone's IP can't be read.
+  Future<String> _withCgnatNote(String message) async {
+    try {
+      final ip = await NetworkInfo().getWifiIP();
+      if (isCgnatAddress(ip)) {
+        return '$message\n\nThis Wi-Fi looks like a mobile/4G hotspot (address $ip), which usually keeps '
+            'connected devices from reaching each other - that would explain this even with both apps set up '
+            'correctly. Try the office\'s normal Wi-Fi router, or set up "Reach this PC from outside" below.';
+      }
+    } catch (_) {}
+    return message;
   }
 
   Future<void> _signIn() async {

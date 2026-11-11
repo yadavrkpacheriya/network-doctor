@@ -78,6 +78,19 @@ int maskToPrefix(String? mask) {
   return bits == 0 ? 24 : bits;
 }
 
+/// True for an address in the Shared Address Space (RFC 6598, 100.64.0.0/10) that carriers hand out for
+/// CGNAT - the range a 4G/LTE "Wi-Fi hotspot" dongle commonly uses for its connected devices, as opposed
+/// to the three ordinary private ranges (192.168., 10., 172.16-31.) a normal router/AP uses. Devices on a
+/// CGNAT dongle are usually client-isolated from each other, so this is worth telling apart from an
+/// ordinary "router not answering" when explaining a failed LAN scan or PC-link attempt.
+bool isCgnatAddress(String? ip) {
+  if (ip == null) return false;
+  final m = RegExp(r'^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$').firstMatch(ip);
+  if (m == null) return false;
+  final a = int.parse(m.group(1)!), b = int.parse(m.group(2)!);
+  return a == 100 && b >= 64 && b <= 127;
+}
+
 /// Host addresses of the network [ip]/[prefix]; never more than 1024 (a /22).
 List<String> hostsOf(String ip, int prefix) {
   final pre = min(30, max(22, prefix));
