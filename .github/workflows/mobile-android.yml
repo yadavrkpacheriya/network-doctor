@@ -59,7 +59,7 @@ jobs:
           if [ ! -d android ]; then
             flutter create --project-name network_doctor --org io.github.yadavrkpacheriya --platforms android .
             rm -f test/widget_test.dart          # template test for the demo counter app
-            flutter pub add http shared_preferences url_launcher network_info_plus
+            flutter pub add http shared_preferences url_launcher network_info_plus crypto path_provider open_filex package_info_plus
             flutter pub add dev:flutter_lints
             echo "created=true" >> "$GITHUB_OUTPUT"
           fi
@@ -117,7 +117,9 @@ jobs:
           flutter build apk --release --split-per-abi
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/NetworkDoctor-Android.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/NetworkDoctor-Android-32bit.apk
-          ls -lh build/NetworkDoctor-Android*.apk
+          # The in-app updater (lib/net/update.dart) verifies the download against this before installing it.
+          (cd build && sha256sum NetworkDoctor-Android.apk > NetworkDoctor-Android.apk.sha256)
+          ls -lh build/NetworkDoctor-Android*.apk*
 
       - name: Build Play Store bundle (.aab)
         if: env.KS_B64 != ''
@@ -130,6 +132,7 @@ jobs:
           name: network-doctor-android
           path: |
             mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android.apk.sha256
             mobile/build/NetworkDoctor-Android-32bit.apk
             mobile/build/NetworkDoctor-Android.aab
           if-no-files-found: ignore
@@ -144,14 +147,17 @@ jobs:
           body: |
             Network Doctor phone app for Android.
 
-            Install on a phone for testing: open this page on the phone, download NetworkDoctor-Android.apk
-            and allow "Install unknown apps" for your browser when Android asks. The Google Play version
-            will update automatically through the Play Store once it is published there.
+            The app can now check for and install this update itself (About > Updates > Update now) - no
+            manual download needed. To install for the first time, or if that ever fails: open this page on
+            the phone, download NetworkDoctor-Android.apk and allow "Install unknown apps" for your browser
+            when Android asks. The Google Play version will update automatically through the Play Store once
+            it is published there.
 
             NetworkDoctor-Android.apk is for every phone made since about 2017 (64-bit). Only if Android says
             the app is not compatible, use NetworkDoctor-Android-32bit.apk instead.
           files: |
             mobile/build/NetworkDoctor-Android.apk
+            mobile/build/NetworkDoctor-Android.apk.sha256
             mobile/build/NetworkDoctor-Android-32bit.apk
 
       - name: Attach the Play Store bundle (.aab) to the release

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'net/telemetry.dart';
 import 'net/update.dart';
@@ -12,9 +12,18 @@ import 'screens/pc_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/tools_screen.dart';
 
-const appVersion = '1.12.0';
+/// The installed app's real version (e.g. "1.13.0"), read from the Android package itself. This used to
+/// be a string literal here that had to be hand-bumped on every release and was repeatedly forgotten -
+/// which showed as a stale "Version 1.12.0" in About and an "update available" nag that never went away
+/// even after installing the new version, since the compare was against this same frozen string. Starts
+/// as 'unknown' only until main() below fills it in, before the UI is ever built.
+String appVersion = 'unknown';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    appVersion = (await PackageInfo.fromPlatform()).version;
+  } catch (_) {}
   // Unhandled errors would otherwise just vanish - no console is open on a phone. Both hooks only
   // ever COUNT a sanitised crash (nd_telemetry.dart is a no-op until the person opts in); they never
   // change how the error is shown or reported to anyone else.
@@ -110,7 +119,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               actions: [
                 TextButton(onPressed: () => setState(() => _update = null), child: const Text('Later')),
                 FilledButton(
-                    onPressed: () => launchUrl(Uri.parse(u.apkUrl), mode: LaunchMode.externalApplication),
+                    // the real download+install (with progress and checksum verification) lives on the
+                    // About tab's Updates card - this just gets the user there instead of opening a browser
+                    onPressed: () => setState(() {
+                          _update = null;
+                          _tab = 3;
+                        }),
                     child: const Text('Update')),
               ],
             ),

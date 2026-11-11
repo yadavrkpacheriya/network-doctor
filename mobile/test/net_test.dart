@@ -128,13 +128,23 @@ void main() {
       final rel = [
         {'tag_name': 'v3.12.0', 'assets': [{'name': 'NetworkDoctor.exe', 'browser_download_url': 'x'}]},
         {'tag_name': 'mobile-v1.4.0', 'draft': true, 'assets': [{'name': apkName, 'browser_download_url': 'd'}]},
-        {'tag_name': 'mobile-v1.3.0', 'html_url': 'p', 'assets': [{'name': apkName, 'browser_download_url': 'a13'}]},
+        {'tag_name': 'mobile-v1.3.0', 'html_url': 'p', 'assets': [
+          {'name': apkName, 'browser_download_url': 'a13'},
+          {'name': '$apkName.sha256', 'browser_download_url': 'sha13'},
+        ]},
         {'tag_name': 'mobile-v1.2.0', 'assets': [{'name': apkName, 'browser_download_url': 'a12'}]},
         {'tag_name': 'mobile-v1.5.0', 'assets': []},
       ];
       final u = newestMobile(rel)!;
       expect(u.version, '1.3.0');
       expect(u.apkUrl, 'a13');
+      expect(u.shaUrl, 'sha13');
+    });
+    test('a release with no checksum asset just has a null shaUrl', () {
+      final rel = [
+        {'tag_name': 'mobile-v1.2.0', 'assets': [{'name': apkName, 'browser_download_url': 'a12'}]},
+      ];
+      expect(newestMobile(rel)!.shaUrl, isNull);
     });
   });
 
