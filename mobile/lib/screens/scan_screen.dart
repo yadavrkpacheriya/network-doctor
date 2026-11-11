@@ -89,7 +89,12 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       _speedRunning = false;
       _speed = null;
       _mbps = result;
-      if (result <= 0) _speedErr = 'Could not measure - this network may have no internet.';
+      if (result <= 0) {
+        _speedErr = s.otherHostReachable
+            ? 'Could not reach the speed-test server, but another site answered fine - this network does '
+                'have internet, it may just be blocking or slow to that one server. Try again.'
+            : 'Could not measure - this network may have no internet.';
+      }
     });
   }
 
@@ -222,7 +227,10 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
             if (_gwPing.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(ok.isEmpty
-                  ? 'Router not answering'
+                  ? (isCgnatAddress(_ip)
+                      ? 'Router not answering - this looks like a mobile/4G Wi-Fi hotspot, which usually '
+                        'keeps connected devices from seeing each other on purpose, not a fault.'
+                      : 'Router not answering')
                   : 'Router: ${ok.last.toStringAsFixed(0)} ms now, avg ${(ok.reduce((a, b) => a + b) / ok.length).toStringAsFixed(0)} ms, '
                       'lost ${loss.toStringAsFixed(0)}%'),
               LineChart(height: 60, series: [ChartSeries('router', _gwPing, Colors.orange, unit: 'ms')]),
@@ -277,8 +285,14 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       if (r != null && !scanning)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-          child: Text('${r.devices.length} devices on ${r.network}  ·  scan took ${r.seconds} s',
-              style: Theme.of(context).textTheme.bodySmall),
+          child: Text(
+            isCgnatAddress(_ip) && r.devices.length <= 1
+                ? '${r.devices.length} devices on ${r.network}  ·  scan took ${r.seconds} s  ·  this address '
+                    '(100.64-127.x) is typical of a mobile/4G hotspot, which isolates devices from each other - '
+                    'that is why only the router shows up here, not a scan problem'
+                : '${r.devices.length} devices on ${r.network}  ·  scan took ${r.seconds} s',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ),
       if (r != null)
         Padding(
