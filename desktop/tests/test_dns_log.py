@@ -21,7 +21,8 @@ class Parse(unittest.TestCase):
 
 class Store(unittest.TestCase):
     def setUp(self):
-        self.d = tempfile.TemporaryDirectory()
+        # Windows cannot delete the folder while the store still has its database open
+        self.d = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.s = US.UsageStore(os.path.join(self.d.name, "usage.db"))
 
     def tearDown(self):
