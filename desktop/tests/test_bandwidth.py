@@ -213,7 +213,9 @@ class FixedIPs(unittest.TestCase):
     ranges = B.default_ranges("192.168.0.0/24")
 
     def test_default_blocks(self):
-        self.assertEqual(self.ranges["nvr"], ("192.168.0.20", "192.168.0.29"))
+        self.assertEqual(self.ranges["cam"], ("192.168.0.71", "192.168.0.140"))
+        self.assertEqual(self.ranges["nvr"], ("192.168.0.141", "192.168.0.150"))
+        self.assertEqual(self.ranges["pc"], ("192.168.0.26", "192.168.0.70"))
         self.assertEqual(self.ranges["mobile"], ("192.168.0.200", "192.168.0.250"))
         self.assertEqual(B.default_ranges("10.0.0.0/28"), {})
 
@@ -244,7 +246,8 @@ class FixedIPs(unittest.TestCase):
         self.assertEqual(len(B.reservation_rows(rows)), 1)
 
     def test_hand_typed_ip_is_marked_manual(self):
-        rows = B.ip_plan([NET[0]], "192.168.0.1", self.ranges, {"nvr"}, ip_type_of=lambda d: "Likely static",
+        ranges = dict(self.ranges, nvr=("192.168.0.20", "192.168.0.29"))
+        rows = B.ip_plan([NET[0]], "192.168.0.1", ranges, {"nvr"}, ip_type_of=lambda d: "Likely static",
                          net="192.168.0.0/24")
         self.assertTrue(rows[0]["manual"])
         self.assertEqual(rows[0]["action"], "keep")  # .20 is already inside the NVR block

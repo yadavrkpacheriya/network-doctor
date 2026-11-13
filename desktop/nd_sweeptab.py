@@ -76,6 +76,8 @@ class SweepPage:
         ttk.Button(bar2, text="Use device's own name as its tag", command=self.apply_fetched_names).pack(
             side="left", padx=(16, 0))
         ttk.Button(bar2, text="Copy 'login refused' list", command=self.copy_refused).pack(side="left")
+        ttk.Button(bar2, text="Line up cameras (fixed IPs in one block)...", command=self.open_camline).pack(
+            side="left", padx=(16, 0))
         ttk.Button(bar2, text="Open in browser", command=self.open_selected_web).pack(side="left", padx=(16, 0))
 
         filt = ttk.Frame(parent)
@@ -294,6 +296,9 @@ class SweepPage:
         self.app.after_tags_changed()
         messagebox.showinfo(APP, f"Named {n} device(s) from what's stored on them.")
 
+    def open_camline(self):
+        CamLineWindow(self)
+
     def do_export(self):
         if not self.results:
             messagebox.showinfo(APP, "Nothing scanned yet.")
@@ -340,3 +345,184 @@ class SweepPage:
             tag = "crit" if f["level"] == "critical" else ("warn" if f["level"] == "warning" else "mute")
             self.txt_ph.insert("end", f"{f['name']} ({f['ip']})  {f['text']}\n", tag)
             self.txt_ph.insert("end", f"    fix: {f['fix']}\n", "mute")
+
+
+class CamLineWindow(tk.Toplevel):
+    """Line up the cameras: one fixed IP each, in order, inside the camera block. The rules are in nd_camline.py."""
+
+    def __init__(self, page):
+        super().__init__(page.app)
+        import nd_camline as CL
+        self.CL, self.page, self.app = CL, page, page.app
+        self.rows, self.busy = [], False
+        self.title("Line up cameras - one fixed IP each, in order")
+        self.geometry("980x620")
+        self.transient(page.app)
+        f = ttk.Frame(self, padding=12)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, wraplength=940, justify="left", foreground="#667085", text=(
+            "Each camera gets one fixed IP inside the camera block, in order, so a camera that stops working is a "
+            "visible gap. For every camera: the router reserves the new IP, the camera is switched to automatic "
+            "(DHCP) with the login from the scan, and the app waits until it answers on the new IP. One camera "
+            "at a time; the run stops at the first camera that does not come back.\n"
+            "IMPORTANT: the NVR / DVR stores each camera's IP. After a camera moves, give it the new IP on the "
+            "recorder (the list below is for that) - until then that channel shows no picture. So: move ONE "
+            "camera first, fix it on the recorder, and only then move the rest. Recorders are never moved here."
+        )).pack(anchor="w")
+        top = ttk.Frame(f)
+        top.pack(fill="x", pady=(8, 4))
+        rng = self._range()
+        ttk.Label(top, text="Camera block:").pack(side="left")
+        self.var_lo, self.var_hi = tk.StringVar(value=rng[0]), tk.StringVar(value=rng[1])
+        ttk.Entry(top, textvariable=self.var_lo, width=15).pack(side="left", padx=(6, 2))
+        ttk.Label(top, text="to").pack(side="left")
+        ttk.Entry(top, textvariable=self.var_hi, width=15).pack(side="left", padx=(2, 10))
+        ttk.Button(top, text="Make the list (changes nothing)", command=self.make).pack(side="left")
+        self.b_one = ttk.Button(top, text="Move ONE camera (test first)", command=lambda: self.go(1))
+        self.b_one.pack(side="left", padx=6)
+        self.b_all = ttk.Button(top, text="Move all the rest, one by one", command=lambda: self.go(None))
+        self.b_all.pack(side="left")
+        ttk.Button(top, text="Save old -> new list (CSV)", command=self.save_csv).pack(side="left", padx=6)
+        self.tv = nd_tabs.UI["make_tree"](
+            f, ("name", "now", "new", "brand", "action", "note"),
+            ("Name", "IP now", "IP after", "Brand", "What happens", "Note / result"),
+            (170, 110, 110, 90, 110, 360), None)
+        self.protocol("WM_DELETE_WINDOW", lambda: None if self.busy else self.destroy())
+        self.var_msg = tk.StringVar(value="Run the Login sweep for cameras first, then press 'Make the list'.")
+        ttk.Label(f, textvariable=self.var_msg, wraplength=940, justify="left").pack(anchor="w", pady=(6, 0))
+        self.make()
+
+    def _saved(self):
+        return self.app._settings().setdefault("bandwidth", {}).setdefault("ranges", {})
+
+    def _range(self):
+        r = self._saved().get("cam")
+        if isinstance(r, (list, tuple)) and len(r) == 2:
+            return tuple(r)
+        return B.default_ranges(str(getattr(self.app, "net", "") or "192.168.0.0/24")).get("cam", ("", ""))
+
+    def make(self):
+        if self.busy:
+            return
+        net = str(getattr(self.app, "net", "") or "192.168.0.0/24")
+        ranges = B.default_ranges(net)
+        ranges.update({k: tuple(v) for k, v in self._saved().items() if isinstance(v, (list, tuple)) and len(v) == 2})
+        lo, hi = self.var_lo.get().strip(), self.var_hi.get().strip()
+        try:
+            if B._ipkey(lo) > B._ipkey(hi) or not (S.is_lan(lo) and S.is_lan(hi)):
+                raise ValueError
+        except Exception:
+            messagebox.showerror(APP, "The camera block needs two IPs of this network, the lower one first.",
+                                 parent=self)
+            return
+        ranges["cam"] = (lo, hi)
+        s = self.app._settings().setdefault("bandwidth", {})
+        over = B.effective_over(s.get("over", {}), s.get("boosts", {}))
+        self.rows = self.CL.line_plan(self.app.devices, self.app.gw, net, ranges, self.page.results,
+                                      T.tags_of(self.app.db), over)
+        self._draw()
+        n = {a: sum(1 for r in self.rows if r["action"] == a) for a in ("move", "keep", "manual", "skip")}
+        self.var_msg.set(f"{len(self.rows)} cameras / recorders: {n['move']} can be moved by the app, {n['keep']} stay, "
+                         f"{n['manual']} need the IP typed by hand, {n['skip']} skipped (see the note). "
+                         "Nothing has been changed yet.")
+
+    def _draw(self):
+        tags = T.tags_of(self.app.db)
+        self.tv.delete(*self.tv.get_children())
+        label = {"move": "will be moved", "keep": "stays", "manual": "by hand", "skip": "skipped"}
+        for i, r in enumerate(self.rows):
+            d = r["dev"]
+            name = tags.get(d["mac"], {}).get("name") or d.get("name") or ""
+            self.tv.insert("", "end", iid=str(i), values=(
+                name, r["ip_now"], r["ip_new"] if r["action"] in ("move", "manual") else "",
+                {"hik": "Hikvision", "dahua": "Dahua"}.get(r["method"], ""),
+                label.get(r["action"], r["action"]), r.get("result") or r["why"]))
+
+    def go(self, limit):
+        if self.busy:
+            return
+        todo = [r for r in self.rows if r["action"] == "move" and not r.get("moved")]
+        if not todo:
+            messagebox.showinfo(APP, "No camera to move. Press 'Make the list' (after a Login sweep for cameras).",
+                                parent=self)
+            return
+        creds = self.page._creds()
+        if not creds:
+            messagebox.showinfo(APP, "Type the camera login(s) again in the Login sweep page, in the same order "
+                                     "as for the scan - they are cleared after every scan.", parent=self)
+            return
+        c = self.app.router_client(ask=True)
+        if not c:
+            return
+        n = 1 if limit else len(todo)
+        first = todo[0]
+        if not messagebox.askyesno(
+                APP, f"Move {n} camera(s) now?\n\nFirst: {first['ip_now']} -> {first['ip_new']}\n\nEach moved camera "
+                     "shows NO PICTURE on the NVR / DVR until you give it the new IP there. The run stops at the "
+                     "first camera that does not answer on its new IP.", parent=self):
+            return
+        tags = T.tags_of(self.app.db)
+
+        def reserve(row):
+            apply, _undo = T.binding_commands([dict(row["dev"], ip=row["ip_new"])], tags)
+            try:
+                with c:
+                    err = c.run_script(apply)
+                    if err:
+                        return err
+                    got = [x for x in c.cmd("/ip/dhcp-server/lease/print", q_mac_address=row["dev"]["mac"])
+                           if x.get("address") == row["ip_new"] and str(x.get("dynamic", "")).lower() != "true"]
+            except Exception as e:  # noqa: BLE001 - shown in the row
+                return str(e)
+            return "" if got else "the router did not keep the reservation (IP already reserved for another device?)"
+
+        def alive(ip):
+            return any(core.tcp_open(ip, p, 1.0) for p in (80, 8000, 554, 37777, 443)) or core.ping(ip) is not None
+
+        self.busy = True
+        for b in (self.b_one, self.b_all):
+            b.configure(state="disabled")
+        self.var_msg.set("Working - one camera at a time. Do not close this window...")
+
+        def work():
+            def on_row(r, ok):
+                self.app.q.put(("call", lambda: self.winfo_exists() and self._draw()))
+            done = 0
+            try:
+                done = self.CL.run(todo, creds, reserve, alive, on_row=on_row, limit=limit)
+            finally:
+                self.app.q.put(("call", lambda: self._finished(done, todo)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _finished(self, done, todo):
+        self.busy = False
+        if not self.winfo_exists():
+            return
+        for b in (self.b_one, self.b_all):
+            b.configure(state="normal")
+        with core.DB_LOCK:
+            bind = self.app.db.setdefault("bindings", {})
+            for r in todo:
+                if r.get("moved"):
+                    bind[r["dev"]["mac"]] = {"ip": r["ip_new"], "time": core.now_s()}
+        core.save_db(self.app.db)
+        self._draw()
+        failed = next((r for r in todo if r.get("result", "").startswith(("FAILED", "not moved"))), None)
+        self.var_msg.set(
+            (f"{done} camera(s) moved. " if done else "No camera was moved. ")
+            + (f"STOPPED at {failed['ip_now']}: {failed['result']}" if failed else
+               "Now give each moved camera its new IP on the NVR / DVR (Save old -> new list), check the picture, "
+               "then run a Scan so the device list shows the new IPs."))
+
+    def save_csv(self):
+        if not self.rows:
+            return
+        p = filedialog.asksaveasfilename(parent=self, defaultextension=".csv", filetypes=[("CSV (Excel)", "*.csv")],
+                                         initialfile="camera-ip-list.csv")
+        if not p:
+            return
+        try:
+            with open(p, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write(self.CL.old_new_csv(self.rows, T.tags_of(self.app.db)))
+        except OSError as e:
+            messagebox.showerror(APP, f"Could not save the file: {e}", parent=self)

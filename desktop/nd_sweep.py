@@ -145,33 +145,43 @@ def _conn(ip, port, ssl_on, timeout):
     return http.client.HTTPConnection(ip, port, timeout=timeout)
 
 
-def http_login(ip, port, path, user, pw, ssl_on=False, timeout=6):
-    """(status code, body, how). ONE request without a login to learn the method, then ONE request with the login."""
+def http_request(ip, port, method, path, user, pw, body=None, ssl_on=False, timeout=6, ctype=""):
+    """(status code, body, how). ONE request without a login to learn the method, then ONE request with the login.
+    method / body: GET for reading; PUT / POST with a body only where a page says it changes a device setting."""
+    data = body.encode("utf-8") if isinstance(body, str) else body
+
     def once(headers):
         c = _conn(ip, port, ssl_on, timeout)
         try:
-            c.request("GET", path, headers=headers)
+            if data is not None and ctype:
+                headers = dict(headers, **{"Content-Type": ctype})
+            c.request(method, path, body=data, headers=headers)
             r = c.getresponse()
             return r.status, r.read(40000).decode("utf-8", "replace"), r.getheader("WWW-Authenticate") or ""
         finally:
             c.close()
     try:
-        code, body, www = once({"User-Agent": "NetworkDoctor", "Connection": "close"})
+        code, text, www = once({"User-Agent": "NetworkDoctor", "Connection": "close"})
         if code != 401:
-            return code, body, "no login needed"
+            return code, text, "no login needed"
         kind, params = _challenge(www)
         if kind == "digest":
-            auth = digest_header("GET", path, user, pw, params)
+            auth = digest_header(method, path, user, pw, params)
         elif kind == "basic":
             auth = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
         else:
             raise Outcome(UNSUP, "the device asks for a login method this app cannot do")
-        code, body, _ = once({"User-Agent": "NetworkDoctor", "Connection": "close", "Authorization": auth})
-        return code, body, kind
+        code, text, _ = once({"User-Agent": "NetworkDoctor", "Connection": "close", "Authorization": auth})
+        return code, text, kind
     except Outcome:
         raise
     except (OSError, http.client.HTTPException) as e:
         raise Outcome(UNREACH, f"{_UNREACH_TEXT} ({e.__class__.__name__})") from None
+
+
+def http_login(ip, port, path, user, pw, ssl_on=False, timeout=6):
+    """(status code, body, how) for a GET - see http_request."""
+    return http_request(ip, port, "GET", path, user, pw, ssl_on=ssl_on, timeout=timeout)
 
 
 def _http_port(d, prefer=(80, 8080, 443, 8443)):
