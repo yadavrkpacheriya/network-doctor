@@ -1,3 +1,24 @@
+## Network Doctor 3.24.2
+
+### Auto-fix was staying blank, and malware alerts weren't naming the real threat
+- **Auto-fixes now act on the first occurrence**, not after 5 repeats of the exact same alert. On a
+  network where every alert is for a different device (one DHCP conflict today on camera A, a different
+  one tomorrow on camera B) the old 5-repeat rule meant it practically never fired - the Auto-fixes list
+  stayed empty even with fixable alerts sitting there. Now that every auto-fix has an Undo and a post-fix
+  recheck (3.24.0), it is safe to act immediately; a fix-kind that turns out wrong needs MORE repeats
+  next time (the "learning" part), not fewer.
+- **Fixed a real classification bug**: the public threat-list hits Network Doctor actually raises -
+  "Hijacked criminal network (Spamhaus DROP)", "Known attacker (FireHOL level 1)", "Compromised /
+  attacking host" - never matched the "malware" fix recipe at all (none of them contain the literal word
+  "malware"), so they fell through to a generic message with no fix, no Undo, and no way to find the
+  program responsible. They're now classified correctly.
+- **Malware alerts now point at the actual remote address** to search for (Resource Monitor's Network
+  tab / `netstat -ano | findstr <remote IP>`) instead of only showing the device's own IP, so you can
+  actually find which program on that PC made the connection.
+- The port-forward/UPnP "exposed device" fix now has an Undo too - it stays a manual, one-click-confirm
+  fix (closing it can break a camera's remote-viewing feature someone set up on purpose), but once you
+  apply it you can revert it from Auto-fixes if it turns out to be needed.
+
 ## Network Doctor 3.24.1
 
 ### New devices now stand out in the Devices tab itself

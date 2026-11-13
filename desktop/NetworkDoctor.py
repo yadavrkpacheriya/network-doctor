@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.24.1"
+VERSION = "3.24.2"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2283,7 +2283,14 @@ class App(tk.Tk):
             pass
         self._refresh_alerts()
 
-    AUTO_FIX_AFTER = 5
+    # 3.24.1 and earlier waited for the same alert to repeat 5 times before touching it - safe with no
+    # undo, but on a network with many DIFFERENT one-off alerts (a different camera each time) that
+    # threshold was effectively never reached, so auto-fix looked "blank" despite real fixable alerts
+    # sitting there. Now that every fix has an undo and a post-fix regression check (nd_autofix.py), a
+    # safe fix-kind can act on the FIRST occurrence; repeat_threshold() still raises it back up for a
+    # kind that turns out to need an undo, so a bad fix-kind is throttled automatically rather than by
+    # waiting up front.
+    AUTO_FIX_AFTER = 1
 
     def _fix_history(self):
         return self._settings().setdefault("fix_history", [])

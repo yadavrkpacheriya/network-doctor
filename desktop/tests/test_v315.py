@@ -53,8 +53,46 @@ class RouterLog(unittest.TestCase):
 class AutoFix(unittest.TestCase):
     def test_safe_kinds(self):
         self.assertIn("dhcp_conflict", AL.AUTO_SAFE)
+        self.assertIn("ip_conflict", AL.AUTO_SAFE)
         self.assertNotIn("exposed", AL.AUTO_SAFE)   # could cut off remote camera viewing
         self.assertNotIn("torrent", AL.AUTO_SAFE)
+        self.assertNotIn("malware", AL.AUTO_SAFE)   # cuts a device off outright - stays a manual, one-click fix
+
+    def test_safe_kinds_carry_an_undo_command(self):
+        """Every AUTO_SAFE fix must be revertible - that's what makes auto-applying it on the first
+        occurrence (NetworkDoctor.AUTO_FIX_AFTER == 1) safe instead of reckless."""
+        r = AL.explain("Detected conflict by ARP response for 192.168.0.70 from F8:75:A4:8D:B7:FA",
+                       "warning", "192.168.0.70", "192.168.0.1")
+        fix = next(a for a in r["auto"] if a["where"] == "router")
+        self.assertTrue(fix["undo"])
+
+    def test_exposed_fix_has_an_undo_even_though_not_auto_applied(self):
+        """Not in AUTO_SAFE (stays a manual, one-click confirm - closing a port forward can break a
+        camera's remote-viewing feature someone set up on purpose), but once applied it must still be
+        undoable from the Auto-fixes list."""
+        r = AL.explain("192.168.0.203: XMeye DVR is reachable from the internet", "critical", "", "", "")
+        fix = next(a for a in r["auto"] if a["where"] == "router")
+        self.assertTrue(fix["undo"])
+        self.assertIn("upnp set enabled=yes", fix["undo"])
+
+    def test_all_real_threat_feed_labels_classify_as_malware(self):
+        """Regression for the bug the remote_address test below exists to catch: nd_monitor.FEEDS' actual
+        label text ("Hijacked criminal network...", "Known attacker...", "Compromised / attacking
+        host...") must each be recognised, not just the ones with the literal word 'malware' in them."""
+        for label in ("Hijacked criminal network (Spamhaus DROP)", "Known attacker (FireHOL level 1)",
+                      "Compromised / attacking host (Emerging Threats)",
+                      "Botnet control server (abuse.ch Feodo Tracker)"):
+            r = AL.explain(f"192.168.0.57 connected to 45.135.193.215 - {label}", "critical", "", "", "")
+            self.assertEqual(r["kind"], "malware", label)
+
+    def test_malware_steps_name_the_remote_address_to_search_for(self):
+        """The alert only ever named the device's own IP - with many devices on the network there was no
+        way to tell which program on that PC made the connection. Steps must now point at the actual
+        remote (malicious) address so netstat / Resource Monitor can find the culprit process."""
+        r = AL.explain("192.168.0.57 connected to 45.135.193.215 - Hijacked criminal network (Spamhaus)",
+                       "critical", "", "", "")
+        self.assertEqual(r["kind"], "malware")
+        self.assertTrue(any("45.135.193.215" in s for s in r["steps"]))
 
 
 class RemoteInventory(unittest.TestCase):
