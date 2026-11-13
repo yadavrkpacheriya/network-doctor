@@ -170,6 +170,75 @@ class _AlertsTabState extends State<AlertsTab> {
   }
 }
 
+// ------------------------------------------------------------------ auto-fixes (with Undo)
+class AutoFixesTab extends StatelessWidget {
+  const AutoFixesTab({super.key, required this.s, required this.onRefresh});
+  final Map<String, dynamic> s;
+  final Future<void> Function() onRefresh;
+
+  Color _statusColor(String st) => switch (st) {
+        'applied' => Colors.blue.shade700,
+        'ok' => Colors.green.shade700,
+        'undone' => Colors.grey.shade600,
+        'auto_undone' => Colors.deepOrange.shade700,
+        'failed' => Colors.red.shade700,
+        _ => Colors.grey,
+      };
+
+  String _statusText(String st) => switch (st) {
+        'applied' => 'Applied - watching for a new problem',
+        'ok' => 'Applied - no new problem since',
+        'undone' => 'Undone',
+        'auto_undone' => 'Undone automatically (a new issue appeared)',
+        'failed' => 'Failed',
+        _ => st,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final fixes = _ms(s['fixes']);
+    final stats = _ms(s['fix_stats']);
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.all(12), children: [
+        if (stats.isNotEmpty) ...[
+          Text('How reliable each kind of fix has been', style: t.titleSmall),
+          const SizedBox(height: 4),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final r in stats)
+              Chip(label: Text('${r['kind']}: ${r['confidence']}% (${r['tries']} tries, ${r['undone']} undone)')),
+          ]),
+          const SizedBox(height: 12),
+        ],
+        if (fixes.isEmpty)
+          const Card(child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('No auto-fixes applied yet'))),
+        for (final f in fixes)
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.build_circle, color: _statusColor('${f['status']}')),
+              title: Text('${f['title']}', maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${f['kind']} · ${f['mac'] ?? f['ip'] ?? ''} · ${hhmm((f['at'] as num?) ?? 0)}\n'
+                  '${_statusText('${f['status']}')}${'${f['note'] ?? ''}'.isNotEmpty ? ' - ${f['note']}' : ''}',
+                  style: t.bodySmall),
+              isThreeLine: true,
+              trailing: f['undoable'] == true && (f['status'] == 'applied' || f['status'] == 'ok')
+                  ? TextButton(
+                      onPressed: () async {
+                        if (!await _confirm(context, 'Undo this fix?', '${f['title']}')) return;
+                        if (!context.mounted) return;
+                        await runOnPc(context, 'undo_fix', {'id': f['id']}, title: 'Undoing ${f['title']}');
+                        await onRefresh();
+                      },
+                      child: const Text('Undo'))
+                  : null,
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
 class TroubleshootPage extends StatefulWidget {
   const TroubleshootPage({super.key, required this.alert});
   final Map<String, dynamic> alert;
@@ -781,19 +850,29 @@ class PcDeviceActions extends StatelessWidget {
     final n = TextEditingController(text: name);
     final d = TextEditingController();
     final l = TextEditingController();
+    var priority = false;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Tag $ip'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: n, decoration: const InputDecoration(labelText: 'Name')),
-          TextField(controller: d, decoration: const InputDecoration(labelText: 'Department')),
-          TextField(controller: l, decoration: const InputDecoration(labelText: 'Location / room')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text('Tag $ip'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: n, decoration: const InputDecoration(labelText: 'Name')),
+            TextField(controller: d, decoration: const InputDecoration(labelText: 'Department')),
+            TextField(controller: l, decoration: const InputDecoration(labelText: 'Location / room')),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: priority,
+              title: const Text('Default device for its IP'),
+              subtitle: const Text('Wins IP conflicts - auto-fix binds this one to the IP'),
+              onChanged: (v) => setState(() => priority = v ?? false),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          ],
+        ),
       ),
     );
     if (ok != true || !context.mounted) return;
@@ -802,6 +881,7 @@ class PcDeviceActions extends StatelessWidget {
       'name': n.text.trim(),
       if (d.text.trim().isNotEmpty) 'dept': d.text.trim(),
       if (l.text.trim().isNotEmpty) 'location': l.text.trim(),
+      if (priority) 'priority': 'Yes',
     });
   }
 }

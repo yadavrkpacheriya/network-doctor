@@ -411,6 +411,7 @@ class _PcDashboardState extends State<PcDashboard> {
       ]),
       PcSection(open > 0 ? 'Alerts ($open)' : 'Alerts', Icons.notifications_active, sectionColors[1], [
         ('Alerts', () => AlertsTab(s: s, onRefresh: _load)),
+        ('Auto-fixes', () => AutoFixesTab(s: s, onRefresh: _load)),
         ('Problems & root cause', () => _ProblemsTab(s: s, onRefresh: _load)),
         ('Health checks', () => HealthTab(s: s, onRefresh: _load)),
       ]),
