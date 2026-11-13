@@ -1,3 +1,11 @@
+## Network Doctor 3.24.1
+
+### New devices now stand out in the Devices tab itself
+3.23.12 added a breakdown and two filters ("New since last scan" / "Stopped answering since last scan"),
+but the main "All devices" list still looked the same for a brand-new device as for one you've had for
+months - you had to switch the filter to see which was which. A device that is new this scan is now
+marked "(new)" and highlighted green right in the normal list, so it stands out without changing filters.
+
 ## Network Doctor 3.24.0
 
 ### A proper Windows installer, trusted services, and a "learning" auto-fix
