@@ -1,3 +1,13 @@
+## Network Doctor 3.27.0
+
+### Menu reorganization - fewer items per tab, clearer categories
+- "Devices" (9 pages) is now two tabs: **Devices** (All devices, Inventory, Network map, IP-MAC binding) and
+  **Network Tools** (Login sweep, Switches SNMP, Port scanner, MAC lookup, Wake-on-LAN).
+- "Internet & Usage" (8 pages) is now two tabs: **Internet & Usage** (Live monitor, Usage, Bandwidth plan,
+  Slow website?) and **Diagnostics** (Speed test, Website check, DNS test, Remote access/VPN).
+- Navigation-only change - no page was moved, renamed, or had functionality altered; this just stops two
+  tabs from being crowded with 8-9 sub-items each.
+
 ## Network Doctor 3.26.1
 
 ### New: "Remote access (VPN)" readiness check (Internet & Usage) - is it even possible to fix the latency?
