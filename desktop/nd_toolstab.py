@@ -86,6 +86,11 @@ TOOLS = [
     ("web", "Website / server check",
      "Is a web server, ERP, router page or camera web page up? DNS, connect, TLS and answer times, and when its "
      "certificate expires."),
+    ("remote", "Remote access (VPN) readiness - am I behind CGNAT?",
+     "Before blaming Tailscale/WireGuard for a slow, relayed remote connection: checks whether your ISP gives "
+     "this office its own public IP, or shares one address between many customers (CGNAT) - if it's CGNAT, no "
+     "router setting (port-forward, UPnP, even a brand-new VPN) can ever make a direct connection; only your "
+     "ISP can fix that."),
     ("lan", "LAN speed test (PC to PC)",
      "Real speed through the cables and switches between this PC and another PC running Network Doctor. Finds "
      "100 Mbps cables and slow switches."),
@@ -1055,6 +1060,54 @@ class ToolsTab:
             else:
                 out(f"No public status page for {known} (needs sign-in) - check manually: "
                     f"{st.get('manual_link', '')}", "")
+
+    # ------------------------------------------------------------------ remote access (CGNAT) readiness
+    def _build_remote(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        self._run_btn(row, "remote", "Check", self._remote)
+        ttk.Label(f, text="Read-only - this only looks, it never changes router settings, opens a port, or "
+                          "turns anything on. A direct VPN connection needs a real public IP; this tells you "
+                          "whether you have one before you (or I) change anything.",
+                  foreground="#667085", wraplength=640, justify="left").pack(anchor="w", pady=(2, 4))
+        self._out_box(f, "remote")
+
+    def _remote(self, out, stop):
+        out("Checking whether this office has its own public IP, or shares one via your ISP's NAT (CGNAT)", "h")
+        info = NT.public_ip_info()
+        if not info or not info.get("ip"):
+            out("\nCould not reach the internet to check - try again once online.", "crit")
+            return
+        out(f"  Seen from the internet (what every outside server sees you as): {info['ip']}")
+        import nd_routeros as RO
+        c = RO.from_settings(self.app._settings(), self.app.gw)
+        if not c:
+            out("\nNo router login saved (Setup > Router), so I can't ask it directly. In Winbox, open "
+                "IP > Cloud and compare its 'Public Address' with the address above - different = CGNAT.", "warn")
+            return
+        try:
+            with c:
+                cloud = c.cmd("/ip/cloud/print")
+                router_ip = (cloud[0].get("public-address") if cloud else "") or ""
+        except Exception as e:
+            out(f"\nCould not ask the router: {e}", "crit")
+            return
+        if not router_ip:
+            out("\nThe router didn't report a public address - turn on IP > Cloud once (read-only; it "
+                "just asks MikroTik's own server what your address looks like from outside) and check again.", "warn")
+            return
+        out(f"  What the router itself sees as its own public address: {router_ip}")
+        if router_ip == info["ip"]:
+            out("\nSame address both ways - this office is NOT behind CGNAT. A VPN CAN connect directly here "
+                "instead of relaying, but that needs opening exactly one port to exactly one trusted device - "
+                "never a blanket 'allow everything in' setting. Tell me which device/VPN and I'll give you the "
+                "single, scoped rule (with an Undo), not a wide-open one.", "ok")
+        else:
+            out("\nDIFFERENT addresses - your ISP shares one public IP across many customers (CGNAT). No router "
+                "setting - port-forward, UPnP, even a brand-new VPN server - can fix this, because the real "
+                "public address never reaches your router at all. The only fixes: ask your ISP for a static/"
+                "public IP (often a paid business add-on), or accept a relayed VPN connection - the delay you "
+                "saw is the normal cost of CGNAT, not a misconfiguration.", "crit")
 
     # ------------------------------------------------------------------ LAN speed
     def _build_lan(self, f):
