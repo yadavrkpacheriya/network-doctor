@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.28.1"
+VERSION = "3.28.2"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1212,6 +1212,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_snmp_bw_t", 0) > 25:
                 self._snmp_bw_t = time.time()
                 self._snmp_bw_sample()
+            if time.time() - getattr(self, "_configbak_t", 0) > 21600:  # every 6h: catch hand-made router changes
+                self._configbak_t = time.time()
+                self._config_backup_auto()
             if time.time() - getattr(self, "_arpblock_t", 0) > 30:  # release any LAN block past its time limit -
                 self._arpblock_t = time.time()                      # a safety net independent of how it started
                 for ip in self.arpblock.expired():
@@ -1261,6 +1264,44 @@ class App(tk.Tk):
                 pass
             finally:
                 self._snmp_bw_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def _config_backup_auto(self):
+        """Every 6h: back up the router's own config (read-only) and, if it changed since the last backup,
+        raise a normal alert - the same place a hand-made change in Winbox (a firewall rule, a port
+        forward...) would otherwise go completely unnoticed. Never runs on the Tk thread (reads over the
+        network); never writes anything to the router."""
+        if getattr(self, "_configbak_busy", False):
+            return
+        self._configbak_busy = True
+
+        def work():
+            try:
+                import nd_routeros as RO
+                import nd_configbak as CB
+                c = RO.from_settings(self._settings(), self.gw)
+                if not c:
+                    return
+                with c:
+                    text = c.run_cli("/export compact")
+                if not text or not text.strip():
+                    return
+                hist = self._settings().setdefault("config_backups", [])
+                had_prev = bool(hist)
+                entry = CB.add_snapshot(hist, text)
+                if entry is None:
+                    return
+                self._save_settings()
+                if had_prev:  # first-ever backup is just a baseline, not a "change"
+                    prev = hist[-2]
+                    diff = CB.diff_snapshots(prev["text"], entry["text"])
+                    if diff:
+                        self.q.put(("call", lambda: self._record_alert_plain(
+                            "warning", "Router configuration changed", "Config backup")))
+            except Exception:
+                pass
+            finally:
+                self._configbak_busy = False
         threading.Thread(target=work, daemon=True).start()
 
     def _note_feeds(self, mon):
