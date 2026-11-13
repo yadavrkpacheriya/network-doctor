@@ -1151,6 +1151,7 @@ def scan(subnet, opts, progress, stop):
     use_scapy = opts.get("deep") and scapy_ok()
     raw["meta"]["scapy"] = use_scapy
 
+    t_start, timing = time.time(), {}
     # 1. quiet-network baseline: broadcast rate + start gateway monitor
     progress(2, "Measuring broadcast traffic (storm / loop check)...")
     mon = {}
@@ -1239,47 +1240,20 @@ def scan(subnet, opts, progress, stop):
                         raw["arp"][ip].add(mac)
             raw["other_nets"] = sorted({str(ipaddress.ip_network(ip + "/24", strict=False)) for ip in ra
                                         if ip not in hostset and is_private_ip(ip)})
-    alive = sorted(set(raw["arp"]) | set(raw["ping"]), key=ip_key)
-
-    # 3. IP-conflict rounds: clear cache, ask again; a 2nd MAC winning a round = conflict
-    if IS_WIN and admin and alive and local:
-        rounds = 4
-        for r in range(rounds):
-            chk()
-            progress(36 + r * 3, f"IP-conflict check, round {r + 1}/{rounds}...")
-            flush_arp_cache()
-            with ThreadPoolExecutor(96) as ex:
-                for ip, mac in zip(alive, ex.map(lambda x: win_sendarp(x) if is_local(x) else None, alive)):
-                    if mac:
-                        raw["arp"][ip].add(mac)
-            time.sleep(0.7)
-        tests["conflict_rounds"] = rounds
-    elif not IS_WIN and admin and alive and local:
-        rounds = 3
-        for r in range(rounds):
-            chk()
-            progress(36 + r * 4, f"IP-conflict check, round {r + 1}/{rounds}...")
-            flush_arp_cache()
-            with ThreadPoolExecutor(64) as ex:
-                list(ex.map(lambda ip: ping(ip, 600), alive))
-            for ip, mac in os_arp_table().items():
-                if ip in raw["arp"]:
-                    raw["arp"][ip].add(mac)
-        tests["conflict_rounds"] = rounds
-    if use_scapy and local:
-        progress(48, "Packet-level ARP sweep (all replies)...")
-        try:
-            for ip, macs in scapy_arp_all_replies(net, gw).items():
-                raw["arp"][ip] |= macs
-            tests["scapy_arp"] = True
-        except Exception as e:
-            tests["scapy_arp_err"] = str(e)[:150]
     alive = sorted(set(raw["arp"]) | set(raw["ping"]) | {lip}, key=ip_key)
-    chk()
+    first = list(alive)          # what the sweep found: everything below starts from these, at the same time
+    timing["find"] = round(time.time() - t_start, 1)
+    t_block = time.time()
 
-    # 4. identify. These questions do not depend on each other, so they are asked at the same time instead of
-    #    one after the other (each one mostly waits for devices that never answer): names, UPnP, reverse DNS and
-    #    the rogue-DHCP listen run beside the port check; file-sharing names beside the web pages.
+    # 3 + 4 + 5. From here on nothing has to wait for anything else, so it all runs side by side instead of
+    # one step after the other (each step mostly waits for devices that never answer):
+    #   - IP-conflict rounds (clear the ARP cache, ask again)          - one thread
+    #   - packet tests, one after another so only one listener is open - one thread
+    #     (all-replies ARP sweep, rogue-DHCP listen, loop echo)
+    #   - duplicate-reply test on the gateway                          - one thread
+    #   - computer names, UPnP, reverse DNS, file-sharing names        - one thread each
+    #   - open services, then device web pages                         - here
+    # Every thread only RETURNS what it found; it is merged below, so no two threads write the same table.
     side = {}
 
     def bg(key, fn):
@@ -1292,28 +1266,95 @@ def scan(subnet, opts, progress, stop):
         t.start()
         return t
 
-    def all_netbios():
+    def conflict_rounds():
+        seen = defaultdict(set)
+        asked = [ip for ip in first if ip != lip]
+        if IS_WIN:
+            rounds = 4
+            for _ in range(rounds):
+                if stop.is_set():
+                    break
+                flush_arp_cache()
+                with ThreadPoolExecutor(96) as ex:
+                    for ip, mac in zip(asked, ex.map(lambda x: win_sendarp(x) if is_local(x) else None, asked)):
+                        if mac:
+                            seen[ip].add(mac)
+                time.sleep(0.7)
+        else:
+            rounds = 3
+            for _ in range(rounds):
+                if stop.is_set():
+                    break
+                flush_arp_cache()
+                with ThreadPoolExecutor(64) as ex:
+                    list(ex.map(lambda ip: ping(ip, 600), asked))
+                for ip, mac in os_arp_table().items():
+                    if ip in asked:
+                        seen[ip].add(mac)
+        return {"rounds": rounds, "macs": seen}
+
+    def packet_tests():
+        out = {}
+        if use_scapy and local:
+            try:
+                out["arp"] = scapy_arp_all_replies(net, gw)
+            except Exception as e:  # noqa: BLE001
+                out["arp_err"] = str(e)[:150]
+        try:
+            out["dhcp"] = scapy_dhcp_probe(gw) if use_scapy else dhcp_probe_udp(raw["self_mac"])
+        except Exception as e:  # noqa: BLE001
+            out["dhcp_err"] = (str(e) or type(e).__name__)[:150]
+        if use_scapy and gw and not stop.is_set():
+            try:
+                out["echo"] = scapy_loop_echo(gw)
+            except Exception as e:  # noqa: BLE001
+                out["echo_err"] = str(e)[:150]
+        return out
+
+    def names_of(ips):
         with ThreadPoolExecutor(64) as ex:
-            return {ip: r for ip, r in zip(alive, ex.map(netbios_query, alive)) if r}
+            return {ip: r for ip, r in zip(ips, ex.map(netbios_query, ips)) if r}
 
     def all_rdns():
         with ThreadPoolExecutor(64) as ex:
-            return {ip: n for ip, n in zip(alive, ex.map(reverse_dns, alive)) if n}
+            return {ip: n for ip, n in zip(first, ex.map(reverse_dns, first)) if n}
 
-    waiting = [bg("nbns", all_netbios), bg("upnp", lambda: ssdp_discover(lip)),
-               bg("dhcp", lambda: scapy_dhcp_probe(gw) if use_scapy else dhcp_probe_udp(raw["self_mac"]))]
+    def ports_of(ips):
+        with ThreadPoolExecutor(200) as ex:
+            jobs = {(ip, p): ex.submit(tcp_open, ip, p) for ip in ips for p in PORTS}
+            for (ip, p), f in jobs.items():
+                if f.result():
+                    raw["ports"].setdefault(ip, []).append(p)
+
+    def webs_of(ips):
+        webj = []
+        for ip in ips:
+            for p in (80, 8080, 8000, 443, 8443):
+                if p in raw["ports"].get(ip, []):
+                    webj.append((ip, p))
+                    break
+        with ThreadPoolExecutor(48) as ex:
+            for (ip, p), r in zip(webj, ex.map(lambda a: http_info(*a), webj)):
+                if r:
+                    raw["http"][ip] = r
+
+    waiting = [bg("packets", packet_tests), bg("nbns", lambda: names_of(first)),
+               bg("upnp", lambda: ssdp_discover(lip))]
+    if gw and admin:
+        waiting.append(bg("icmp_dup", lambda: icmp_duplicate_test(gw, lip)))
     if not opts.get("fast"):
         waiting.append(bg("dns", all_rdns))
-    progress(52, f"Identifying {len(alive)} devices: services, names, UPnP...")
-    with ThreadPoolExecutor(200) as ex:
-        jobs = {(ip, p): ex.submit(tcp_open, ip, p) for ip in alive for p in PORTS}
-        for (ip, p), f in jobs.items():
-            if f.result():
-                raw["ports"].setdefault(ip, []).append(p)
+
+    progress(40, f"Identifying {len(first)} devices (services, names, conflict and packet tests together)...")
+    ports_of(first)
     chk()
+    # the conflict rounds empty this PC's ARP cache several times; they start only now, after the short
+    # (0.6 s) service probes, so an address being asked again at that moment cannot hide an open service
+    if admin and local and len(first) > 1:
+        waiting.append(bg("conflict", conflict_rounds))
     # Windows PCs that ignore NetBIOS still tell their name in the first step of a file-sharing login (SMB)
     # (asked of every PC with file sharing: also gives the exact Windows version and the domain / workgroup)
-    smb_ips = [ip for ip in alive if 445 in raw["ports"].get(ip, []) and ip != lip]
+    smb_ips = [ip for ip in first if 445 in raw["ports"].get(ip, []) and ip != lip]
 
     def all_smb():
         import nd_smbinfo
@@ -1322,47 +1363,53 @@ def scan(subnet, opts, progress, stop):
 
     if smb_ips:
         waiting.append(bg("smb", all_smb))
-    progress(70, "Reading device web pages and computer names...")
-    webj = []
-    for ip in alive:
-        for p in (80, 8080, 8000, 443, 8443):
-            if p in raw["ports"].get(ip, []):
-                webj.append((ip, p))
-                break
-    with ThreadPoolExecutor(48) as ex:
-        for (ip, p), r in zip(webj, ex.map(lambda a: http_info(*a), webj)):
-            if r:
-                raw["http"][ip] = r
+    progress(60, "Reading device web pages...")
+    webs_of(first)
     chk()
-    progress(86, "Waiting for the last answers (names, UPnP, rogue-DHCP check)...")
+    progress(80, "Waiting for the last answers (conflict rounds, packet tests, names)...")
     for t in waiting:
         while t.is_alive():
             t.join(0.3)
             chk()
+
+    # merge what the threads found
+    for ip, macs in ((side.get("conflict") or {}).get("macs") or {}).items():
+        raw["arp"][ip] |= macs
+    if "conflict" in side:
+        tests["conflict_rounds"] = side["conflict"]["rounds"]
+    pk = side.get("packets") or {}
+    for ip, macs in (pk.get("arp") or {}).items():
+        raw["arp"][ip] |= macs
+    if "arp" in pk:
+        tests["scapy_arp"] = True
+    for k_from, k_to in (("arp_err", "scapy_arp_err"), ("dhcp", "dhcp"), ("dhcp_err", "dhcp_err"),
+                         ("echo", "echo"), ("echo_err", "echo_err")):
+        if k_from in pk:
+            tests[k_to] = pk[k_from]
+    if "packets_err" in side:
+        tests["dhcp_err"] = side["packets_err"]
+    for k in ("icmp_dup", "icmp_dup_err"):
+        if k in side:
+            tests[k] = side[k]
     raw["nbns"].update(side.get("nbns") or {})
     raw["upnp"] = side.get("upnp") or {}
     raw["dns"].update(side.get("dns") or {})
     if side.get("smb"):
         raw.setdefault("smb", {}).update(side["smb"])
 
-    # 5. health tests
-    if "dhcp" in side:
-        tests["dhcp"] = side["dhcp"]
-    elif "dhcp_err" in side:
-        tests["dhcp_err"] = side["dhcp_err"]
+    # devices only the conflict rounds / the packet sweep saw (they slept through the first sweep): the same
+    # questions, just for them
+    alive = sorted(set(raw["arp"]) | set(raw["ping"]) | {lip}, key=ip_key)
+    late = [ip for ip in alive if ip not in set(first)]
+    if late:
+        progress(90, f"Identifying {len(late)} device(s) that answered late...")
+        ports_of(late)
+        raw["nbns"].update(names_of(late))
+        webs_of(late)
     chk()
-    if gw and admin:
-        progress(92, "Duplicate-reply test on gateway...")
-        try:
-            tests["icmp_dup"] = icmp_duplicate_test(gw, lip)
-        except Exception as e:
-            tests["icmp_dup_err"] = str(e)[:150]
-    if use_scapy and gw:
-        progress(94, "Loop echo test...")
-        try:
-            tests["echo"] = scapy_loop_echo(gw)
-        except Exception as e:
-            tests["echo_err"] = str(e)[:150]
+    timing["identify_and_tests"] = round(time.time() - t_block, 1)
+    timing["total"] = round(time.time() - t_start, 1)
+    raw["meta"]["timing"] = timing
     progress(96, "Finishing gateway stability test...")
     if mon_t:
         mon_t.join(timeout=45)
