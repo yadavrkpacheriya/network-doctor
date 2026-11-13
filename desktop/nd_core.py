@@ -891,6 +891,27 @@ CAT_UNK = "Unknown devices"
 CAT_OFF = "Not online now (seen before)"
 CAT_ORDER = [CAT_ROUTER, CAT_NET, CAT_PC, CAT_CAM, CAT_PRN, CAT_BIO, CAT_PHONE, CAT_IOT, CAT_UNK, CAT_OFF]
 
+
+def short_category(cat):
+    """Short label for a category string ('CCTV cameras / DVR / NVR' -> 'CCTV cameras') - the same shortening
+    the device counts elsewhere use, so a count change (e.g. in a new/missing-device summary) names cameras
+    plainly instead of their full category description."""
+    return (cat or "").split(" (")[0].split(" /")[0]
+
+
+def category_counts(devices):
+    """{short category: count}, most common first."""
+    from collections import Counter
+    c = Counter(short_category(d.get("category", "")) for d in devices)
+    return dict(sorted(c.items(), key=lambda x: -x[1]))
+
+
+def breakdown_text(devices):
+    """'6 CCTV cameras, 2 Phones' from a list of devices - used to break a bare "8 new devices" style count
+    down by category, so "yesterday 32 cameras, today 40" is explained instead of left for someone to notice
+    and then hunt through the device list for."""
+    return ", ".join(f"{n} {k}" for k, n in category_counts(devices).items() if k)
+
 V_CAM = ["hikvision", "dahua", "uniview", "aditya infotech", "cp plus", "xiongmai", "tvt digital", "axis communications",
          "hanwha", "vivotek", "tiandy", "ezviz", "imou", "prama", "milesight", "godrej security"]
 V_PRN = ["canon", "epson", "brother", "kyocera", "ricoh", "xerox", "konica", "lexmark", "toshiba tec", "zebra",
@@ -1721,11 +1742,27 @@ def analyse(raw, devices, db):
             [label_of(d) for d in unk])
     newd = [d for d in online if d["mac"] and d["mac"] not in db["devices"]] if db["scans"] else []
     if newd:
-        add("info", f"{len(newd)} new device(s) since the last scan",
+        by = breakdown_text(newd)
+        add("info", f"{len(newd)} new device(s) since the last scan" + (f" ({by})" if by else ""),
             "Never seen before by this app. Usually a new phone, laptop or visitor - but an unknown device can also be "
             "someone plugging a personal router / switch into the office network (loops, rogue DHCP).",
             "Check that you recognise them and tag the ones you know. Unknown ones: find their port (Commands > "
             "'Which router port is a device on?') and the switch on the Network map.", [label_of(d) for d in newd])
+    # the other half of "new since last scan": answered last time, not now - without this a camera/NVR that
+    # drops off the network is silent until someone notices the total device count is lower.
+    online_macs_now = {d["mac"] for d in online if d["mac"]}
+    missing_macs = (set(db.get("last_online_macs") or []) - online_macs_now) if db["scans"] else set()
+    missingd = [d for d in devices if d.get("mac") in missing_macs]
+    if missingd:
+        # the offline stub build_devices() makes for these carries category CAT_OFF ("not online now"), not
+        # what the device actually was - look that up from its history so "2 missing" says "2 CCTV cameras",
+        # not "2 Not online now".
+        by = breakdown_text([{"category": (db["devices"].get(mac) or {}).get("category", "")} for mac in missing_macs])
+        add("warning", f"{len(missingd)} device(s) stopped answering since the last scan" + (f" ({by})" if by else ""),
+            "Answered in the previous scan but not this one - could be powered off, unplugged, moved out of "
+            "range, or a real fault (a camera/NVR losing power is common; a PC or phone asleep is normal).",
+            "Check the ones that matter first (cameras, NVRs, servers). The 'Devices' tab filter 'Stopped "
+            "answering since last scan' lists exactly these.", [label_of(d) for d in missingd])
     order = {"critical": 0, "warning": 1, "info": 2}
     issues.sort(key=lambda i: order[i["sev"]])
     return issues, checks
@@ -1754,6 +1791,10 @@ def _update_db(db, raw, devices):
         if d["ip"] not in h["ips"]:
             h["ips"] = (h["ips"] + [d["ip"]])[-5:]
         db["ip_owner"][d["ip"]] = {"mac": d["mac"], "time": ts, "name": d["name"]}
+    # snapshot of who answered THIS scan, for the next scan to diff against (new_macs/missing_macs in
+    # NetworkDoctor.py's _worker) - taken before db["scans"] below so callers compare against the previous
+    # scan's set, never the one just finished.
+    db["last_online_macs"] = sorted({d["mac"] for d in devices if d.get("online") and d.get("mac")})
     db["scans"] += 1
 
 

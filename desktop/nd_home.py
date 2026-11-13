@@ -175,15 +175,15 @@ class HomeTab:
     def refresh(self):
         app = self.app
         on = [d for d in app.devices if d.get("online")]
-        new = len((app.raw or {}).get("meta", {}).get("new_macs") or []) if app.raw else 0
+        meta = (app.raw or {}).get("meta", {}) if app.raw else {}
+        new = len(meta.get("new_macs") or [])
+        missing = len(meta.get("missing_macs") or [])
         v, s = self.cards["devices"]
         v.configure(text=str(len(on)) if app.devices else "-")
-        cats = {}
-        for d in on:
-            k = d.get("category", "").split(" (")[0].split(" /")[0]
-            cats[k] = cats.get(k, 0) + 1
-        s.configure(text=("  ".join(f"{k}: {n}" for k, n in sorted(cats.items(), key=lambda x: -x[1])[:4]) +
-                          (f"\n{new} new since last scan" if new else "")) if on else "press Scan the network now")
+        cats = core.category_counts(on)
+        change = ", ".join(f"{t} {n}" for t, n in (("+", new), ("-", missing)) if n)
+        s.configure(text=("  ".join(f"{k}: {n}" for k, n in list(cats.items())[:4]) +
+                          (f"\n{change} since last scan" if change else "")) if on else "press Scan the network now")
         crit = sum(1 for i in app.issues if i["sev"] == "critical")
         warn = sum(1 for i in app.issues if i["sev"] == "warning")
         v, s = self.cards["problems"]

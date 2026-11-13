@@ -80,7 +80,8 @@ def set_tag(db, mac, **fields):
 FILTER_FIELDS = {"name": "name", "dept": "dept", "department": "dept", "loc": "location", "location": "location",
                  "type": "kind", "kind": "kind", "port": "port", "switch": "parent", "vendor": "vendor",
                  "ip": "ip", "mac": "mac", "notes": "notes"}
-SHOW = ["All devices", "Online only", "Not tagged yet", "Watched (alert if down)"]
+SHOW = ["All devices", "Online only", "Not tagged yet", "Watched (alert if down)",
+        "New since last scan", "Stopped answering since last scan"]
 
 
 def _field_text(d, field):
@@ -117,6 +118,10 @@ def filter_devices(devices, query="", dept="", location="", show=SHOW[0]):
         if show == SHOW[2] and any(t.get(k) for k in ("name", "dept", "location", "kind")):
             continue
         if show == SHOW[3] and not watch_value(t.get("watch")):
+            continue
+        if show == SHOW[4] and "NEW on the network" not in (d.get("notes") or []):
+            continue
+        if show == SHOW[5] and "STOPPED ANSWERING since last scan" not in (d.get("notes") or []):
             continue
         everything = None
         ok = True
