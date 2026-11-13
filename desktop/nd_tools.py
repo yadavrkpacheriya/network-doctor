@@ -27,7 +27,8 @@ KIND_CAT = {"Router": core.CAT_NET, "Switch": core.CAT_NET, "Access point": core
             "DVR / NVR": core.CAT_CAM, "Phone": core.CAT_PHONE, "Biometric": core.CAT_BIO, "IoT / TV": core.CAT_IOT,
             "Other": core.CAT_UNK}
 GEAR_KINDS = {"Router", "Switch", "Access point"}
-TAG_FIELDS = ["name", "dept", "location", "kind", "parent", "router_port", "switch_port", "notes", "watch"]
+TAG_FIELDS = ["name", "dept", "location", "kind", "parent", "router_port", "switch_port", "notes", "watch",
+              "priority"]
 CSV_HEAD = ["MAC", "Name", "Department", "Location", "Type", "Connected to (MAC)", "Router port", "Switch port",
             "Notes", "Watch (alert if down)", "Current IP", "Vendor"]
 
@@ -42,6 +43,19 @@ def watch_value(v):
 def watched(db):
     """{mac: tag} of the devices that must alert when they stop answering."""
     return {m: t for m, t in tags_of(db).items() if t.get("watch") == "1"}
+
+
+def priority_value(v):
+    """Same idea as watch_value(): normalizes a 'default device for its IP' flag to '1' or ''."""
+    return watch_value(v)
+
+
+def priority_mac_for(tags, macs):
+    """Given the MACs quarrelling over one IP (from an IP-conflict alert), returns the one tagged as
+    the priority/default device for it - or None if zero or more than one of them is tagged (an
+    auto-fix should not guess which one the user meant)."""
+    hits = [m for m in macs if tags.get(m, {}).get("priority") == "1"]
+    return hits[0] if len(hits) == 1 else None
 
 
 def tags_of(db):

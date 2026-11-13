@@ -23,7 +23,7 @@ SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 
 # fixes Network Doctor may apply by itself when the same alert repeats 5 times (they only add a reservation or turn
 # on a protection - nothing that can cut off a user or a camera)
-AUTO_SAFE = {"dhcp_conflict", "multicast", "loop"}
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict"}
 
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
@@ -72,10 +72,15 @@ def _ip_of(text, skip=("255.255.255.255", "0.0.0.0")):
 
 
 def _fix(prio, kind, title, why, fix, steps, auto=(), app=None):
-    """auto: (label, where, command) - where is "router" (RouterOS script) or "pc" (runs on this PC).
+    """auto: (label, where, command) or (label, where, command, undo_command) - where is "router"
+    (RouterOS script) or "pc" (runs on this PC). The 4th, optional item is what reverts the command
+    (used by the Alerts tab's Undo button and by the auto-fix's own regression check); leave it out
+    when there is nothing sensible to undo.
     app: (label, action) - opens the right place in Network Doctor."""
     return {"prio": prio, "kind": kind, "title": title, "why": why, "fix": fix, "steps": list(steps),
-            "auto": [{"label": a[0], "where": a[1], "cmd": a[2]} for a in auto if a], "app": app}
+            "auto": [{"label": a[0], "where": a[1], "cmd": a[2], "undo": a[3] if len(a) > 3 else ""}
+                     for a in auto if a],
+            "app": app}
 
 
 def recipe(text, sev="warning", lip="", gw="", net=""):
@@ -107,7 +112,9 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            f':if ([:len $l] > 0) do={{ :do {{ /ip dhcp-server lease make-static $l }} on-error={{}}; '
                            f'/ip dhcp-server lease set $l address={cip} comment="ND: fixed IP (typed by hand)" }} '
                            f'else={{ /ip dhcp-server lease add address={cip} mac-address={cmac} '
-                           f'comment="ND: fixed IP (typed by hand)" }}')])
+                           f'comment="ND: fixed IP (typed by hand)" }}',
+                           f':do {{/ip dhcp-server lease remove [find where mac-address={cmac} and '
+                           f'comment~"^ND: fixed IP"]}} on-error={{}}')])
 
     if "ip conflict" in low or "conflict on" in low or "used by another device" in low:
         return _fix(1, "ip_conflict", f"Two devices use the same IP {ip}",
@@ -188,7 +195,8 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "Check under desks for an extra small switch with two cables back to the wall.",
                      "Plug back in one cable at a time; managed switches: enable loop detection / BPDU guard "
                      "(Commands tab > your switch brand)."],
-                    auto=[("Turn on loop protection", "router", "/interface ethernet set [find] loop-protect=on")])
+                    auto=[("Turn on loop protection", "router", "/interface ethernet set [find] loop-protect=on",
+                           "/interface ethernet set [find] loop-protect=off")])
 
     if "multicast" in low or "broadcast" in low:
         return _fix(3, "multicast", "A lot of multicast / broadcast traffic",
@@ -197,7 +205,8 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                     ["Press 'Turn on IGMP snooping'.",
                      "If it goes on: Live monitor > the device sending most broadcasts; check that camera / NVR.",
                      "Managed switches: enable IGMP snooping and storm control too."],
-                    auto=[("Turn on IGMP snooping", "router", "/interface bridge set [find] igmp-snooping=yes")])
+                    auto=[("Turn on IGMP snooping", "router", "/interface bridge set [find] igmp-snooping=yes",
+                           "/interface bridge set [find] igmp-snooping=no")])
 
     if "arp spoof" in low or "arp_spoof" in low or "netcut" in low or "gateway mac changed" in low:
         return _fix(1, "arp_spoof", "Someone pretends to be the router (ARP spoofing)",

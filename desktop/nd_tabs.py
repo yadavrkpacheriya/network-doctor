@@ -65,11 +65,13 @@ class TagDialog(tk.Toplevel):
                 ("parent", "Connected to (switch / AP)", "combo_ro", list(self.parent_opts)),
                 ("router_port", "Router port (for switches / APs / direct cables)", "combo", sorted(ports, key=T._natural)),
                 ("switch_port", "Switch port number", "entry", None), ("notes", "Notes", "entry", None),
-                ("watch", "Critical - alert if it stops answering", "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"])]
+                ("watch", "Critical - alert if it stops answering", "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"]),
+                ("priority", "Default device for its IP (wins IP conflicts; auto-fix binds this one)",
+                 "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"])]
         for r, (key, label, typ, values) in enumerate(rows, start=1):
             ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=3, padx=(0, 10))
             cur = first.get(key, "")
-            if key == "watch":
+            if key in ("watch", "priority"):
                 cur = "" if many else ("Yes" if cur == "1" else "No")
             if key == "parent" and cur:
                 cur = next((k for k, v in self.parent_opts.items() if v == cur), "")
@@ -1786,6 +1788,7 @@ class AlertsTab:
         ttk.Button(act, text="Mark fixed", command=lambda: self.mark("fixed")).pack(side="left", padx=6)
         ttk.Button(act, text="Re-open", command=lambda: self.mark("open")).pack(side="left")
         ttk.Button(act, text="Copy", command=self.copy).pack(side="left", padx=6)
+        ttk.Button(act, text="Auto-fixes...", command=self.open_autofixes).pack(side="left", padx=6)
         ttk.Label(act, text="Double-click an alert to troubleshoot it", foreground="#667085").pack(side="left", padx=8)
         cols = ("prio", "device", "alert", "fix", "times", "status")
         heads = ("Priority", "Device", "Alert", "Fix", "Times", "Status")
@@ -1896,6 +1899,62 @@ class AlertsTab:
         xs = self.app.alert_log.recent(1, only_open=True)
         if xs:
             self.troubleshoot(xs[0])
+
+    def open_autofixes(self):
+        AutoFixWindow(self.app)
+
+
+class AutoFixWindow(tk.Toplevel):
+    """Every fix Network Doctor applied by itself: an Undo for each one, and per fix-kind how often it
+    has needed one (nd_autofix's 'learning' store) - so a fix that keeps getting undone is visible, not
+    silently repeating in the background."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Auto-fixes applied by Network Doctor")
+        self.geometry("980x520")
+        ttk.Label(self, text="Every fix Network Doctor applied by itself. Undo reverts it immediately. "
+                             "Learning (right-hand table): how reliable each kind of fix has been so far - "
+                             "the app waits for fewer repeats before trying a kind with a clean record, and "
+                             "more before trying one that has needed an Undo.",
+                  wraplength=950, foreground="#667085", padding=8).pack(anchor="w")
+        pw = ttk.PanedWindow(self, orient="horizontal")
+        pw.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        left, right = ttk.Frame(pw), ttk.Frame(pw)
+        pw.add(left, weight=3)
+        pw.add(right, weight=1)
+        self.tv = UI["make_tree"](left, ("kind", "mac_ip", "status", "note"),
+                                  ("Kind", "Device / IP", "Status", "Note"), (110, 170, 110, 420),
+                                  first=("Fix applied", 220))
+        bar = ttk.Frame(left)
+        bar.pack(fill="x", pady=(6, 0))
+        ttk.Button(bar, text="Undo selected", command=self.undo).pack(side="left")
+        ttk.Button(bar, text="Refresh", command=self.fill).pack(side="left", padx=6)
+        self.learn = UI["make_tree"](right, ("tries", "ok", "undone", "conf"),
+                                     ("Tries", "OK", "Undone", "Confidence"), (50, 45, 55, 85),
+                                     first=("Fix kind", 110))
+        self.fill()
+
+    def fill(self):
+        import nd_autofix as AF
+        self.tv.delete(*self.tv.get_children())
+        for e in sorted(self.app._fix_history(), key=lambda e: -e["at"]):
+            self.tv.insert("", "end", iid=e["id"], text=time.strftime("%d-%b %H:%M", time.localtime(e["at"])),
+                           values=(e["kind"], e.get("mac") or e.get("ip") or "-", e["status"], e.get("note", "")))
+        self.learn.delete(*self.learn.get_children())
+        for r in AF.stats_summary(self.app._fix_stats()):
+            self.learn.insert("", "end", text=r["kind"],
+                              values=(r["tries"], r["ok"], r["undone"], f"{r['confidence']}%"))
+
+    def undo(self):
+        sel = self.tv.selection()
+        if not sel:
+            messagebox.showinfo(APP, "Select a fix first.", parent=self)
+            return
+        for fid in sel:
+            self.app._undo_fix(fid)
+        self.after(600, self.fill)
 
 
 class TroubleshootWindow(tk.Toplevel):
