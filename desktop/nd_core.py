@@ -1180,7 +1180,7 @@ def scan(subnet, opts, progress, stop):
             progress(8 + 27 * done[0] / len(hosts), f"Sweeping... {done[0]}/{len(hosts)}")
         return ip, mac, ttl
 
-    with ThreadPoolExecutor(96) as ex:
+    with ThreadPoolExecutor(min(192, max(32, len(hosts)))) as ex:
         for ip, mac, ttl in ex.map(probe, hosts):
             if mac:
                 raw["arp"][ip].add(mac)
@@ -1195,7 +1195,7 @@ def scan(subnet, opts, progress, stop):
         resolver = win_sendarp if IS_WIN else (scapy_active_arp if scapy_ok() else None)
         if missed and resolver:
             progress(34, f"Second ARP round for {len(missed)} addresses (sleeping phones / cameras)...")
-            with ThreadPoolExecutor(96) as ex:
+            with ThreadPoolExecutor(min(256, max(32, len(missed)))) as ex:
                 for ip, mac in zip(missed, ex.map(resolver, missed)):
                     if mac:
                         raw["arp"][ip].add(mac)
@@ -1277,60 +1277,79 @@ def scan(subnet, opts, progress, stop):
     alive = sorted(set(raw["arp"]) | set(raw["ping"]) | {lip}, key=ip_key)
     chk()
 
-    # 4. identify
-    progress(52, f"Identifying {len(alive)} devices: services...")
+    # 4. identify. These questions do not depend on each other, so they are asked at the same time instead of
+    #    one after the other (each one mostly waits for devices that never answer): names, UPnP, reverse DNS and
+    #    the rogue-DHCP listen run beside the port check; file-sharing names beside the web pages.
+    side = {}
+
+    def bg(key, fn):
+        def run_it():
+            try:
+                side[key] = fn()
+            except Exception as e:  # noqa: BLE001 - one failed question must not lose the scan
+                side[key + "_err"] = (str(e) or type(e).__name__)[:150]
+        t = threading.Thread(target=run_it, daemon=True)
+        t.start()
+        return t
+
+    def all_netbios():
+        with ThreadPoolExecutor(64) as ex:
+            return {ip: r for ip, r in zip(alive, ex.map(netbios_query, alive)) if r}
+
+    def all_rdns():
+        with ThreadPoolExecutor(64) as ex:
+            return {ip: n for ip, n in zip(alive, ex.map(reverse_dns, alive)) if n}
+
+    waiting = [bg("nbns", all_netbios), bg("upnp", lambda: ssdp_discover(lip)),
+               bg("dhcp", lambda: scapy_dhcp_probe(gw) if use_scapy else dhcp_probe_udp(raw["self_mac"]))]
+    if not opts.get("fast"):
+        waiting.append(bg("dns", all_rdns))
+    progress(52, f"Identifying {len(alive)} devices: services, names, UPnP...")
     with ThreadPoolExecutor(200) as ex:
         jobs = {(ip, p): ex.submit(tcp_open, ip, p) for ip in alive for p in PORTS}
         for (ip, p), f in jobs.items():
             if f.result():
                 raw["ports"].setdefault(ip, []).append(p)
     chk()
-    progress(68, "Reading computer names (NetBIOS)...")
-    with ThreadPoolExecutor(64) as ex:
-        for ip, r in zip(alive, ex.map(netbios_query, alive)):
-            if r:
-                raw["nbns"][ip] = r
-    chk()
     # Windows PCs that ignore NetBIOS still tell their name in the first step of a file-sharing login (SMB)
     # (asked of every PC with file sharing: also gives the exact Windows version and the domain / workgroup)
     smb_ips = [ip for ip in alive if 445 in raw["ports"].get(ip, []) and ip != lip]
-    if smb_ips:
+
+    def all_smb():
         import nd_smbinfo
-        progress(72, f"Reading computer names from file sharing ({len(smb_ips)})...")
         with ThreadPoolExecutor(32) as ex:
-            for ip, r in zip(smb_ips, ex.map(nd_smbinfo.smb_info, smb_ips)):
-                if r:
-                    raw.setdefault("smb", {})[ip] = r
-    chk()
-    progress(74, "UPnP discovery (routers, cameras, TVs)...")
-    raw["upnp"] = ssdp_discover(lip)
-    chk()
-    progress(80, "Reading device web pages...")
+            return {ip: r for ip, r in zip(smb_ips, ex.map(nd_smbinfo.smb_info, smb_ips)) if r}
+
+    if smb_ips:
+        waiting.append(bg("smb", all_smb))
+    progress(70, "Reading device web pages and computer names...")
     webj = []
     for ip in alive:
         for p in (80, 8080, 8000, 443, 8443):
             if p in raw["ports"].get(ip, []):
                 webj.append((ip, p))
                 break
-    with ThreadPoolExecutor(32) as ex:
+    with ThreadPoolExecutor(48) as ex:
         for (ip, p), r in zip(webj, ex.map(lambda a: http_info(*a), webj)):
             if r:
                 raw["http"][ip] = r
     chk()
-    if not opts.get("fast"):
-        progress(85, "Reverse DNS names...")
-        with ThreadPoolExecutor(64) as ex:
-            for ip, n in zip(alive, ex.map(reverse_dns, alive)):
-                if n:
-                    raw["dns"][ip] = n
-    chk()
+    progress(86, "Waiting for the last answers (names, UPnP, rogue-DHCP check)...")
+    for t in waiting:
+        while t.is_alive():
+            t.join(0.3)
+            chk()
+    raw["nbns"].update(side.get("nbns") or {})
+    raw["upnp"] = side.get("upnp") or {}
+    raw["dns"].update(side.get("dns") or {})
+    if side.get("smb"):
+        raw.setdefault("smb", {}).update(side["smb"])
 
     # 5. health tests
-    progress(88, "Checking for rogue DHCP servers...")
-    try:
-        tests["dhcp"] = scapy_dhcp_probe(gw) if use_scapy else dhcp_probe_udp(raw["self_mac"])
-    except Exception as e:
-        tests["dhcp_err"] = (str(e) or type(e).__name__)[:150]
+    if "dhcp" in side:
+        tests["dhcp"] = side["dhcp"]
+    elif "dhcp_err" in side:
+        tests["dhcp_err"] = side["dhcp_err"]
     chk()
     if gw and admin:
         progress(92, "Duplicate-reply test on gateway...")
