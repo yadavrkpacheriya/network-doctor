@@ -66,6 +66,23 @@ class AutoFix(unittest.TestCase):
         fix = next(a for a in r["auto"] if a["where"] == "router")
         self.assertTrue(fix["undo"])
 
+    def test_mtu_is_safe_additive_fix_with_undo(self):
+        """MSS clamping only adds a passthrough firewall rule (never blocks or exposes anything), so it
+        was widened into AUTO_SAFE - but only once it had a real Undo, same bar as the other safe kinds."""
+        self.assertIn("mtu", AL.AUTO_SAFE)
+        r = AL.explain("Large packets do not pass the line (MTU too small)", "warning", "192.168.0.70",
+                       "192.168.0.1")
+        fix = next(a for a in r["auto"] if a["where"] == "router")
+        self.assertTrue(fix["undo"])
+        self.assertIn("mangle remove", fix["undo"])
+
+    def test_dns_and_exposed_stay_manual_despite_having_an_undo(self):
+        """Having an undo is necessary but not sufficient: "dns" turns on allow-remote-requests on the
+        router's own resolver (a real open-resolver risk if ever reachable from the WAN) and "exposed"
+        closes a port a user may have opened on purpose for remote camera viewing - both stay manual."""
+        self.assertNotIn("dns", AL.AUTO_SAFE)
+        self.assertNotIn("exposed", AL.AUTO_SAFE)
+
     def test_exposed_fix_has_an_undo_even_though_not_auto_applied(self):
         """Not in AUTO_SAFE (stays a manual, one-click confirm - closing a port forward can break a
         camera's remote-viewing feature someone set up on purpose), but once applied it must still be

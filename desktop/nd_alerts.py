@@ -21,9 +21,13 @@ MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 PRIO = {1: "P1 - fix now", 2: "P2 - fix today", 3: "P3 - this week", 4: "P4 - for information"}
 SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 
-# fixes Network Doctor may apply by itself when the same alert repeats 5 times (they only add a reservation or turn
-# on a protection - nothing that can cut off a user or a camera)
-AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict"}
+# fixes Network Doctor may apply by itself (they only add a reservation or turn on a protection - nothing
+# that can cut off a user or a camera, and nothing that loosens security). "mtu" was added once its fix
+# (MSS clamping) got an Undo like the others: it only adds a passthrough firewall rule, never blocks or
+# exposes anything. Kinds that block/expose a device (torrent, malware, exposed, rogue_dhcp, arp_spoof) or
+# touch DNS/UPnP are deliberately NOT here - those can affect a real user or widen what reaches this
+# network from outside, so they stay manual even with a clean track record.
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu"}
 
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
@@ -360,7 +364,8 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
                            'action=change-mss new-mss=clamp-to-pmtu passthrough=yes comment="ND: MSS clamp"\n'
                            '/ip firewall mangle add chain=forward protocol=tcp tcp-flags=syn '
-                           'tcp-mss=!0-1440 action=change-mss new-mss=1440 passthrough=yes comment="ND: MSS clamp"')])
+                           'tcp-mss=!0-1440 action=change-mss new-mss=1440 passthrough=yes comment="ND: MSS clamp"',
+                           ':do {/ip firewall mangle remove [find where comment="ND: MSS clamp"]} on-error={}')])
 
     if "new device" in low or "randomized" in low or "random mac" in low:
         return _fix(3, "new_device", "New device(s) joined the network",
