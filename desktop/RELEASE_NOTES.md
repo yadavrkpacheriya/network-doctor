@@ -1,3 +1,17 @@
+## Network Doctor 3.26.1
+
+### New: "Remote access (VPN)" readiness check (Internet & Usage) - is it even possible to fix the latency?
+- Before changing any router setting to speed up a VPN (Tailscale, WireGuard, etc.), this answers the
+  question that decides whether that's even possible: does this office have its own public IP, or does
+  the ISP share one address between many customers (CGNAT)? If it's CGNAT, no router setting can ever
+  give a direct connection - only the ISP can fix that (a static/public IP, often a paid add-on).
+- **Read-only, by design** - it only asks the router what it already knows (IP Cloud) and compares it to
+  what the internet sees; it never opens a port, enables UPnP, or changes anything. If you're NOT behind
+  CGNAT, it deliberately does not offer a one-click "enable UPnP" - UPnP lets any device on the LAN open
+  its own port automatically, which this app treats as a security issue everywhere else (the "exposed
+  DVR" alert kind), so it won't quietly recommend the same risk here. The safe next step it does suggest:
+  one scoped port-forward to one named trusted device, with an Undo - never a blanket auto-forward rule.
+
 ## Network Doctor 3.26.0
 
 ### "Is it down for everyone, or just us?" (Tools > Web check)
