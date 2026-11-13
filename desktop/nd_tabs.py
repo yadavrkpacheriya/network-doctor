@@ -2368,9 +2368,10 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
                                                      ("t_remote", "Remote access (VPN)")]),
     ("security_s", "Security", "#7c3aed", "#ede9fe", [("t_guard", "Network guard"), ("t_website", "Website firewall"),
                                                       ("t_watch", "Critical devices")]),
-    ("fix_s", "Fix & Commands", "#b45309", "#fef3c7", [("commands", "Commands"), ("t_lan", "LAN speed (PC to PC)"),
-                                                       ("t_wifi", "Wi-Fi analyzer"), ("t_nic", "Network adapters"),
-                                                       ("t_mtu", "MTU finder"), ("t_subnet", "Subnet calculator")]),
+    ("fix_s", "Fix & Commands", "#b45309", "#fef3c7", [("commands", "Commands")]),
+    ("pctools_s", "This PC & Wi-Fi", "#a16207", "#fef9c3", [("t_lan", "LAN speed (PC to PC)"),
+                                                            ("t_wifi", "Wi-Fi analyzer"), ("t_nic", "Network adapters"),
+                                                            ("t_mtu", "MTU finder"), ("t_subnet", "Subnet calculator")]),
     ("setup_s", "Setup", "#475569", "#e2e8f0", [("setup", "Setup"), ("t_ready", "What is missing"),
                                                 ("activate", "Pro / Activate")]),
 ]
