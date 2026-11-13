@@ -19,6 +19,17 @@ class VpnTunnelActive(unittest.TestCase):
         with mock.patch.object(NT, "run", return_value="Ethernet adapter\n   IPv4 Address. . . : 192.168.0.70"):
             self.assertFalse(NT.vpn_tunnel_active())
 
+    def test_installed_but_disconnected_vpn_adapter_is_not_active(self):
+        out = ("Unknown adapter Tailscale:\n   Media State . . . : Media disconnected\n"
+               "Ethernet adapter Ethernet:\n   IPv4 Address. . . : 192.168.0.70\n   Subnet Mask . . . : 255.255.255.0")
+        with mock.patch.object(NT, "run", return_value=out):
+            self.assertFalse(NT.vpn_tunnel_active())
+
+    def test_connected_wireguard_adapter_without_cgnat_ip_is_active(self):
+        out = "Unknown adapter WireGuard Tunnel office:\n   IPv4 Address. . . : 10.8.0.2"
+        with mock.patch.object(NT, "run", return_value=out):
+            self.assertTrue(NT.vpn_tunnel_active())
+
     def test_never_raises_when_run_fails(self):
         with mock.patch.object(NT, "run", side_effect=Exception("boom")):
             self.assertFalse(NT.vpn_tunnel_active())

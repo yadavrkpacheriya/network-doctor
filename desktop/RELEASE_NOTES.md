@@ -1,3 +1,12 @@
+## Network Doctor 3.28.5
+
+### Second re-check pass
+- Remote access (VPN) check: a VPN adapter that is only installed (Windows shows it as "Media disconnected")
+  no longer counts as an active tunnel - only a connected one does.
+- Login sweep: a very long name read from a camera is cut to 60 characters, like names typed on the phone.
+- Phone app 1.16.1 - speed test: five servers are tried instead of three, the first request is 25 MB instead
+  of 100 MB, and the clock starts when data arrives (connect time no longer makes a fast line read low).
+
 ## Network Doctor 3.28.4
 
 ### Fixed: Router config backup (3.28.0 - 3.28.3) did not work properly

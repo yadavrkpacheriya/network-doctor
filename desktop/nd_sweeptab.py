@@ -288,7 +288,7 @@ class SweepPage:
             return
         n = 0
         for r in hits:
-            T.set_tag(self.app.db, r["mac"], name=r["data"]["name"].strip())
+            T.set_tag(self.app.db, r["mac"], name=r["data"]["name"].strip()[:60])
             n += 1
         core.save_db(self.app.db)
         self.app.after_tags_changed()

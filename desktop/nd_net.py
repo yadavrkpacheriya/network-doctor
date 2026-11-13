@@ -720,16 +720,25 @@ def vpn_tunnel_active():
         out = run(["ipconfig", "/all"], 10) if core.IS_WIN else (run(["ifconfig"], 10) or run(["ip", "addr"], 10))
     except Exception:
         return False
-    low = (out or "").lower()
-    if any(k in low for k in ("tailscale", "wireguard", "zerotier", "nordlynx", "openvpn", "tap-windows")):
-        return True
-    try:
-        net = ipaddress.ip_network("100.64.0.0/10")
-        for ip in re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", out or ""):
-            if ipaddress.ip_address(ip) in net:
-                return True
-    except Exception:
-        pass
+    # one block per adapter; an installed-but-disconnected VPN adapter (Windows lists it as "Media
+    # disconnected", with no IPv4 address) is not an active tunnel
+    names = ("tailscale", "wireguard", "zerotier", "nordlynx", "openvpn", "tap-windows", r"tun\d", r"wg\d")
+    cg = ipaddress.ip_network("100.64.0.0/10")
+    for block in re.split(r"\n(?=\S)", out or ""):
+        low = block.lower()
+        if "media disconnected" in low:
+            continue
+        ips = []
+        for ip in re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", block):
+            try:
+                ips.append(ipaddress.ip_address(ip))
+            except ValueError:
+                pass
+        if any(i in cg for i in ips):
+            return True
+        head = low.split("\n", 1)[0]
+        if ips and any(re.search(r"\b" + k, head) for k in names):
+            return True
     return False
 
 
