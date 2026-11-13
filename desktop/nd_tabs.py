@@ -2028,6 +2028,11 @@ class TroubleshootWindow(tk.Toplevel):
         ttk.Label(f, text=alert["text"], foreground="#667085", wraplength=780, justify="left").pack(anchor="w")
         self._build_mentioned(f, alert["text"])
         ttk.Label(f, text=r["why"], wraplength=780, justify="left").pack(anchor="w", pady=(8, 0))
+        diag = alert.get("auto_diag")
+        if diag and diag != "running":
+            box = ttk.LabelFrame(f, text="Auto-diagnosed (read-only, no change made)", padding=6)
+            box.pack(fill="x", pady=(6, 0))
+            ttk.Label(box, text=diag, font=("Consolas", 9), wraplength=760, justify="left").pack(anchor="w")
         ttk.Label(f, text="Fix: " + r["fix"], font=("Segoe UI", 10, "bold"), wraplength=780, justify="left").pack(
             anchor="w", pady=(6, 6))
         if r["auto"] or r.get("app"):

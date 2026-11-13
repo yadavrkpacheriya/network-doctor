@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.28.2"
+VERSION = "3.28.3"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2390,13 +2390,40 @@ class App(tk.Tk):
             self._auto_fix_ip_conflict(e, r)
             return
         fix = next((a for a in r["auto"] if a["where"] == "router"), None) if r["kind"] in AL.AUTO_SAFE else None
-        if not fix:
+        if fix:
+            c = self.router_client(ask=False)
+            if not c:
+                return
+            e["autofix"] = "trying"
+            self._apply_router_fix(e, r["kind"], fix["label"], fix["cmd"], fix.get("undo", ""), c)
             return
+        # Not an auto-SAFE fix (nothing to change) - but if there's a read-only diagnostic for this kind
+        # ("router_read": a query, never a change), run it by itself and attach the result to the alert.
+        # Safe for ANY kind, not just AUTO_SAFE, because it changes nothing on the router - this is the
+        # "find" half of the learning brain: more context collected automatically, no action taken.
+        diag = next((a for a in r["auto"] if a["where"] == "router_read"), None)
+        if diag and not e.get("auto_diag"):
+            self._auto_diagnose(e, diag)
+
+    def _auto_diagnose(self, e, diag):
         c = self.router_client(ask=False)
         if not c:
             return
-        e["autofix"] = "trying"
-        self._apply_router_fix(e, r["kind"], fix["label"], fix["cmd"], fix.get("undo", ""), c)
+        e["auto_diag"] = "running"
+
+        def work():
+            try:
+                with c:
+                    out = c.run_cli(diag["cmd"])
+            except Exception as ex:
+                out = f"(could not read: {ex})"
+            self.q.put(("call", lambda: done(out)))
+
+        def done(out):
+            e["auto_diag"] = out.strip() if out else "(no output)"
+            e["auto_diag_at"] = time.time()
+            self._alerts_touched()
+        threading.Thread(target=work, daemon=True).start()
 
     def _auto_fix_ip_conflict(self, e, r):
         """Two devices claim the same IP: if exactly one of them is tagged 'Default device for its IP'

@@ -1,3 +1,13 @@
+## Network Doctor 3.28.3
+
+### Learning brain: the "find" half, not just "fix"
+- Some alerts (so far: "The router's CPU is very busy") have a one-click read-only diagnostic button but
+  no safe auto-fix (there's nothing to change). The brain now runs that diagnostic by itself once the
+  alert repeats, the same way it auto-applies a real fix for AUTO_SAFE kinds - except this never changes
+  anything on the router (query-only), so it's safe for any kind, not just the AUTO_SAFE list.
+- Result shows up right in Troubleshoot as "Auto-diagnosed (read-only, no change made)" - by the time you
+  open the alert, the extra context (e.g. the router's actual CPU/memory numbers) is already there.
+
 ## Network Doctor 3.28.2
 
 ### Config backup now runs itself every 6h, and a real change raises an alert
