@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 
 IS_WIN = os.name == "nt"
@@ -161,6 +162,33 @@ def unprotect(blob):
 
 
 # --------------------------------------------------------------------------- client
+# One login is kept open and shared by everything in the app that talks to the router ("with client:").
+# Before this, every reading (DNS cache each minute, leases, bandwidth...) logged in and out again, which
+# filled the router's log with "user ... logged in / logged out via api" lines - hundreds an hour.
+KEEP_OPEN = True
+KEEP_IDLE = 900          # seconds an unused login is kept before it is closed
+_POOL = {}               # key -> {"sock", "buf", "t"}: the open login nobody is using right now
+_POOL_LOCKS = {}         # key -> lock: one conversation at a time on a login
+_POOL_GUARD = threading.Lock()
+
+
+def _pool_lock(key):
+    with _POOL_GUARD:
+        return _POOL_LOCKS.setdefault(key, threading.RLock())
+
+
+def close_all():
+    """Closes every kept login (app exit, or after the router login was changed in Setup)."""
+    with _POOL_GUARD:
+        entries = list(_POOL.values())
+        _POOL.clear()
+    for e in entries:
+        try:
+            e["sock"].close()
+        except OSError:
+            pass
+
+
 class RouterOS:
     def __init__(self, host, user, password, port=None, use_ssl=False, timeout=8):
         self.host, self.user, self.password = host, user, password
@@ -168,6 +196,7 @@ class RouterOS:
         self.port = port or (API_SSL_PORT if use_ssl else API_PORT)
         self.timeout = timeout
         self.sock = None
+        self._depth, self._lock = 0, None
 
     # ---- connection
     def connect(self):
@@ -206,11 +235,69 @@ class RouterOS:
             pass
         self.sock = None
 
-    def __enter__(self):
-        return self.connect() if self.sock is None else self
+    def _key(self):
+        return (self.host, self.port, self.user, self.password, self.use_ssl)
 
-    def __exit__(self, *a):
-        self.close()
+    def __enter__(self):
+        self._depth += 1
+        if self.sock is not None:          # already connected (nested "with", or connect() called by hand)
+            return self
+        if not KEEP_OPEN:
+            try:
+                return self.connect()
+            except BaseException:
+                self._depth -= 1
+                raise
+        lock = _pool_lock(self._key())
+        # one conversation at a time on the shared login; if another one runs very long, do not wait for
+        # ever - use a login of our own for this one
+        self._lock = lock if lock.acquire(timeout=20) else None
+        try:
+            with _POOL_GUARD:
+                e = _POOL.pop(self._key(), None) if self._lock else None
+            if e and time.time() - e["t"] < KEEP_IDLE:
+                self.sock, self._buf = e["sock"], e["buf"]
+                try:
+                    self.sock.settimeout(self.timeout)
+                    self.talk(["/system/identity/print"], check=False)   # still alive? (router restarted...)
+                    return self
+                except (RosError, OSError):
+                    self.close()
+            elif e:
+                try:
+                    e["sock"].close()
+                except OSError:
+                    pass
+            return self.connect()
+        except BaseException:
+            self._depth -= 1
+            if self._lock:
+                self._lock.release()
+                self._lock = None
+            raise
+
+    def __exit__(self, exc_type=None, *a):
+        self._depth -= 1
+        if self._depth > 0:
+            return
+        self._depth = 0
+        lock, self._lock = self._lock, None
+        try:
+            if KEEP_OPEN and lock is not None and exc_type is None and self.sock is not None:
+                with _POOL_GUARD:
+                    old = _POOL.get(self._key())
+                    _POOL[self._key()] = {"sock": self.sock, "buf": getattr(self, "_buf", b""), "t": time.time()}
+                self.sock = None           # kept open for the next reading
+                if old:
+                    try:
+                        old["sock"].close()
+                    except OSError:
+                        pass
+            else:
+                self.close()               # an error in the middle: the conversation state is unknown
+        finally:
+            if lock is not None:
+                lock.release()
 
     def _recv(self, n):
         out = b""
