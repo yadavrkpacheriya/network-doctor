@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.23.11"
+VERSION = "3.23.12"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -885,7 +885,7 @@ class App(tk.Tk):
         ttk.Checkbutton(au, text="Pop-up + sound for new problems", variable=self.var_alerts,
                         command=self._save_auto).pack(side="left", padx=12)
         self.var_alert_new = tk.BooleanVar(value=st.get("alert_new", True))
-        ttk.Checkbutton(au, text="Alert when a new device joins", variable=self.var_alert_new,
+        ttk.Checkbutton(au, text="Alert when a device joins or stops answering", variable=self.var_alert_new,
                         command=self._save_auto).pack(side="left", padx=4)
         self.var_autostart = tk.BooleanVar(value=self._autostart_enabled())
         ttk.Checkbutton(au, text="Start with Windows" if core.IS_WIN else "Start at login",
@@ -1527,6 +1527,11 @@ class App(tk.Tk):
             before = set(self.db.get("devices") or {})
             raw["meta"]["new_macs"] = [d["mac"] for d in devices if d.get("online") and d.get("mac")
                                        and d["mac"] not in before] if before else []
+            # the other half of "new since last scan": devices that answered last time and don't now - taken
+            # before update_db overwrites last_online_macs with this scan's own set.
+            was_online = set(self.db.get("last_online_macs") or [])
+            now_online = {d["mac"] for d in devices if d.get("online") and d.get("mac")}
+            raw["meta"]["missing_macs"] = sorted(was_online - now_online) if was_online else []
             core.update_db(self.db, raw, devices)
             self.q.put(("done", raw, devices, issues, checks))
         except core.Stopped:
@@ -1602,6 +1607,7 @@ class App(tk.Tk):
         self._usage_devices()
         self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db)
         self._new_devices(self.raw["meta"].get("new_macs") or [])
+        self._missing_devices(self.raw["meta"].get("missing_macs") or [])
         conflict_ips = set()
         for i in self.issues:
             mm = re.match(r"IP conflict on (\S+)", i["title"])
@@ -2739,7 +2745,8 @@ class App(tk.Tk):
             pass
 
     def _new_devices(self, macs):
-        """New MAC addresses since the earlier scans (listed in Problems by the scan engine): a note and a pop-up."""
+        """New MAC addresses since the earlier scans (listed in Problems by the scan engine): a note and a pop-up.
+        Named per category too ('6 CCTV cameras, 2 Phones') so a count change is explained, not just a number."""
         if not macs:
             return
         news = [d for d in self.devices if d.get("mac") in set(macs)]
@@ -2747,8 +2754,36 @@ class App(tk.Tk):
                  + ("  random MAC" if d.get("random") else "") for d in news]
         for d in news:
             d.setdefault("notes", []).append("NEW on the network")
-        txt = "New device(s) on the network: " + "; ".join(i.split("  (")[0] for i in items[:4]) + (
-            f" and {len(items) - 4} more" if len(items) > 4 else "")
+        by = core.breakdown_text(news)
+        txt = f"{len(news)} new device(s) on the network" + (f" ({by})" if by else "") + ": " + \
+            "; ".join(i.split("  (")[0] for i in items[:4]) + (f" and {len(items) - 4} more" if len(items) > 4 else "")
+        self._health_log("Full scan", "info", txt)
+        self._record_alert("warning", txt, "Full scan")
+        if self.mon:
+            self.mon.event("info", "Auto check", txt, "auto")
+        if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
+            self._popup("warning", txt)
+
+    def _missing_devices(self, macs):
+        """The other half of "new device(s) since the last scan": devices that answered last scan and don't
+        now. Without this, a camera dropping off the network (power cut, cable pulled, it died) is invisible
+        until someone notices the total is lower - the exact gap that made "32 yesterday, 40 today" unreadable."""
+        if not macs:
+            return
+        hist = self.db.get("devices") or {}
+        gone = []
+        for mac in macs:
+            h = hist.get(mac) or {}
+            name = self.db.get("labels", {}).get(mac) or (h.get("names") or [""])[-1] or "-"
+            gone.append({"category": h.get("category", ""), "name": name, "ip": h.get("ip", ""), "mac": mac,
+                         "vendor": h.get("vendor", "")})
+        for d in self.devices:
+            if d.get("mac") in set(macs):
+                d.setdefault("notes", []).append("STOPPED ANSWERING since last scan")
+        items = [f"{g['name']}  {g['ip']}  {g['mac']}  {g['vendor']}" for g in gone]
+        by = core.breakdown_text(gone)
+        txt = f"{len(gone)} device(s) stopped answering since the last scan" + (f" ({by})" if by else "") + \
+            ": " + "; ".join(items[:4]) + (f" and {len(items) - 4} more" if len(items) > 4 else "")
         self._health_log("Full scan", "info", txt)
         self._record_alert("warning", txt, "Full scan")
         if self.mon:

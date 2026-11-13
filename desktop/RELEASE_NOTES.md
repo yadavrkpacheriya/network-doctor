@@ -1,3 +1,19 @@
+## Network Doctor 3.23.12
+
+### "32 cameras yesterday, 40 today, but I can't find the difference" - now you can
+Scans already noted new devices, but only a flat count buried among other alerts, and there was no way to
+see what had dropped OFF the network at all - so a day-to-day count change (more cameras, fewer cameras)
+had no explanation anywhere.
+- Every new/missing-device alert, the Home tab's Devices card, and the Problems-tab issue now break the
+  count down by category: "8 new device(s) (6 CCTV cameras, 2 Phones)" instead of a bare "8".
+- New: devices that answered the previous scan and don't answer this one are now flagged too ("3 device(s)
+  stopped answering since the last scan (3 CCTV cameras)") - with a note, a health-log entry and (if alerts
+  are on) a pop-up, the same way a new device always has been.
+- Devices tab: two new filters, "New since last scan" and "Stopped answering since last scan", to jump
+  straight to exactly the devices that changed instead of re-reading the whole list.
+- Setup > Alerts: the "Alert when a new device joins" checkbox now also covers a device dropping off,
+  renamed to match.
+
 ## Network Doctor 3.23.11
 
 ### The .deb install can now update itself automatically
