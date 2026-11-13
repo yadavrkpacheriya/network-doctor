@@ -283,7 +283,7 @@ class SweepPage:
                 and r.get("mac")]
         if not hits:
             messagebox.showinfo(APP, "No device answered with its own configured name yet - run the scan "
-                                     "first (Hikvision and Dahua cameras/NVRs report this; others don't).")
+                                     "first (Hikvision, Dahua and XMeye cameras/NVRs report this; others don't).")
             return
         if not messagebox.askyesno(APP, f"Set the tag name of {len(hits)} device(s) to the name stored on the "
                                         f"device itself? This replaces any tag name already set for them."):
@@ -365,7 +365,7 @@ class CamLineWindow(tk.Toplevel):
             "visible gap. For every camera: the router reserves the new IP, the camera is switched to automatic "
             "(DHCP) with the login from the scan, and the app waits until it answers on the new IP. One camera "
             "at a time; the run stops at the first camera that does not come back.\n"
-            "The NVR / DVR stores each camera's IP. A Hikvision or Dahua recorder that accepted a login in the "
+            "The NVR / DVR stores each camera's IP. A Hikvision, Dahua or XMeye recorder that accepted a login in the "
             "scan is given the camera's new IP automatically, right after the camera has moved; for any other "
             "recorder type it by hand (Save old -> new list). Until the recorder has the new IP that channel "
             "shows no picture. So: move ONE camera first, check its picture on the recorder, and only then "
@@ -437,7 +437,7 @@ class CamLineWindow(tk.Toplevel):
             name = tags.get(d["mac"], {}).get("name") or d.get("name") or ""
             self.tv.insert("", "end", iid=str(i), values=(
                 name, r["ip_now"], r["ip_new"] if r["action"] in ("move", "manual") else "",
-                {"hik": "Hikvision", "dahua": "Dahua"}.get(r["method"], ""),
+                self.CL.BRAND.get(r["method"], ""),
                 label.get(r["action"], r["action"]), r.get("result") or r["why"]))
 
     def go(self, limit):

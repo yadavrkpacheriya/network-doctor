@@ -1,3 +1,16 @@
+## Network Doctor 3.31.0
+
+### XMeye / NetSurveillance cameras and recorders (port 34567)
+- Login sweep: XMeye devices are now really logged in to (before: "not supported"). The sweep shows whether
+  the login works, model, serial number, firmware and the name stored on the camera - so "Use device's own
+  name as its tag" works for them too.
+- Line up cameras: XMeye cameras can be switched to automatic IP (DHCP) and moved into the camera block like
+  Hikvision and Dahua ones, and an XMeye recorder's channel is pointed at the camera's new IP afterwards.
+- The same safety rules apply: every login is tried once per device, one camera is moved at a time, and the
+  run stops at the first camera that does not come back.
+- NOT yet tested on a real XMeye camera or recorder (only against a simulated one). Many of these cameras
+  fall back to 192.168.1.10 when they get no IP - move ONE camera first and check its picture.
+
 ## Network Doctor 3.30.2
 
 - 3.30.0 and 3.30.1 were never released: a new test failed on the Windows build machine (the test could not
