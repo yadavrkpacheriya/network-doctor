@@ -597,6 +597,38 @@ class UsageStore:
             if kind == "app":
                 db.execute("UPDATE active SET cat=? WHERE app=?" + keep, (new, value, *depts))
 
+    def set_trusted(self, app, trusted=True):
+        """Mark an app (e.g. 'Acronis') as an expected, deliberate high-traffic service: its daily-usage
+        spikes stop being raised as problems (device_spike insight / alert), since the user runs it on
+        purpose (backups, bulk updates...) and does not want it flagged every time."""
+        key = "trusted:" + app
+        with self.lock:
+            if trusted:
+                self.overrides[key] = True
+            else:
+                self.overrides.pop(key, None)
+            data = {"overrides": self.overrides}
+        try:
+            os.makedirs(os.path.dirname(self.settings_path), exist_ok=True)
+            with open(self.settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=1)
+        except OSError:
+            pass
+
+    def is_trusted(self, app):
+        """True if `app` (or a trusted keyword contained in it, e.g. 'acronis' matches 'acronis.com' and
+        'Acronis Asia Pte Ltd administrator') was marked trusted."""
+        if not app:
+            return False
+        low = app.lower()
+        for k in self.overrides:
+            if k.startswith("trusted:") and k[8:].lower() in low:
+                return True
+        return False
+
+    def trusted_apps(self):
+        return sorted(k[8:] for k in self.overrides if k.startswith("trusted:"))
+
     def _rule_cat(self, kind, value):
         if kind == "app":
             return APP_INFO.get(value, (NEUTRAL, ""))[0]
@@ -929,6 +961,8 @@ class UsageStore:
             if len(hist) >= 3 and per_day.get(last, 0) > 3 * max(statistics.mean(hist), 200e6 / 3):
                 nm = names.get(dev, {}).get("name") or dev
                 top = dev_app[dev].most_common(1)[0][0] if dev_app[dev] else "?"
+                if self.is_trusted(top):
+                    continue  # a deliberate, expected service (e.g. Acronis backup) - not a problem
                 out.append({"sev": "warning", "title": f"{nm} used {fmt_bytes(per_day[last])} on {last}",
                             "text": f"About {per_day[last] / max(statistics.mean(hist), 1):.0f} times its usual "
                                     f"daily use. Mostly: {top}.",
