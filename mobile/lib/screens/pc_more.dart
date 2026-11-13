@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'common.dart';
+import 'pc_actions.dart' show runOnPc;
 
 /// Office PC tabs added in 1.3: Summary (cards + setup checklist), Usage (apps, websites, productivity, advice)
 /// and Inventory. All data comes from the PC's /api/state snapshot.
@@ -238,6 +239,18 @@ class _UsageTabState extends State<UsageTab> {
               Row(children: [
                 Expanded(child: Text('${a['app']}', overflow: TextOverflow.ellipsis)),
                 Text('${fmtBytes(a['bytes'] as num?)} · ${fmtMin(a['minutes'] as num?)}', style: t.bodySmall),
+                IconButton(
+                  tooltip: a['trusted'] == true
+                      ? 'Trusted - tap to stop ignoring its usage spikes'
+                      : 'Mark trusted: stop flagging its usage spikes as problems',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(a['trusted'] == true ? Icons.verified : Icons.verified_outlined,
+                      color: a['trusted'] == true ? Colors.green : null, size: 20),
+                  onPressed: () async {
+                    await runOnPc(context, 'set_trusted', {'app': a['app'], 'trusted': a['trusted'] != true});
+                    await widget.onRefresh();
+                  },
+                ),
               ]),
               const SizedBox(height: 2),
               ClipRRect(

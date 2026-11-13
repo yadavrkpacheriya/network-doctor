@@ -3199,12 +3199,31 @@ class App(tk.Tk):
             if not mac:
                 return {"ok": False, "message": "this device has no MAC address"}
             vals = {k: str(a[k])[:60] for k in ("name", "dept", "location", "notes") if k in a}
+            if "watch" in a:
+                vals["watch"] = T.watch_value(a.get("watch"))
+            if "priority" in a:
+                vals["priority"] = T.priority_value(a.get("priority"))
 
             def do():
                 T.set_tag(self.db, mac, **vals)
                 self.after_tags_changed()
             self.q.put(("call", do))
             return {"ok": True, "message": "Saved on the PC"}
+        if name == "set_trusted":
+            app_name = str(a.get("app", ""))[:120]
+            if not app_name or not getattr(self, "usage", None):
+                return {"ok": False, "message": "no app name, or usage tracking is off on the PC"}
+            self.usage.set_trusted(app_name, bool(a.get("trusted", True)))
+            return {"ok": True, "message": f"{'Trusted' if a.get('trusted', True) else 'Un-trusted'}: {app_name}"}
+        if name == "undo_fix":
+            fid = str(a.get("id", ""))
+            fx = AF.find(self._fix_history(), fid)
+            if not fx:
+                return {"ok": False, "message": "fix not found"}
+            if not fx.get("undo_cmd"):
+                return {"ok": False, "message": "this fix has no undo command"}
+            self.q.put(("call", lambda: self._undo_fix(fid)))
+            return {"ok": True, "message": "Undoing on the PC..."}
         if name == "alert_status":
             self.alert_log.set_status({str(a.get("id"))}, "fixed" if a.get("status") == "fixed" else "open",
                                       "marked on the phone")
@@ -3582,6 +3601,12 @@ class App(tk.Tk):
                            "fixes": [f["label"] for f in r["auto"] if f["where"] in ("router", "router_read")],
                            "pc_fixes": [f["label"] + ": " + f["cmd"] for f in r["auto"] if f["where"] == "pc"]})
         snap["alerts"] = alerts
+        snap["fixes"] = [{"id": e["id"], "kind": e["kind"], "title": e["title"], "mac": e.get("mac"),
+                          "ip": e.get("ip"), "status": e["status"], "at": e["at"], "note": e.get("note", ""),
+                          "undoable": bool(e.get("undo_cmd"))}
+                         for e in sorted(self._fix_history(), key=lambda e: -e["at"])[:60]]
+        snap["fix_stats"] = AF.stats_summary(self._fix_stats())
+        snap["trusted_apps"] = self.usage.trusted_apps() if getattr(self, "usage", None) else []
         snap["router_login"] = bool(RO.from_settings(self._settings(), self.gw))
         snap["phone_api"] = 3
         snap["pro"] = bool(core.IS_PRO)
@@ -3649,11 +3674,13 @@ class App(tk.Tk):
         if self.usage:
             try:
                 def cut(sm):
-                    return {"start": sm["start"], "end": sm["end"], "cats": sm["cats"], "apps": sm["apps"][:25],
+                    return {"start": sm["start"], "end": sm["end"], "cats": sm["cats"],
+                            "apps": [dict(x, trusted=self.usage.is_trusted(x["app"])) for x in sm["apps"][:25]],
                             "sites": [dict(x, site=US.pretty_site(x["site"])) for x in sm["sites"][:25]],
                             "devices": sm["devices"][:60]}
                 out = {"today": cut(self.usage.summary(1)), "week": cut(self.usage.summary(7)),
-                       "insights": self.usage.insights(), "labels": US.CAT_LABEL}
+                       "insights": self.usage.insights(), "labels": US.CAT_LABEL,
+                       "trusted_apps": self.usage.trusted_apps()}
             except Exception:
                 out = None
         self._usage_snap_cache = (time.time(), out)
