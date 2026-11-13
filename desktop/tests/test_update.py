@@ -114,15 +114,19 @@ class PackagedLinuxAutoUpdate(unittest.TestCase):
     and the helper script apply_deb() hands to a detached shell."""
 
     def setUp(self):
-        self._is_linux, self._exe = U.IS_LINUX, sys.executable
+        self._is_linux, self._is_mac, self._exe = U.IS_LINUX, U.IS_MAC, sys.executable
         self._popen, self._call, self._which = U.subprocess.Popen, U.subprocess.call, U.shutil.which
         U.subprocess.Popen = FakePopen
         FakePopen.calls = []
-        U.IS_LINUX = True
+        # apply_update() checks IS_MAC before IS_LINUX, and both are real OS checks (sys.platform) computed
+        # once at import - on a real macOS CI runner IS_MAC is genuinely True there, so setting IS_LINUX
+        # alone left IS_MAC's branch (checked first) still winning and routing these "packaged Linux
+        # install" tests into apply_mac instead.
+        U.IS_LINUX, U.IS_MAC = True, False
         sys.executable = "/opt/networkdoctor/NetworkDoctor"  # makes is_packaged_install() True
 
     def tearDown(self):
-        U.IS_LINUX, sys.executable = self._is_linux, self._exe
+        U.IS_LINUX, U.IS_MAC, sys.executable = self._is_linux, self._is_mac, self._exe
         U.subprocess.Popen, U.subprocess.call, U.shutil.which = self._popen, self._call, self._which
 
     def test_deb_asset_name_carries_the_version(self):
