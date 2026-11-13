@@ -1558,7 +1558,8 @@ class ToolsTab:
         ttk.Button(row, text="Get PC details (script)...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
             side="left", padx=4)
         ttk.Button(row, text="Collect from all PCs (admin login)...", command=self._inv_collect).pack(side="left", padx=4)
-        ttk.Button(row, text="Export to Excel (CSV)", style="Big.TButton", command=self._inv_export).pack(side="right")
+        ttk.Button(row, text="Export to Excel", style="Big.TButton", command=self._inv_export).pack(side="right")
+        ttk.Button(row, text="Import edited Excel sheet", command=self._inv_import).pack(side="right", padx=6)
         self.var_inv_sum = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.var_inv_sum, foreground="#5b21b6").pack(anchor="w", pady=(4, 2))
         pw = ttk.PanedWindow(f, orient="vertical")
@@ -1779,12 +1780,42 @@ class ToolsTab:
     def _inv_export(self):
         os.makedirs(core.REPORT_DIR, exist_ok=True)
         p = filedialog.asksaveasfilename(initialdir=core.REPORT_DIR,
-                                         initialfile=time.strftime("network-inventory-%Y%m%d.csv"),
-                                         defaultextension=".csv", filetypes=[("Excel CSV", "*.csv")])
-        if p:
-            T.export_inventory_csv(p, self.inv_rows)
-            self.app.var_status.set(f"Inventory saved: {p}")
-            self.app.open_folder(os.path.dirname(p))
+                                         initialfile=time.strftime("network-inventory-%Y%m%d.xlsx"),
+                                         defaultextension=".xlsx",
+                                         filetypes=[("Excel workbook", "*.xlsx"), ("CSV", "*.csv")])
+        if not p:
+            return
+        try:
+            if p.lower().endswith(".csv"):
+                T.export_inventory_csv(p, self.inv_rows)
+            else:
+                T.export_inventory_xlsx(p, self.inv_rows)
+        except OSError as e:
+            messagebox.showerror("Inventory", f"Could not save the file (is it open in Excel?): {e}")
+            return
+        self.app.var_status.set(f"Inventory saved: {p} - edit Name, Department, Location, Owner, Serial no., "
+                                "Purchase date, Warranty until, Router port or Notes in Excel, then "
+                                "'Import edited Excel sheet'.")
+        self.app.open_folder(os.path.dirname(p))
+
+    def _inv_import(self):
+        p = filedialog.askopenfilename(initialdir=core.REPORT_DIR,
+                                       filetypes=[("Excel workbook or CSV", "*.xlsx *.csv")])
+        if not p:
+            return
+        try:
+            devs, cells, skipped = T.inventory_import(T.inventory_table(p), self.app.db, self.inv_rows)
+        except Exception as e:  # noqa: BLE001 - a damaged or foreign file: say so, change nothing
+            messagebox.showerror("Inventory", f"Could not read this sheet: {e}")
+            return
+        if devs:
+            core.save_db(self.app.db)
+            self.app.after_tags_changed()
+            self._inv_refresh(router=False)
+        messagebox.showinfo("Inventory", f"{cells} change(s) on {devs} device(s) taken from the sheet."
+                            + (f"\n{skipped} row(s) skipped: MAC missing or not a device of this network."
+                               if skipped else "")
+                            + ("" if devs else "\nNothing was different from what the app already has."))
 
     def _build_mac(self, f):
         row = ttk.Frame(f)

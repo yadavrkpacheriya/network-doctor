@@ -858,6 +858,7 @@ class Monitor:
         self.started = None
         self.running = False
         self.flow_rx = self.syslog_rx = 0
+        self.on_dns = None  # on_dns(text) -> True when the line was a DNS log line (nd_usage.UsageStore.dns_log)
         self.last_flow = self.last_syslog = None
         self.exporters, self.log_sources = set(), set()
         self.sniffer_state = "starting..."
@@ -943,6 +944,14 @@ class Monitor:
         self.syslog_rx += 1
         self.last_syslog = time.time()
         self.log_sources.add(addr)
+        # the router's DNS log (which device asked for which name) goes to the usage history only - there are
+        # far too many of these lines for the event list
+        if self.on_dns and "query" in text:
+            try:
+                if self.on_dns(text):
+                    return
+            except Exception:
+                pass
         kind, sev, d = parse_router_line(text)
         now = time.time()
         if kind == "dhcp_fail" and self.self_mac and d.get("mac") == self.self_mac:
@@ -1634,6 +1643,8 @@ def router_setup_commands(lip, flow_port=FLOW_PORT, syslog_port=SYSLOG_PORT, wan
 /system logging add topics=error action=netdoctor
 /system logging add topics=warning action=netdoctor
 /system logging add topics=account action=netdoctor
+#    which device asks for which website name: lets Usage name the app / site instead of "Google server" or "CDN"
+/system logging add topics=dns,!packet action=netdoctor
 # test message - Network Doctor shows "Router log: receiving" within a few seconds if everything is right
 :log warning "Network Doctor router log test"
 

@@ -1,3 +1,28 @@
+## Network Doctor 3.30.0
+
+### Inventory: real Excel sheet, and edits come back
+- Inventory > "Export to Excel" now writes a real .xlsx (bold frozen header, filter buttons) with every
+  detail plus new columns: Owner, Purchase date, Warranty until, Last seen.
+- "Import edited Excel sheet": change Name, Department, Location, Owner, Serial no., Purchase date,
+  Warranty until, Router port or Notes in Excel, save, import. Only changed cells of known devices (by MAC)
+  are taken. A serial number can now be typed for devices that cannot report one (cameras, switches).
+
+### Usage: the app / website instead of "Google server", "Meta", "CDN"
+- Many apps share the same Google / Meta / CDN addresses, so traffic alone cannot say which app it was.
+  The router can say which device asked for which website name: its DNS log is now read, and a shared
+  address is named after what that device actually opened.
+- This needs one more line on the router. Press Setup > Apply router settings now once (it is added to the
+  same router-log settings as before, and removed by the same Undo). Until then usage works as before.
+- Not yet confirmed on a real router - the log line format is taken from RouterOS documentation.
+
+### Fewer "Unknown devices"
+- A device with no strong clue now gets a best guess with the reason starting "likely": managed equipment
+  (answers on SSH / Telnet / SNMP), an appliance with its own web page, or a phone / tablet (answers like
+  Android / iOS with nothing open, or only the router sees it).
+- A device recognised in an earlier scan keeps that type when it gives no clues today.
+- A device that answers nothing at all and has an unknown maker still shows as Unknown - name it once
+  (right-click > Set label) and it stays named.
+
 ## Network Doctor 3.29.0
 
 ### New: Line up cameras - one fixed IP each, in one block (Network Tools > Login sweep)
