@@ -61,6 +61,11 @@ class SweepPage:
             v = tk.BooleanVar(value=True)
             self.var_kind[key] = v
             ttk.Checkbutton(bar, text=label, variable=v).pack(side="left", padx=(0, 14))
+        self.var_keep = tk.BooleanVar(value=bool(self.app._settings().get("sweep_remember", True)))
+        ttk.Checkbutton(bar, text="Remember the login that works for each device", variable=self.var_keep,
+                        command=self._keep_changed).pack(side="left", padx=(0, 6))
+        self.b_forget = ttk.Button(bar, text="Forget saved logins", command=self.forget_saved)
+        self.b_forget.pack(side="left", padx=(0, 14))
         self.var_force = tk.BooleanVar(value=False)
         ttk.Checkbutton(bar, text="Keep trying anyway (can lock an account)", variable=self.var_force).pack(
             side="left", padx=(10, 0))
@@ -116,6 +121,28 @@ class SweepPage:
     def _creds(self):
         return [(u.get().strip(), p.get()) for u, p in zip(self.var_user, self.var_pw) if u.get().strip()]
 
+    # ------------------------------------------------------------------ remembered logins
+    def _store(self):
+        return self.app._settings().setdefault("device_logins", {})
+
+    def _keep_changed(self):
+        self.app._settings()["sweep_remember"] = bool(self.var_keep.get())
+        self.app._save_settings()
+
+    def saved_logins(self):
+        return S.saved_all(self._store()) if self.var_keep.get() else {}
+
+    def forget_saved(self):
+        n = len(self._store())
+        if not n:
+            messagebox.showinfo(APP, "No device login is saved.")
+            return
+        if messagebox.askyesno(APP, f"Forget the saved login of {n} device(s)?\n\nThe next sweep needs the "
+                                    "logins typed again."):
+            self._store().clear()
+            self.app._save_settings()
+            self.var_sum.set("Saved logins forgotten.")
+
     def _clear_passwords(self):
         for p in self.var_pw:
             p.set("")
@@ -133,7 +160,8 @@ class SweepPage:
         if self.running:
             return
         creds = self._creds()
-        if not creds:
+        n_saved = len(self.saved_logins())
+        if not creds and not n_saved:
             messagebox.showinfo(APP, "Type at least one user name and password above.")
             return
         targets = S.plan(self.app.devices, kinds=self._kinds())
@@ -141,7 +169,9 @@ class SweepPage:
             messagebox.showinfo(APP, "No matching devices found to scan. Tick a device type above.")
             return
         if not messagebox.askyesno(
-                APP, f"Try {len(creds)} login(s) on {len(targets)} device(s) now?\n\nEach login is tried ONLY ONCE "
+                APP, f"Try {len(creds)} typed login(s) on {len(targets)} device(s) now?"
+                     + (f" ({n_saved} device(s) have a remembered login: that one is tried first.)" if n_saved
+                        else "") + "\n\nEach login is tried ONLY ONCE "
                      "per device. If it is wrong on the first few devices of a kind, the rest of that kind are "
                      "skipped automatically (tick 'Keep trying anyway' first if you want every device tried "
                      "regardless - this can lock an account on some devices)."):
@@ -152,7 +182,8 @@ class SweepPage:
         self.app.telemetry.note("login_sweep")
         self.var_sum.set(f"Scanning 0 of {len(targets)}...")
         force = self.var_force.get()
-        sw = self.sweep = S.Sweep(creds, force=force)
+        self._typed = list(creds)        # kept only until the sweep ends, to remember the ones that worked
+        sw = self.sweep = S.Sweep(creds, force=force, saved=self.saved_logins())
         done = {"n": 0}
 
         def on_result(r):
@@ -197,10 +228,25 @@ class SweepPage:
 
     def _finish(self):
         self.running = False
+        kept = 0
+        if self.var_keep.get():
+            store = self._store()
+            for mac in getattr(self.sweep, "stale", ()):
+                store.pop(mac, None)                       # refused: the password was changed
+            for r in self.results:
+                n = r.get("login")
+                if r["status"] == S.OK and r.get("mac") and isinstance(n, int) and 0 < n <= len(self._typed):
+                    S.saved_put(store, r["mac"], self._typed[n - 1][0], self._typed[n - 1][1], r["method"])
+                    kept += 1
+            self.app._save_settings()
+        self._typed = []
         self._clear_passwords()
         n_ok = sum(1 for r in self.results if r["status"] == S.OK)
         n_bad = len(S.needs_attention(self.results))
-        self.var_sum.set(f"Done: {n_ok} of {len(self.results)} read OK, {n_bad} need attention. Passwords cleared.")
+        total = len(self._store()) if self.var_keep.get() else 0
+        self.var_sum.set(f"Done: {n_ok} of {len(self.results)} read OK, {n_bad} need attention. Passwords cleared"
+                         + (f"; {total} device login(s) remembered ({kept} new) - the next sweep needs no typing "
+                            "for them." if total else "."))
 
     def _insert_row(self, r):
         d = r["data"]
@@ -449,9 +495,12 @@ class CamLineWindow(tk.Toplevel):
                                 parent=self)
             return
         creds = self.page._creds()
-        if not creds:
+        saved = self.page.saved_logins()
+        if any(self.CL.cred_of(r, creds, saved) is None for r in todo[:1 if limit else None]):
             messagebox.showinfo(APP, "Type the camera login(s) again in the Login sweep page, in the same order "
-                                     "as for the scan - they are cleared after every scan.", parent=self)
+                                     "as for the scan - typed logins are cleared after every scan (or tick "
+                                     "'Remember the login that works for each device' and run the sweep once).",
+                                parent=self)
             return
         c = self.app.router_client(ask=True)
         if not c:
@@ -487,7 +536,7 @@ class CamLineWindow(tk.Toplevel):
         nvrs = self.CL.recorders(self.rows)
 
         def after_move(row, cred):
-            return self.CL.update_recorders(nvrs, creds, row["ip_now"], row["ip_new"], cred)
+            return self.CL.update_recorders(nvrs, creds, row["ip_now"], row["ip_new"], cred, saved=saved)
 
         self.busy = True
         for b in (self.b_one, self.b_all):
@@ -499,7 +548,8 @@ class CamLineWindow(tk.Toplevel):
                 self.app.q.put(("call", lambda: self.winfo_exists() and self._draw()))
             done = 0
             try:
-                done = self.CL.run(todo, creds, reserve, alive, on_row=on_row, limit=limit, after_move=after_move)
+                done = self.CL.run(todo, creds, reserve, alive, on_row=on_row, limit=limit, after_move=after_move,
+                                   saved=saved)
             finally:
                 self.app.q.put(("call", lambda: self._finished(done, todo)))
         threading.Thread(target=work, daemon=True).start()

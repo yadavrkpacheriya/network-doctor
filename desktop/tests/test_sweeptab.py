@@ -135,7 +135,12 @@ class FakeApp:
         self.telemetry = types.SimpleNamespace(note=lambda *a: None)
 
     def _settings(self):
-        return {}
+        if not hasattr(self, "_set"):
+            self._set, self.saves = {}, 0
+        return self._set
+
+    def _save_settings(self):
+        self.saves = getattr(self, "saves", 0) + 1
 
     def router_client(self, ask=True):
         return None
@@ -223,6 +228,13 @@ class Page(unittest.TestCase):
         self.assertIn(self.app.devices[1]["mac"], self.app.db.get("sweep", {}))  # the camera was saved in db
         self.assertEqual(len(self.page.results), 2)
         self.assertFalse(self.page.running)
+        # the login that worked is remembered per device, never as plain text, and a second run needs no typing
+        store = self.app._settings()["device_logins"]
+        self.assertEqual(set(store), {d["mac"] for d in self.app.devices[:2]})
+        self.assertNotIn("secret", repr(store))
+        self.assertEqual(self.page.saved_logins()[self.app.devices[1]["mac"]], ("admin", "secret"))
+        self.page.var_keep.set(False)
+        self.assertEqual(self.page.saved_logins(), {})
 
     def test_copy_refused_with_nothing_refused(self):
         self.page.copy_refused()  # should not raise with no results

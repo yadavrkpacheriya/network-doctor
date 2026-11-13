@@ -1,3 +1,16 @@
+## Network Doctor 3.32.0
+
+### Login sweep remembers the login that works for each device
+- New tick box "Remember the login that works for each device" (on by default). After a sweep, the login
+  that worked is kept per device; the next sweep tries that one first, so nothing needs typing for those
+  devices - "Start scan" works with the login boxes empty.
+- If a remembered login is refused (the password was changed), it is forgotten at once and the typed logins
+  get their normal single try each. A remembered login never counts towards the "stop to avoid locking the
+  account" rule, and the same refused login is never sent twice to a device.
+- "Line up cameras" uses the remembered logins too, for cameras and recorders.
+- Passwords are stored encrypted for this Windows user (the same protection as the router login). On Linux
+  they are only encoded in your own settings file, not encrypted. "Forget saved logins" removes them all.
+
 ## Network Doctor 3.31.1
 
 ### Line up cameras: any camera that answers ONVIF can now be moved

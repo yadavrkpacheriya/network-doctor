@@ -428,11 +428,46 @@ def missing(method, data):
     return [f for f in EXPECTED.get(method, ()) if data.get(f) in (None, "", 0)]
 
 
+# ------------------------------------------------------------------------------------------- remembered logins
+SAVED = "saved"      # value of result["login"] when the device's remembered login was the one that worked
+
+
+def saved_put(store, mac, user, pw, method, now=None):
+    """Remembers the login that just worked on this device (password kept encrypted - nd_routeros.protect)."""
+    import nd_routeros as RO
+    if mac and user:
+        store[mac] = {"user": user, "pw": RO.protect(pw), "method": method,
+                      "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(now))}
+
+
+def saved_get(store, mac):
+    """(user, password) remembered for this device, or None."""
+    import nd_routeros as RO
+    e = (store or {}).get(mac)
+    if not isinstance(e, dict) or not e.get("user"):
+        return None
+    pw = RO.unprotect(e.get("pw", ""))
+    return (e["user"], pw) if (pw or not e.get("pw")) else None   # cannot be read back (another Windows user)
+
+
+def saved_all(store):
+    """{mac: (user, password)} for every remembered login that can still be read."""
+    out = {}
+    for mac in list(store or {}):
+        c = saved_get(store, mac)
+        if c:
+            out[mac] = c
+    return out
+
+
 class Sweep:
     """Runs the plan. Every (device, method, login) is tried once; see the module text for the safety rules."""
 
-    def __init__(self, creds, transports=None, workers=6, breaker=2, force=False, gap=0.1, sleep=time.sleep):
+    def __init__(self, creds, transports=None, workers=6, breaker=2, force=False, gap=0.1, sleep=time.sleep,
+                 saved=None):
         self.creds = [(u, p) for u, p in creds if u][:3]
+        self.saved = dict(saved or {})   # {mac: (user, pw)} remembered from an earlier sweep: tried first
+        self.stale = set()               # macs whose remembered login was refused (password changed)
         self.tr = transports or TRANSPORTS
         self.workers, self.breaker, self.force, self.gap, self.sleep = workers, max(1, breaker), force, gap, sleep
         self.lock = threading.Lock()
@@ -456,6 +491,35 @@ class Sweep:
         d = target["dev"]
         ip = d["ip"]
         tried, last, refused = [], None, set()  # refused: logins this device already said no to (never tried again on it)
+        mine = self.saved.get(d.get("mac") or "")
+        if mine:
+            # the login remembered for THIS device: tried once, before the typed ones. Refused = the password
+            # was changed, so it is forgotten and the typed logins get their normal single try each.
+            for m in target["methods"]:
+                if self.stop.is_set():
+                    return self._result(d, m, SKIP, {}, "sweep stopped", tried)
+                with self.lock:
+                    self.attempts += 1
+                try:
+                    data, status, detail = self.tr[m](ip, mine[0], mine[1], d), OK, ""
+                except Outcome as o:
+                    data, status, detail = {}, o.status, o.detail
+                except Exception as e:  # noqa: BLE001 - one bad device must not stop the sweep
+                    data, status, detail = {}, ERR, f"{e.__class__.__name__}: {str(e)[:100]}"
+                tried.append((SAVED, status))
+                self.sleep(self.gap)
+                if status == OK:
+                    res = self._result(d, m, OK, data, detail, tried)
+                    res["login"] = SAVED
+                    return res
+                if status == AUTH:
+                    with self.lock:
+                        self.stale.add(d.get("mac"))
+                    last = (m, AUTH, "the remembered login was refused (password changed?) - it has been forgotten")
+                    # the same user / password typed again would be the same refused try: skip it
+                    refused |= {i for i, c in enumerate(self.creds) if c == mine}
+                    break
+                last = (m, status, detail)
         for m in target["methods"]:
             fn = self.tr[m]
             for i, (user, pw) in enumerate(self.creds):
@@ -491,6 +555,8 @@ class Sweep:
                     continue
                 last = (m, status, detail)
                 break  # not reachable / unsupported / blocked: another login would not change that
+        if last is None and not self.creds:
+            last = (target["methods"][0], SKIP, "no login typed and none remembered for this device")
         m, status, detail = last or (target["methods"][0], ERR, "nothing was tried")
         return self._result(d, m, status, {}, detail, tried)
 

@@ -283,12 +283,12 @@ def dahua_nvr_update(nvr_ip, port, ssl_on, user, pw, old, new, cam_cred=None, se
 
 
 def update_recorders(nvr_rows, creds, old, new, cam_cred=None, send=None, wait=60, step=5, sleep=time.sleep,
-                     clock=time.time, xmeye_update=None):
+                     clock=time.time, xmeye_update=None, saved=None):
     """After a camera moved from `old` to `new`: tell every recorder we can talk to. Returns a short text for
     the row. Never raises - a recorder that cannot be updated is reported, the camera stays moved."""
     notes, found = [], False
     for n in nvr_rows:
-        cred = creds[n["login"] - 1] if 0 < n["login"] <= len(creds) else None
+        cred = cred_of(n, creds, saved)
         if not cred:
             notes.append(f"recorder {n['ip_now']}: its login is not filled in")
             continue
@@ -360,7 +360,15 @@ def move_one(row, cred, reserve, alive, set_dhcp=None, wait=120, step=3, sleep=t
                    f"{d['mac']})")
 
 
-def run(rows, creds, reserve, alive, on_row=None, limit=None, after_move=None, **kw):
+def cred_of(row, creds, saved=None):
+    """The (user, password) for a plan row: the login remembered for that device, or the typed one it used."""
+    if row.get("login") == S.SAVED:
+        return (saved or {}).get(row["dev"].get("mac"))
+    n = row.get("login")
+    return creds[n - 1] if isinstance(n, int) and 0 < n <= len(creds) else None
+
+
+def run(rows, creds, reserve, alive, on_row=None, limit=None, after_move=None, saved=None, **kw):
     """Moves the "move" rows one after the other and STOPS at the first failure (the rest stay untouched).
     limit: how many cameras this run may move (1 for the first, pilot run). Each row gets "result".
     after_move(row, cred) -> text: called after each camera that moved (updates the recorder)."""
@@ -370,7 +378,7 @@ def run(rows, creds, reserve, alive, on_row=None, limit=None, after_move=None, *
             continue
         if limit is not None and done >= limit:
             break
-        cred = creds[r["login"] - 1] if 0 < r["login"] <= len(creds) else None
+        cred = cred_of(r, creds, saved)
         if not cred:
             r["result"] = "not moved: the login used in the sweep is no longer filled in"
             if on_row:
