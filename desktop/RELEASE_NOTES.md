@@ -1,3 +1,17 @@
+## Network Doctor 3.26.0
+
+### "Is it down for everyone, or just us?" (Tools > Web check)
+- When Outlook/Teams/some site stops working, the first question is always "is this us or them" -
+  now answered in one line. Pick a known service from the new dropdown (or type any address) and
+  it shows which stage the connection got stuck on (DNS / connect / secure handshake / the server's
+  actual response) - that failure point IS the diagnosis: reaching the server and getting no answer
+  points at THEIR service; failing at DNS points at THIS network.
+- For services that publish a public status page (GitHub, Cloudflare, Slack, Zoom, Dropbox, Atlassian,
+  OpenAI, Discord), the official status is fetched too, so you see both signals together.
+- Microsoft 365/Outlook does not publish an unauthenticated public status API (needs a work/school
+  sign-in) - rather than guess or fake one, that case shows the network-reachability verdict only, plus
+  a link to check manually (portal.office.com or Downdetector).
+
 ## Network Doctor 3.25.1
 
 ### Blank "Bandwidth now" for cameras - a real fallback, not just an explanation
