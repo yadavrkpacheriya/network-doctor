@@ -33,6 +33,7 @@ import nd_alerts as AL
 import nd_auth as AU
 import nd_defense as DF
 import nd_arpblock as AB
+import nd_autofix as AF
 import nd_protab
 import nd_tabs
 import nd_tools as T
@@ -2280,12 +2281,26 @@ class App(tk.Tk):
 
     AUTO_FIX_AFTER = 5
 
+    def _fix_history(self):
+        return self._settings().setdefault("fix_history", [])
+
+    def _fix_stats(self):
+        return self._settings().setdefault("fix_stats", {})
+
     def _auto_fix(self, e):
-        """The same problem 5 times: apply its safe router fix by itself (setting in Alerts; on by default)."""
-        if e.get("count", 1) < self.AUTO_FIX_AFTER or e.get("autofix") or e.get("status") == "fixed" or \
-                not self._settings().get("auto_fix", True):
+        """The same problem repeats several times: apply its safe fix by itself (setting in Alerts; on by
+        default). How many repeats it takes starts at AUTO_FIX_AFTER and is adjusted per fix-kind by its
+        own track record (nd_autofix.repeat_threshold) - a kind that has needed an Undo is tried more
+        cautiously, one with a clean record is tried sooner."""
+        if e.get("autofix") or e.get("status") == "fixed" or not self._settings().get("auto_fix", True):
             return
         r = AL.explain(e["text"], e["sev"], self.lip, self.gw, self.net)
+        need = AF.repeat_threshold(self._fix_stats(), r["kind"], self.AUTO_FIX_AFTER)
+        if e.get("count", 1) < need:
+            return
+        if r["kind"] == "ip_conflict":
+            self._auto_fix_ip_conflict(e, r)
+            return
         fix = next((a for a in r["auto"] if a["where"] == "router"), None) if r["kind"] in AL.AUTO_SAFE else None
         if not fix:
             return
@@ -2293,24 +2308,109 @@ class App(tk.Tk):
         if not c:
             return
         e["autofix"] = "trying"
+        self._apply_router_fix(e, r["kind"], fix["label"], fix["cmd"], fix.get("undo", ""), c)
+
+    def _auto_fix_ip_conflict(self, e, r):
+        """Two devices claim the same IP: if exactly one of them is tagged 'Default device for its IP'
+        (Devices tab > tag), bind that one's MAC to the IP so it always keeps it - the other negotiates
+        a different IP from the router. Does nothing (stays a manual alert) if nobody is tagged, or both
+        are: the app must not guess which device the office actually wants there."""
+        macs = AL.MAC_RE.findall(e["text"])
+        ip = e.get("ip") or (AL.IP_RE.search(e["text"]).group(0) if AL.IP_RE.search(e["text"]) else "")
+        if not macs or not ip:
+            return
+        pmac = T.priority_mac_for(T.tags_of(self.db), [m.upper() for m in macs])
+        if not pmac:
+            return
+        c = self.router_client(ask=False)
+        if not c:
+            return
+        name = T.tags_of(self.db).get(pmac, {}).get("name") or pmac
+        cmd = (f':do {{remove [find where mac-address="{pmac}"]}} on-error={{}}; '
+               f':do {{add address={ip} mac-address="{pmac}" comment="ND: priority binding - {name}"}} '
+               f'on-error={{:put "NOT BOUND"}}')
+        undo = f':do {{remove [find where mac-address="{pmac}" and comment~"^ND: priority binding"]}} on-error={{}}'
+        e["autofix"] = "trying"
+        self._apply_router_fix(e, "ip_conflict", f"Give {ip} permanently to {name}", cmd, undo, c, mac=pmac, ip=ip)
+
+    def _apply_router_fix(self, e, kind, label, cmd, undo_cmd, c, mac=None, ip=None):
+        before_ids = {a["id"] for a in self.alert_log.items}
+        fix_entry = AF.new_fix(self._fix_history(), kind, label, mac=mac, ip=ip or e.get("ip"), cmd=cmd,
+                               undo_cmd=undo_cmd, alert_id=e["id"])
+        self._fix_regression_windows = getattr(self, "_fix_regression_windows", {})
+        self._fix_regression_windows[fix_entry["id"]] = before_ids
+        AF.record_try(self._fix_stats(), kind)
 
         def work():
             try:
                 with c:
-                    err = c.run_script(fix["cmd"])
+                    err = c.run_script(cmd)
             except Exception as ex:
                 err = str(ex)
             self.q.put(("call", lambda: done(err)))
 
         def done(err):
             e["autofix"] = "failed: " + err[:120] if err else "done"
+            AF.mark_result(self._fix_history(), fix_entry["id"], not err, err[:200] if err else "")
             if not err:
-                self.alert_log.set_status({e["id"]}, "fixed", f"auto-fixed after {e['count']} repeats: {fix['label']}")
+                self.alert_log.set_status({e["id"]}, "fixed", f"auto-fixed after {e['count']} repeats: {label}")
+                self.after(AF.REGRESSION_WINDOW * 1000 + 2000, lambda: self._check_fix_regression(fix_entry["id"]))
             self.alert_log.save()
+            self._save_settings()
             self._refresh_alerts()
             self._log_event("info" if not err else "warning",
-                            f"Auto-fix ({e['count']} repeats) - {fix['label']}: " + ("done" if not err else err[:120]),
+                            f"Auto-fix ({e['count']} repeats) - {label}: " + ("done" if not err else err[:120]),
                             "Auto-fix")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _check_fix_regression(self, fix_id):
+        """Reconfirms a while after an auto-fix: did a NEW problem on the same device/IP show up that
+        was not there before the fix? If so, undo it automatically and record the outcome - this is the
+        'learning' the Alerts tab's Auto-fixes list tracks per fix-kind."""
+        before = getattr(self, "_fix_regression_windows", {})
+        ok, bad = AF.check_regressions(self._fix_history(), self.alert_log.items, before)
+        for fid in ok:
+            AF.mark_ok(self._fix_history(), self._fix_stats(), fid)
+        for fid in bad:
+            fx = AF.find(self._fix_history(), fid)
+            if fx and fx.get("undo_cmd"):
+                self._undo_fix(fid, auto=True)
+            else:
+                AF.mark_undone(self._fix_history(), self._fix_stats(), fid, auto=True,
+                               note="new issue seen after the fix (no undo command to run)")
+        if ok or bad:
+            self._save_settings()
+            self._refresh_alerts()
+
+    def _undo_fix(self, fix_id, auto=False):
+        """Reverts one applied auto-fix (Alerts tab > Auto-fixes > Undo, or called automatically by
+        _check_fix_regression). Feeds nd_autofix's learning store either way."""
+        fx = AF.find(self._fix_history(), fix_id)
+        if not fx or not fx.get("undo_cmd"):
+            return
+        c = self.router_client(ask=False)
+
+        def work():
+            try:
+                with c:
+                    err = c.run_script(fx["undo_cmd"])
+            except Exception as ex:
+                err = str(ex)
+            self.q.put(("call", lambda: done(err)))
+
+        def done(err):
+            if err:
+                self._log_event("warning", f"Undo failed for '{fx['title']}': {err[:150]}", "Auto-fix")
+                return
+            AF.mark_undone(self._fix_history(), self._fix_stats(), fix_id, auto=auto,
+                           note="undone automatically: a new issue appeared" if auto else "undone by you")
+            self._save_settings()
+            self._refresh_alerts()
+            self._log_event("info", ("Auto-fix undone by itself (a new issue appeared after it): "
+                                     if auto else "Auto-fix undone: ") + fx["title"], "Auto-fix")
+        if not c:
+            done("no router connection")
+            return
         threading.Thread(target=work, daemon=True).start()
 
     # ---------------------------------------------------------------- auto-defense (Pro)
