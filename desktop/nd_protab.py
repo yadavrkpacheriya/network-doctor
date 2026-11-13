@@ -6,7 +6,7 @@ import json
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 
 import nd_core as core
 import nd_defense as DF
@@ -534,6 +534,7 @@ class AuditPage:
         ttk.Button(bar, text="Refresh", command=self.refresh).pack(side="left")
         ttk.Button(bar, text="Open log folder", command=lambda: self.app.open_folder(
             core.DATA_DIR + "/pro")).pack(side="left", padx=4)
+        ttk.Button(bar, text="Export (CSV)", command=self.export).pack(side="left", padx=4)
         self.tv = UI["make_tree"](f, ("user", "role", "action", "detail", "result", "ip"),
                                   ("User", "Role", "Action", "Detail", "Result", "From"),
                                   (110, 80, 110, 300, 140, 110), first=("Time", 150), search=True)
@@ -545,6 +546,14 @@ class AuditPage:
             self.tv.insert("", "end", text=e.get("ts", ""),
                            values=(e.get("user", ""), e.get("role", ""), e.get("action", ""),
                                    e.get("detail", ""), e.get("result", ""), e.get("ip", "")))
+
+    def export(self):
+        p = filedialog.asksaveasfilename(initialfile="audit-log.csv", defaultextension=".csv",
+                                          filetypes=[("CSV", "*.csv")])
+        if p:
+            import nd_tools as T
+            T.export_audit_csv(p, self.app.audit.recent(3000) if getattr(self.app, "audit", None) else [])
+            messagebox.showinfo("Exported", f"Saved {p}")
 
 
 class ActivatePage:

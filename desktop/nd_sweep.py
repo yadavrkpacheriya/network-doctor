@@ -258,6 +258,9 @@ def t_dahua(ip, user, pw, d):
     code, body, _ = http_login(ip, port, "/cgi-bin/magicBox.cgi?action=getSoftwareVersion", user, pw, s)
     if code == 200:
         data["firmware"] = parse_kv(body).get("version", "")
+    code, body, _ = http_login(ip, port, "/cgi-bin/configManager.cgi?action=getConfig&name=General", user, pw, s)
+    if code == 200:
+        data["name"] = parse_kv(body).get("table.General.MachineName", "")
     if how == "no login needed":
         data["note"] = "answered without a login (open!)"
     return data

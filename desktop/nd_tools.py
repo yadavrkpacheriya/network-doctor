@@ -28,9 +28,10 @@ KIND_CAT = {"Router": core.CAT_NET, "Switch": core.CAT_NET, "Access point": core
             "Other": core.CAT_UNK}
 GEAR_KINDS = {"Router", "Switch", "Access point"}
 TAG_FIELDS = ["name", "dept", "location", "kind", "parent", "router_port", "switch_port", "notes", "watch",
-              "priority"]
+              "priority", "owner", "serial", "purchase_date", "warranty_until"]
 CSV_HEAD = ["MAC", "Name", "Department", "Location", "Type", "Connected to (MAC)", "Router port", "Switch port",
-            "Notes", "Watch (alert if down)", "Current IP", "Vendor"]
+            "Notes", "Watch (alert if down)", "Current IP", "Vendor", "Owner / handled by", "Serial number",
+            "Purchase date", "Warranty until"]
 
 
 def watch_value(v):
@@ -203,7 +204,9 @@ def tags_to_csv(devices, db):
         t, d = tags.get(mac, {}), by_mac.get(mac, {})
         w.writerow([mac, t.get("name", ""), t.get("dept", ""), t.get("location", ""), t.get("kind", ""),
                     t.get("parent", ""), t.get("router_port", ""), t.get("switch_port", ""), t.get("notes", ""),
-                    "yes" if t.get("watch") == "1" else "", d.get("ip", ""), d.get("vendor", "")])
+                    "yes" if t.get("watch") == "1" else "", d.get("ip", ""), d.get("vendor", ""),
+                    t.get("owner", ""), t.get("serial", ""), t.get("purchase_date", ""),
+                    t.get("warranty_until", "")])
     return out.getvalue()
 
 
@@ -221,7 +224,9 @@ def tags_from_csv(text, db):
         return None
     idx = {"mac": col("mac"), "name": col("name"), "dept": col("department"), "location": col("location"),
            "kind": col("type"), "parent": col("connected"), "router_port": col("router port"),
-           "switch_port": col("switch port"), "notes": col("notes"), "watch": col("watch")}
+           "switch_port": col("switch port"), "notes": col("notes"), "watch": col("watch"),
+           "owner": col("owner"), "serial": col("serial"), "purchase_date": col("purchase date"),
+           "warranty_until": col("warranty until")}
     if idx["mac"] is None:
         raise ValueError("the sheet needs a MAC column")
     done = skipped = 0
@@ -831,6 +836,16 @@ def driver_page(maker, serial, model=""):
         return "https://www.gigabyte.com/Support"
     q = urllib.parse.quote(f"{maker} {model} drivers".strip())
     return f"https://www.bing.com/search?q={q}"
+
+
+def export_audit_csv(path, entries):
+    """Audit log (nd_auth.AuditLog.recent()) to CSV - who changed what, for compliance / handover review."""
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["Time", "User", "Role", "Action", "Detail", "Result", "From"])
+        for e in entries:
+            w.writerow([e.get("ts", ""), e.get("user", ""), e.get("role", ""), e.get("action", ""),
+                        e.get("detail", ""), e.get("result", ""), e.get("ip", "")])
 
 
 def export_inventory_csv(path, rows):
