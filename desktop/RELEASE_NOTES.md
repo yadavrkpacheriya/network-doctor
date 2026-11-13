@@ -1,3 +1,10 @@
+## Network Doctor 3.27.3
+
+### Menu reorganization, part 2: "Fix & Commands" split out "This PC & Wi-Fi"
+- "Fix & Commands" (6 sub-pages, 7 on Pro) is now two tabs: **Fix & Commands** (Commands, and Packet capture
+  on Pro) and **This PC & Wi-Fi** (LAN speed, Wi-Fi analyzer, Network adapters, MTU finder, Subnet calculator).
+- Every top-level tab is now 5 sub-items or fewer. Navigation-only change, same as part 1 (3.27.0).
+
 ## Network Doctor 3.27.2
 
 ### Auto-fix brain widened by one kind: MTU/MSS clamp now self-applies
