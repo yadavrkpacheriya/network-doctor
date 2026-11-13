@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.24.0"
+VERSION = "3.24.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -77,6 +77,7 @@ def setup_tags(tv):
     tv.tag_configure("warning", foreground="#8a4b00", background="#fff4e0")
     tv.tag_configure("info", foreground="#0b5cad")
     tv.tag_configure("off", foreground="#98a2b3")
+    tv.tag_configure("new", foreground="#1f7a3d", background="#e9f9ef")
     tv.tag_configure("pass", foreground="#1f7a3d")
     tv.tag_configure("fail", foreground="#b42318", background="#fdecea")
     tv.tag_configure("warn", foreground="#8a4b00")
@@ -1645,6 +1646,7 @@ class App(tk.Tk):
                     for ip in re.findall(r"\d+\.\d+\.\d+\.\d+", it):
                         bad.setdefault(ip, i["sev"])
         rates = self.mon.traffic.rates(120) if self.mon and self.mon.last_flow else {}
+        new_macs = set((self.raw or {}).get("meta", {}).get("new_macs") or [])
         self.row_dev = {}
         for c in core.CAT_ORDER:
             ds = T.filter_devices([d for d in self.devices if d["category"] == c], qy,
@@ -1666,8 +1668,10 @@ class App(tk.Tk):
                 typ = "Not known yet" if typ == "Unknown" else typ
                 r = rates.get(d["ip"])
                 bw = f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}" if r else ""
-                tag = "off" if not d["online"] else bad.get(d["ip"], "")
-                iid = tv.insert(parent, "end", text=d["name"] or "-", tags=(tag,) if tag else (),
+                tag = ("off" if not d["online"] else bad.get(d["ip"], "")
+                       or ("new" if d.get("mac") in new_macs else ""))
+                name = (d["name"] or "-") + ("  (new)" if tag == "new" else "")
+                iid = tv.insert(parent, "end", text=name, tags=(tag,) if tag else (),
                                 values=(d["status"], d.get("dept", ""), ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
                                         d["mac"] or "-",
                                         d["vendor"], bw, svc, d["reason"], "; ".join(d["notes"])))
