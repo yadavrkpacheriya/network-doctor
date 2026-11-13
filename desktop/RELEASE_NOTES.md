@@ -1,3 +1,16 @@
+## Network Doctor 3.31.1
+
+### Line up cameras: any camera that answers ONVIF can now be moved
+- In a real sweep 37 of 40 cameras were read through ONVIF, not through a brand's own page - and the mover
+  only knew Hikvision / Dahua / XMeye pages, so all of them would have been "by hand". ONVIF cameras are now
+  switched to automatic IP (DHCP) through ONVIF itself and restarted only when the camera asks for it.
+- Login sweep: a camera read through ONVIF now also shows the name stored on it (when the camera gives one).
+- A camera that answers ONVIF keeps being read that way; its own XMeye login (port 34567) is tried only when
+  ONVIF gives nothing, so a login that works today is not refused through another door.
+- Recorders: only Hikvision, Dahua and XMeye recorders are updated automatically (ONVIF has no standard way
+  to change a recorder's camera list) - for others type the new IP by hand.
+- NOT yet tested on a real camera - move ONE camera first and check its picture.
+
 ## Network Doctor 3.31.0
 
 ### XMeye / NetSurveillance cameras and recorders (port 34567)

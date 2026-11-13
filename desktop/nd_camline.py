@@ -7,7 +7,7 @@ How a camera is moved (one camera at a time, never several at once):
   1. the router reserves the new IP for the camera's MAC (a DHCP reservation - the same one "IP-MAC binding"
      makes; it has an Undo);
   2. the camera itself is switched from a hand-typed IP to "automatic (DHCP)" through its own web API
-     (Hikvision ISAPI, Dahua configManager, XMeye port 34567) with the login from the Login sweep;
+     (ONVIF, Hikvision ISAPI, Dahua configManager, XMeye port 34567) with the login from the Login sweep;
   3. the app waits until the camera answers on the new IP. If it does not, the run STOPS there - no other
      camera is touched - and the result says where that camera can be found.
 
@@ -25,7 +25,8 @@ import time
 import nd_bandwidth as B
 import nd_sweep as S
 
-MOVABLE = ("hik", "dahua", "xmeye")  # brands whose "use DHCP" switch this app knows
+MOVABLE = ("hik", "dahua", "xmeye", "onvif")   # how the camera's "use DHCP" switch can be reached
+RECORDER_KINDS = ("hik", "dahua", "xmeye")      # recorders whose channel list this app can change
 HIK_IP_PATH = "/ISAPI/System/Network/interfaces/1/ipAddress"
 
 
@@ -59,7 +60,7 @@ def line_plan(devices, gw_ip, net, ranges, results, tags=None, over=None):
         if row["action"] == "move" and not res:
             row["action"] = "manual"
             row["why"] = ("no working login for this device in the last Login sweep, or a brand this app cannot "
-                          "switch (only Hikvision, Dahua and XMeye): type the new IP on the device by hand")
+                          "switch: type the new IP on the device by hand")
         elif row["action"] == "move":
             row["why"] = "router reserves the new IP, then the camera is switched to automatic (DHCP)"
         out.append(row)
@@ -136,8 +137,65 @@ def xmeye_set_dhcp(ip, port, ssl_on, user, pw, send=None):
         raise CamError(f"the camera did not answer on port {DV.PORT} ({e.__class__.__name__})") from None
 
 
-SETTERS = {"hik": hik_set_dhcp, "dahua": dahua_set_dhcp, "xmeye": xmeye_set_dhcp}
-BRAND = {"hik": "Hikvision", "dahua": "Dahua", "xmeye": "XMeye"}
+_TDS = 'xmlns="http://www.onvif.org/ver10/device/wsdl"'
+
+
+def _onvif_fault(text):
+    low = (text or "").lower()
+    if "notauthorized" in low or "not authorized" in low:
+        return "the camera refused the login"
+    if "<" in low and "fault" in low:
+        m = re.search(r"<[^>]*text[^>]*>([^<]+)<", text, re.I)
+        return "the camera answered with an error" + (f": {m.group(1).strip()[:80]}" if m else "")
+    return ""
+
+
+def onvif_set_dhcp(ip, port, ssl_on, user, pw, send=None, call=None):
+    """Any ONVIF camera: read its network interface, turn on DHCP for IPv4, restart it only if it asks.
+    `call(ip, port, user, pw, body)` -> (status, text) is nd_sweep.onvif_call."""
+    call = call or S.onvif_call
+    ports = list(dict.fromkeys([port] + list(S.ONVIF_PORTS)))
+    found = None
+    for p in ports:
+        try:
+            st, text = call(ip, p, user, pw, f"<GetNetworkInterfaces {_TDS}/>")
+        except OSError:
+            continue
+        err = _onvif_fault(text)
+        if err:
+            raise CamError(err)
+        m = re.search(r"<[^>]*NetworkInterfaces[^>]*\btoken=\"([^\"]+)\"", text)
+        if m:
+            found = (p, m.group(1), text)
+            break
+    if not found:
+        raise CamError("the camera's ONVIF service did not give its network settings")
+    p, token, text = found
+    v4 = re.search(r"<[^>]*IPv4\b.*?</[^>]*IPv4>", text, re.S)
+    if v4 and re.search(r"<[^>]*DHCP>\s*true\s*<", v4.group(0), re.I):
+        return "already on automatic (DHCP)"
+    body = (f"<SetNetworkInterfaces {_TDS}><InterfaceToken>{S._x(token)}</InterfaceToken><NetworkInterface>"
+            '<IPv4 xmlns="http://www.onvif.org/ver10/schema"><Enabled>true</Enabled><DHCP>true</DHCP></IPv4>'
+            "</NetworkInterface></SetNetworkInterfaces>")
+    try:
+        st, ans = call(ip, p, user, pw, body)
+    except OSError:
+        # many cameras apply the change at once and drop the connection before answering
+        return "switched to automatic (DHCP) - the camera dropped the connection while changing"
+    err = _onvif_fault(ans)
+    if err or st >= 400:
+        raise CamError(err or f"the camera did not accept the change (answer {st})")
+    if re.search(r"RebootNeeded>\s*true\s*<", ans, re.I):
+        try:
+            call(ip, p, user, pw, f"<SystemReboot {_TDS}/>")
+        except OSError:
+            pass
+        return "switched to automatic (DHCP); the camera is restarting"
+    return "switched to automatic (DHCP)"
+
+
+SETTERS = {"hik": hik_set_dhcp, "dahua": dahua_set_dhcp, "xmeye": xmeye_set_dhcp, "onvif": onvif_set_dhcp}
+BRAND = {"hik": "Hikvision", "dahua": "Dahua", "xmeye": "XMeye", "onvif": "ONVIF"}
 
 
 # ------------------------------------------------------------------------------------ recorder (NVR / DVR)
@@ -146,7 +204,7 @@ HIK_CH = "/ISAPI/ContentMgmt/InputProxy/channels"
 
 def recorders(rows):
     """Recorders from the plan that accepted a login with a brand whose channel list this app can change."""
-    return [r for r in rows if r["group"] == "nvr" and r.get("method") in MOVABLE and r.get("login")]
+    return [r for r in rows if r["group"] == "nvr" and r.get("method") in RECORDER_KINDS and r.get("login")]
 
 
 def hik_channels(xml_text):

@@ -44,7 +44,7 @@ class Plan(unittest.TestCase):
         self.assertEqual(len({r["ip_new"] for r in rows}), len(rows))  # never the same IP twice
 
     def test_no_login_or_unknown_brand_is_by_hand_never_moved(self):
-        rows = self.plan([res("AA:00:00:00:00:64", "onvif"), res("AA:00:00:00:01:80", status=S.AUTH)])
+        rows = self.plan([res("AA:00:00:00:00:64", "web"), res("AA:00:00:00:01:80", status=S.AUTH)])
         by = {r["ip_now"]: r for r in rows}
         self.assertEqual(by["192.168.0.64"]["action"], "manual")
         self.assertEqual(by["192.168.0.180"]["action"], "manual")
@@ -249,8 +249,76 @@ class Recorder(unittest.TestCase):
         self.assertTrue(rows[1]["result"].startswith("FAILED"))
 
     def test_recorders_are_picked_from_the_plan(self):
-        rows = [nvr_row(), nvr_row("onvif"), dict(nvr_row(), group="cam")]
+        rows = [nvr_row(), nvr_row("onvif"), dict(nvr_row(), group="cam")]   # an ONVIF-only recorder: by hand
         self.assertEqual(len(CL.recorders(rows)), 1)
+
+
+IFACES = ('<tds:GetNetworkInterfacesResponse><tds:NetworkInterfaces token="eth0"><tt:Enabled>true</tt:Enabled>'
+          '<tt:IPv4><tt:Enabled>true</tt:Enabled><tt:Config><tt:Manual><tt:Address>192.168.0.64</tt:Address>'
+          '</tt:Manual><tt:DHCP>false</tt:DHCP></tt:Config></tt:IPv4></tds:NetworkInterfaces>'
+          '</tds:GetNetworkInterfacesResponse>')
+
+
+class Onvif(unittest.TestCase):
+    def cam(self, set_answer, port_ok=8899, ifaces=IFACES):
+        sent = []
+
+        def call(ip, port, user, pw, body):
+            if port != port_ok:
+                raise ConnectionRefusedError()
+            sent.append(body)
+            if "GetNetworkInterfaces" in body:
+                return 200, ifaces
+            if "SetNetworkInterfaces" in body:
+                if isinstance(set_answer, Exception):
+                    raise set_answer
+                return set_answer
+            return 200, "<ok/>"
+        return call, sent
+
+    def test_finds_the_onvif_port_and_turns_on_dhcp_for_that_interface(self):
+        call, sent = self.cam((200, "<tds:RebootNeeded>false</tds:RebootNeeded>"))
+        note = CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call)
+        self.assertEqual(note, "switched to automatic (DHCP)")
+        put = next(b for b in sent if "SetNetworkInterfaces" in b)
+        self.assertIn("<InterfaceToken>eth0</InterfaceToken>", put)
+        self.assertIn("<DHCP>true</DHCP>", put)
+        self.assertFalse([b for b in sent if "SystemReboot" in b])
+
+    def test_restarts_only_when_asked_and_a_dropped_connection_is_not_a_failure(self):
+        call, sent = self.cam((200, "<tds:RebootNeeded>true</tds:RebootNeeded>"))
+        self.assertIn("restarting", CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call))
+        self.assertTrue([b for b in sent if "SystemReboot" in b])
+        call, _ = self.cam(ConnectionResetError())
+        self.assertIn("switched", CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call))
+
+    def test_already_dhcp_refused_login_and_fault(self):
+        call, sent = self.cam((200, ""), ifaces=IFACES.replace("<tt:DHCP>false", "<tt:DHCP>true"))
+        self.assertIn("already", CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call))
+        self.assertEqual(len(sent), 1)
+        call, _ = self.cam((200, ""), ifaces="<s:Fault><s:Subcode>ter:NotAuthorized</s:Subcode></s:Fault>")
+        with self.assertRaises(CL.CamError):
+            CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call)
+        call, _ = self.cam((400, "<s:Fault><s:Reason><s:Text>Invalid network</s:Text></s:Reason></s:Fault>"))
+        with self.assertRaises(CL.CamError) as e:
+            CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call)
+        self.assertIn("Invalid network", str(e.exception))
+
+    def test_nothing_answering_onvif_is_an_error_not_a_change(self):
+        call, sent = self.cam((200, ""), port_ok=1)
+        with self.assertRaises(CL.CamError):
+            CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call)
+
+    def test_onvif_cameras_are_planned_as_movable(self):
+        devs = [dev("192.168.0.31", "AA:00:00:00:00:31")]
+        rows = CL.line_plan(devs, "192.168.0.1", NET, B.default_ranges(NET), [res("AA:00:00:00:00:31", "onvif")])
+        self.assertEqual((rows[0]["action"], rows[0]["ip_new"]), ("move", "192.168.0.71"))
+
+    def test_sweep_keeps_onvif_first_and_reads_the_cameras_own_name(self):
+        m = S.methods_for({"category": core.CAT_CAM, "ports": [80, 554, 34567]})
+        self.assertEqual(m[:2], ["onvif", "xmeye"])
+        self.assertEqual(S.onvif_name("<tt:ScopeItem>onvif://www.onvif.org/name/Gate%20cam</tt:ScopeItem>"), "Gate cam")
+        self.assertEqual(S.onvif_name("<x/>"), "")
 
 
 class HttpRequestKeepsGetBehaviour(unittest.TestCase):
