@@ -67,7 +67,10 @@ class TagDialog(tk.Toplevel):
                 ("switch_port", "Switch port number", "entry", None), ("notes", "Notes", "entry", None),
                 ("watch", "Critical - alert if it stops answering", "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"]),
                 ("priority", "Default device for its IP (wins IP conflicts; auto-fix binds this one)",
-                 "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"])]
+                 "combo_ro", ["", "Yes", "No"] if many else ["No", "Yes"]),
+                ("owner", "Owner / handled by", "entry", None), ("serial", "Serial number", "entry", None),
+                ("purchase_date", "Purchase date (YYYY-MM-DD)", "entry", None),
+                ("warranty_until", "Warranty until (YYYY-MM-DD)", "entry", None)]
         for r, (key, label, typ, values) in enumerate(rows, start=1):
             ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=3, padx=(0, 10))
             cur = first.get(key, "")
@@ -1777,7 +1780,8 @@ class AlertsTab:
         def _auto():
             app._settings()["auto_fix"] = self.var_auto.get()
             app._save_settings()
-        ttk.Checkbutton(top, text="Auto-fix when the same alert repeats 5 times (safe fixes only)",
+        ttk.Checkbutton(top, text="Auto-fix safe issues as soon as they're seen (learns and adapts; see "
+                                   "Auto-fixes... for history/undo)",
                         variable=self.var_auto, command=_auto).pack(side="right", padx=10)
         ttk.Button(top, text="Export report (HTML)", command=lambda: self.export("html")).pack(side="right", padx=6)
         self.var_sum = tk.StringVar(value="")
@@ -1902,6 +1906,46 @@ class AlertsTab:
 
     def open_autofixes(self):
         AutoFixWindow(self.app)
+
+
+class HistoryTab:
+    """Alert history has always been kept (AlertLog never used to show it as a trend) - one row per day for
+    the last 30/90 days, so an IT manager can see whether things are getting better or worse without reading
+    thousands of raw alert rows."""
+
+    def __init__(self, app, parent):
+        self.app = app
+        top = ttk.Frame(parent, padding=(0, 6))
+        top.pack(fill="x")
+        ttk.Label(top, text="Last:").pack(side="left")
+        self.var_days = tk.StringVar(value="30 days")
+        cb = ttk.Combobox(top, textvariable=self.var_days, state="readonly", width=12,
+                          values=["14 days", "30 days", "90 days"])
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        ttk.Button(top, text="Export (CSV)", command=self.export).pack(side="right")
+        ttk.Label(parent, text="One row per day: how many alerts fired, and which kind was busiest. Open "
+                               "alerts you've since fixed still count on the day they happened.",
+                  foreground="#667085").pack(anchor="w")
+        self.tv = UI["make_tree"](parent, ("total", "busiest"), ("Total alerts", "Busiest kind"), (120, 260),
+                                  first=("Date", 120))
+        self.refresh()
+
+    def refresh(self):
+        days = int(self.var_days.get().split()[0])
+        rows = AL.trend_by_day(self.app.alert_log.items, days=days)
+        self.rows = rows
+        self.tv.delete(*self.tv.get_children())
+        for r in reversed(rows):  # newest first on screen
+            self.tv.insert("", "end", text=r["day"], values=(r["total"], AL.top_kind(r) or "-"),
+                           tags=("warn",) if r["total"] > 10 else ())
+
+    def export(self):
+        p = filedialog.asksaveasfilename(initialfile="alert-history.csv", defaultextension=".csv",
+                                          filetypes=[("CSV", "*.csv")])
+        if p:
+            AL.export_trend_csv(p, getattr(self, "rows", []))
+            messagebox.showinfo(APP, f"Saved {p}")
 
 
 class AutoFixWindow(tk.Toplevel):
@@ -2310,7 +2354,8 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
     ("home", "Home", "#334155", "#e2e8f0", [("home", "Overview")]),
     ("assist_s", "Assistant", "#0e7490", "#cffafe", [("assist", "Fix Assistant")]),
     ("alerts_s", "Alerts", "#c2410c", "#ffedd5", [("alerts", "Alerts"), ("problems", "Problems"),
-                                                  ("rca", "Root cause"), ("checks", "Health checks")]),
+                                                  ("rca", "Root cause"), ("checks", "Health checks"),
+                                                  ("history", "History & trends")]),
     ("devices_s", "Devices", "#1d4ed8", "#dbeafe", [("devices", "All devices"), ("inventory", "Inventory"),
                                                     ("sweep", "Login sweep"),
                                                     ("map", "Network map"), ("binding", "IP-MAC binding"),

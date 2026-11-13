@@ -76,6 +76,8 @@ class SweepPage:
         ttk.Button(bar2, text="Stop", command=self.do_stop).pack(side="left")
         ttk.Button(bar2, text="Check phones", command=self.do_phones).pack(side="left", padx=(16, 0))
         ttk.Button(bar2, text="Export CSV", command=self.do_export).pack(side="left", padx=6)
+        ttk.Button(bar2, text="Use device's own name as its tag", command=self.apply_fetched_names).pack(
+            side="left", padx=(16, 0))
         ttk.Button(bar2, text="Copy 'login refused' list", command=self.copy_refused).pack(side="left")
         ttk.Button(bar2, text="Open in browser", command=self.open_selected_web).pack(side="left", padx=(16, 0))
 
@@ -92,9 +94,11 @@ class SweepPage:
                              "in by hand.", foreground="#667085").pack(side="right", padx=4)
 
         self.tv = nd_tabs.UI["make_tree"](
-            parent, ("name", "ip", "mac", "type", "method", "result", "login", "model", "serial", "missing", "detail"),
-            ("Name", "IP", "MAC", "Type", "Checked as", "Result", "Login #", "Model", "Serial", "Missing data", "Detail"),
-            (170, 110, 140, 160, 130, 110, 60, 140, 120, 150, 320), None, selectmode="extended")
+            parent, ("name", "ip", "mac", "type", "method", "result", "login", "fetched", "model", "serial",
+                     "missing", "detail"),
+            ("Name", "IP", "MAC", "Type", "Checked as", "Result", "Login #", "Name on the device", "Model",
+             "Serial", "Missing data", "Detail"),
+            (150, 110, 140, 150, 130, 100, 60, 170, 130, 120, 140, 300), None, selectmode="extended")
         self.tv.bind("<Double-1>", self.open_selected_web)
         self.menu = tk.Menu(self.tv, tearoff=False)
         self.menu.add_command(label="Open in browser (web login)", command=self.open_selected_web)
@@ -202,8 +206,8 @@ class SweepPage:
     def _insert_row(self, r):
         d = r["data"]
         vals = (r["name"] or r["ip"], r["ip"], r["mac"], r["category"], S.METHOD_TITLE.get(r["method"], r["method"]),
-                r["status"], r.get("login", ""), d.get("model", ""), d.get("serial", ""), ", ".join(r["missing"]),
-                r["detail"] or d.get("note", ""))
+                r["status"], r.get("login", ""), d.get("name", ""), d.get("model", ""), d.get("serial", ""),
+                ", ".join(r["missing"]), r["detail"] or d.get("note", ""))
         iid = self.tv.insert("", "end", values=vals, tags=(STATUS_TAG.get(r["status"], ""),))
         self.rows[iid] = r
         self._apply_filter(iid, r)
@@ -271,6 +275,27 @@ class SweepPage:
         self.app.clipboard_clear()
         self.app.clipboard_append(text)
         messagebox.showinfo(APP, f"Copied {len(bad)} device(s) whose login was refused.")
+
+    def apply_fetched_names(self):
+        """For every camera/NVR that answered its own configured name (Hikvision ISAPI, Dahua web API),
+        set that as the device's tag name - so you don't have to open each one's web page to find out
+        what it's labelled, then type it in by hand."""
+        hits = [r for r in self.results if r["status"] == S.OK and (r["data"].get("name") or "").strip()
+                and r.get("mac")]
+        if not hits:
+            messagebox.showinfo(APP, "No device answered with its own configured name yet - run the scan "
+                                     "first (Hikvision and Dahua cameras/NVRs report this; others don't).")
+            return
+        if not messagebox.askyesno(APP, f"Set the tag name of {len(hits)} device(s) to the name stored on the "
+                                        f"device itself? This replaces any tag name already set for them."):
+            return
+        n = 0
+        for r in hits:
+            T.set_tag(self.app.db, r["mac"], name=r["data"]["name"].strip())
+            n += 1
+        core.save_db(self.app.db)
+        self.app.after_tags_changed()
+        messagebox.showinfo(APP, f"Named {n} device(s) from what's stored on them.")
 
     def do_export(self):
         if not self.results:

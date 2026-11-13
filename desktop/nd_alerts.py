@@ -469,6 +469,46 @@ def _ts(t):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)) if t else ""
 
 
+def _day(t):
+    return time.strftime("%Y-%m-%d", time.localtime(t)) if t else ""
+
+
+def trend_by_day(items, days=30, now=None):
+    """Alert history has always been kept (AlertLog.items) - this just rolls it up by day so an IT
+    manager can see the trend (more/fewer alerts over time) without reading 3000 raw rows. Returns a
+    list of {day, total, by_kind: {kind: n}} for the last `days` days, oldest first, including empty days."""
+    now = now if now is not None else time.time()
+    cutoff = now - days * 86400
+    buckets = {}
+    for x in items:
+        t = x.get("t", 0)
+        if t < cutoff:
+            continue
+        d = _day(t)
+        b = buckets.setdefault(d, {"day": d, "total": 0, "by_kind": {}})
+        b["total"] += 1
+        b["by_kind"][x.get("kind", "other")] = b["by_kind"].get(x.get("kind", "other"), 0) + 1
+    out = []
+    for i in range(days - 1, -1, -1):
+        d = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+        out.append(buckets.get(d) or {"day": d, "total": 0, "by_kind": {}})
+    return out
+
+
+def top_kind(day_row):
+    """The busiest alert kind for one trend_by_day() row, or '' if that day had none."""
+    bk = day_row.get("by_kind") or {}
+    return max(bk, key=bk.get) if bk else ""
+
+
+def export_trend_csv(path, rows):
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["Date", "Total alerts", "Busiest kind"])
+        for r in rows:
+            w.writerow([r["day"], r["total"], top_kind(r)])
+
+
 def export_csv(path, items, names=None):
     names = names or {}
     with open(path, "w", newline="", encoding="utf-8-sig") as f:

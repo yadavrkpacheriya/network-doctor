@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.24.2"
+VERSION = "3.25.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -615,6 +615,7 @@ class App(tk.Tk):
         self._tab_tools()
         self._tab_inventory()
         self._tab_alerts()
+        self._tab_history()
         self._tab_setup()
         self.nav.select("home")
         self._refresh_alerts()
@@ -716,6 +717,10 @@ class App(tk.Tk):
         f = self.nav.page("inventory")
         self.tools._build_inventory(f)
 
+    def _tab_history(self):
+        f = self.nav.page("history")
+        self.history_tab = nd_tabs.HistoryTab(self, f)
+
     def show_tab(self, name):
         """Opens a page by its key ('devices', 'usage', 't_guard'...); 'tools' opens the Security section."""
         self.nav.select({"tools": "t_guard"}.get(name, name))
@@ -741,6 +746,8 @@ class App(tk.Tk):
                 self.commands.refresh()
             elif cur == "alerts":
                 self.alerts_tab.refresh()
+            elif cur == "history":
+                self.history_tab.refresh()
             elif cur == "inventory":
                 self.tools._inv_done(None, "")
             elif cur and cur.startswith("t_"):

@@ -1,3 +1,21 @@
+## Network Doctor 3.25.0
+
+### Asset records, alert history, and camera names fetched from the camera itself
+- **Device tags now hold asset-register fields**: Owner / handled by, Serial number, Purchase date,
+  Warranty until - alongside the existing Name/Department/Location. Shows in "Tag" on any device, and in
+  the tag CSV export/import.
+- **New "History & trends" page** (Alerts section): one row per day for the last 14/30/90 days - total
+  alerts and the busiest kind that day - so you can see at a glance whether things are improving, not
+  just the raw 3000-row log. Exports to CSV.
+- **Audit log now exports to CSV** (Users & sign-in > Audit log > "Export (CSV)") for compliance/handover.
+- **Login sweep (Devices > Login sweep) can now fetch the camera/NVR's own configured name** and apply
+  it as the device's tag with one click ("Use device's own name as its tag") - no more opening each
+  camera's web page by hand to find out what it's labelled. Works for Hikvision (ISAPI) and now also
+  Dahua (added the missing `getConfig&name=General` call that carries the MachineName).
+- Reminder: moving cameras/NVRs into their planned IP block (e.g. .150-.199 for cameras) by device type is
+  already built - Internet & Usage > Bandwidth plan > fixed-IP plan - this release just makes it easier to
+  name them correctly first.
+
 ## Network Doctor 3.24.2
 
 ### Auto-fix was staying blank, and malware alerts weren't naming the real threat
