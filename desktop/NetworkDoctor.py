@@ -45,7 +45,6 @@ import nd_home
 import nd_bwtab
 import nd_sweeptab
 import nd_telemetry as TL
-import nd_dnsfilter as DNSF
 
 import tkinter as tk
 import tkinter.font as tkfont
@@ -67,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.28.0"
+VERSION = "3.28.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -370,7 +369,6 @@ class DeviceWindow(tk.Toplevel):
         res = []
         for _ in range(10):
             res.append(core.ping(self.d["ip"], 1000))
-        ok = [x for x in res if x is not None]
         self.ping = res
 
     def _apps(self):
@@ -2564,7 +2562,6 @@ class App(tk.Tk):
         mon = self.mon
         if not (core.IS_PRO and mon and mon.last_flow):
             return
-        now = time.time()
         for d in list(self.devices):
             ip = d.get("ip")
             if not ip or not d.get("online") or d.get("ip") == self.gw or d.get("self"):

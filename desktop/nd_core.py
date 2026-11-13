@@ -1923,6 +1923,10 @@ def quick_check(subnet, known_ips, opts, stop=None):
     net = next((n for n in nets if in_net(lip, n)), nets[0])
     admin = is_admin()
     local = in_net(lip, net)
+    # quick_check doesn't probe for extra IP ranges itself (that's scan()'s job) - it just re-checks the
+    # ranges already known, so there is nothing added/skipped here. (Was missing entirely - raised
+    # NameError on every single quick check, silently logged as "check failed" in the health log.)
+    auto = {"added": [], "skipped": []}
     raw = {"meta": {"started": now_s(), "gateway": gw, "local_ip": lip, "subnet": str(net), "admin": admin,
                     "scapy": False, "tests": {}, "local_subnet": local, "quick": True},
            "arp": defaultdict(set), "ping": {}, "ports": {}, "http": {}, "nbns": {}, "dns": {}, "upnp": {},

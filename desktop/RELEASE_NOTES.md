@@ -1,3 +1,18 @@
+## Network Doctor 3.28.1
+
+### Code audit (pyflakes pass + manual review) - one real bug fixed, several latent ones fixed before they bit
+- **Real, live bug**: `quick_check()` (the fast loop/conflict/rogue-DHCP/stability check that runs between
+  full scans) referenced a variable it never defined - it has been raising `NameError` on every single run,
+  silently logged in the health log as "check failed". Fixed: it now runs as intended. Added a regression
+  test that calls the real function (the old tests only exercised a hand-built fixture, which is why this
+  was never caught).
+- **Latent bug, 3 spots** (remote tunnel quick-start/setup/remove in Setup > Remote access): on failure, the
+  error dialog would itself crash with a second, unrelated `NameError` instead of showing the real error -
+  Python deletes an `except ... as e:` variable when the block ends, so a queued callback that closes over
+  `e` directly blows up when it finally runs. Fixed by capturing the message into a plain variable first.
+- Minor cleanup: removed several dead/unused variables and imports found by a pyflakes pass (no behaviour
+  change) - keeps the codebase easier to read and reduces noise around future real findings.
+
 ## Network Doctor 3.28.0
 
 ### New: Router config backup & diff (Setup)
