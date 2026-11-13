@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.32.0"
+VERSION = "3.33.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1679,6 +1679,10 @@ class App(tk.Tk):
         self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db)
         self._new_devices(self.raw["meta"].get("new_macs") or [])
         self._missing_devices(self.raw["meta"].get("missing_macs") or [])
+        try:
+            self._auto_sweep()
+        except Exception:
+            pass
         conflict_ips = set()
         for i in self.issues:
             mm = re.match(r"IP conflict on (\S+)", i["title"])
@@ -2975,6 +2979,64 @@ class App(tk.Tk):
             self.mon.event("info", "Auto check", txt, "auto")
         if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
             self._popup("warning", txt)
+
+    def _auto_sweep(self):
+        """After every scan: each device that has a remembered login is asked once with exactly that login
+        (nothing typed, nothing guessed). What it answers goes to the Inventory; a refused login (password
+        changed) or a camera / recorder that stopped responding becomes an alert at once."""
+        import nd_sweep as SW
+        st = self._settings()
+        if not st.get("sweep_remember", True) or getattr(self, "_auto_sweep_busy", False):
+            return
+        page = getattr(self, "sweep_tab", None)
+        if page is not None and page.running:
+            return
+        store = st.setdefault("device_logins", {})
+        saved = SW.saved_all(store)
+        if not saved:
+            return
+        devices = list(self.devices)
+        targets = SW.auto_targets(devices, saved)
+        self._auto_sweep_busy = True
+        sw = SW.Sweep([], saved=saved)
+
+        def work():
+            results = []
+            try:
+                results = sw.run(targets) if targets else []
+            except Exception:
+                pass
+            self.q.put(("call", lambda: done(results)))
+
+        def done(results):
+            self._auto_sweep_busy = False
+            for mac in sw.stale:                      # refused: forget it, so it is never sent again
+                store.pop(mac, None)
+            if sw.stale:
+                self._save_settings()
+            findings = SW.auto_findings(results, devices, set(saved))
+            now, seen = time.time(), set()
+            for sev, text in findings:
+                key = "login_check:" + text
+                seen.add(key)
+                self._health_log("Login check", sev, text)
+                if key in self.alerts_active:           # still the same problem: count it, no second pop-up
+                    self.alerts_active[key]["last"] = now
+                    self._record_alert_plain(sev, text, "Login check")
+                else:
+                    self.alerts_active[key] = {"title": text[:80], "sev": sev, "first": now, "last": now,
+                                               "source": "Login check"}
+                    self._raise_alert(sev, text, [], "Login check")
+            for key in [k for k in self.alerts_active if k.startswith("login_check:") and k not in seen]:
+                self.alerts_active.pop(key, None)       # fixed: a new occurrence pops up again
+            if page is not None:
+                for r in results:
+                    try:
+                        page._save_result(r)
+                    except Exception:
+                        pass
+                page.show_auto(results, findings)
+        threading.Thread(target=work, daemon=True).start()
 
     def _missing_devices(self, macs):
         """The other half of "new device(s) since the last scan": devices that answered last scan and don't

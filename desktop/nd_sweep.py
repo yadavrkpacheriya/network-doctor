@@ -460,6 +460,36 @@ def saved_all(store):
     return out
 
 
+def auto_targets(devices, saved, kinds=("pc", "cam", "net")):
+    """The plan for the automatic check after a scan: only devices that have a remembered login."""
+    return [t for t in plan(devices, kinds=kinds) if (t["dev"].get("mac") or "") in (saved or {})]
+
+
+def auto_findings(results, devices, saved_macs):
+    """What the automatic check found that someone must know NOW: [(severity, text)].
+    - the remembered login of a device was refused  -> its password was changed;
+    - a device answers the network but not on its login service;
+    - a camera / recorder with a remembered login is not on the network at all."""
+    out = []
+    for r in results:
+        who = f"{r.get('name') or r['ip']} ({r['ip']})"
+        tried_saved = [st for n, st in r.get("tried") or [] if n == SAVED]
+        if r["status"] == AUTH and AUTH in tried_saved:
+            out.append(("critical", f"Saved login refused by {who} - its password was changed (or the account is "
+                                    f"locked). {r.get('category') or 'Device'}, MAC {r.get('mac', '')}"))
+        elif r["status"] in (UNREACH, ERR) and tried_saved:
+            out.append(("warning", f"{who} is on the network but its login service has stopped responding "
+                                   f"({METHOD_TITLE.get(r['method'], r['method'])}): {r.get('detail', '')[:90]}"))
+    online = {d.get("mac") for d in devices if d.get("online") and d.get("mac")}
+    gone = [d for d in devices if d.get("mac") in set(saved_macs) and d.get("mac") not in online
+            and (d.get("category") == core.CAT_CAM or "CCTV" in " ".join(d.get("notes") or []))]
+    if gone:
+        names = "; ".join(f"{d.get('name') or '-'} ({d.get('ip', '')})" for d in gone[:6])
+        out.append(("critical", f"{len(gone)} camera(s) / recorder(s) with a saved login have stopped responding: "
+                                f"{names}" + (f" and {len(gone) - 6} more" if len(gone) > 6 else "")))
+    return out
+
+
 class Sweep:
     """Runs the plan. Every (device, method, login) is tried once; see the module text for the safety rules."""
 
