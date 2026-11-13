@@ -1,3 +1,8 @@
+## Network Doctor 3.30.2
+
+- 3.30.0 and 3.30.1 were never released: a new test failed on the Windows build machine (the test could not
+  delete its own temporary folder). Fixed; this is the first release with everything listed under them.
+
 ## Network Doctor 3.30.1
 
 ### Line up cameras: the recorder gets the new IP automatically (Hikvision and Dahua NVR / DVR)
