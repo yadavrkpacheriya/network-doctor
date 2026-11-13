@@ -3,9 +3,9 @@
 audit-log CSV export, and camera login sweep fetching + applying the device's own configured name
 (Hikvision ISAPI already did; Dahua's web API now also asks for it)."""
 
-import io
 import os
 import sys
+import tempfile
 import time
 import unittest
 
@@ -55,24 +55,24 @@ class AlertTrend(unittest.TestCase):
 
     def test_export_trend_csv(self):
         rows = AL.trend_by_day([{"t": time.time(), "kind": "torrent"}], days=1)
-        path = "/tmp/_nd_trend_test.csv"
-        AL.export_trend_csv(path, rows)
-        with open(path, encoding="utf-8-sig") as f:
-            text = f.read()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "trend.csv")
+            AL.export_trend_csv(path, rows)
+            with open(path, encoding="utf-8-sig") as f:
+                text = f.read()
         self.assertIn("torrent", text)
-        os.remove(path)
 
 
 class AuditExport(unittest.TestCase):
     def test_export_audit_csv(self):
         entries = [{"ts": "2026-11-13 10:00:00", "user": "admin", "role": "owner", "action": "tag",
                     "detail": "renamed a device", "result": "done", "ip": "console"}]
-        path = "/tmp/_nd_audit_test.csv"
-        T.export_audit_csv(path, entries)
-        with open(path, encoding="utf-8-sig") as f:
-            text = f.read()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "audit.csv")
+            T.export_audit_csv(path, entries)
+            with open(path, encoding="utf-8-sig") as f:
+                text = f.read()
         self.assertIn("renamed a device", text)
-        os.remove(path)
 
 
 class CameraOwnNameFetch(unittest.TestCase):
