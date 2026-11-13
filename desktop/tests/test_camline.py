@@ -163,6 +163,96 @@ class Moving(unittest.TestCase):
         self.assertIn("not moved", rows[0]["result"])
 
 
+HIK_LIST = ('<InputProxyChannelList><InputProxyChannel version="1.0"><id>1</id><name>Gate</name>'
+            '<sourceInputPortDescriptor><proxyProtocol>HIKVISION</proxyProtocol><ipAddress>192.168.0.64</ipAddress>'
+            '<managePortNo>8000</managePortNo><userName>admin</userName></sourceInputPortDescriptor>'
+            '</InputProxyChannel><InputProxyChannel version="1.0"><id>2</id><name>Store</name>'
+            '<sourceInputPortDescriptor><ipAddress>192.168.0.65</ipAddress><userName>viewer</userName>'
+            '</sourceInputPortDescriptor></InputProxyChannel></InputProxyChannelList>')
+HIK_STATUS = ('<InputProxyChannelStatusList><InputProxyChannelStatus><id>1</id><online>true</online>'
+              '</InputProxyChannelStatus><InputProxyChannelStatus><id>2</id><online>false</online>'
+              '</InputProxyChannelStatus></InputProxyChannelStatusList>')
+
+
+def nvr_row(method="hik", login=1):
+    return {"dev": dev("192.168.0.141", "AA:00:00:00:01:41", ports=(80, 8000)), "ip_now": "192.168.0.141",
+            "group": "nvr", "method": method, "login": login, "action": "keep"}
+
+
+class Recorder(unittest.TestCase):
+    def cam(self, put_code=200):
+        return FakeCam({("GET", CL.HIK_CH): (200, HIK_LIST, "digest"),
+                        ("PUT", CL.HIK_CH + "/1"): (put_code, "<statusString>OK</statusString>", "digest"),
+                        ("PUT", CL.HIK_CH + "/2"): (put_code, "<statusString>OK</statusString>", "digest"),
+                        ("GET", CL.HIK_CH + "/status"): (200, HIK_STATUS, "digest")})
+
+    def test_only_the_matching_channel_and_only_its_ip_change(self):
+        cam = self.cam()
+        cid, note = CL.hik_nvr_update("192.168.0.141", 80, False, "admin", "n", "192.168.0.64", "192.168.0.72",
+                                      ("admin", "p&w"), send=cam)
+        self.assertEqual(cid, "1")
+        puts = [(p, b) for m, p, b in cam.sent if m == "PUT"]
+        self.assertEqual(len(puts), 1)
+        self.assertTrue(puts[0][0].endswith("/1"))
+        self.assertIn("<ipAddress>192.168.0.72</ipAddress>", puts[0][1])
+        self.assertNotIn("192.168.0.65", puts[0][1])                 # the other channel is not in what is sent
+        self.assertIn("<password>p&amp;w</password>", puts[0][1])    # same user as the camera login: rewritten
+
+    def test_a_channel_with_another_user_keeps_its_own_login(self):
+        cam = self.cam()
+        CL.hik_nvr_update("192.168.0.141", 80, False, "admin", "n", "192.168.0.65", "192.168.0.73", ("admin", "pw"),
+                          send=cam)
+        self.assertNotIn("<password>", next(b for m, p, b in cam.sent if m == "PUT"))
+
+    def test_no_channel_for_that_ip_writes_nothing(self):
+        cam = self.cam()
+        self.assertEqual(CL.hik_nvr_update("192.168.0.141", 80, False, "a", "b", "192.168.0.99", "192.168.0.72",
+                                           send=cam)[0], "")
+        self.assertFalse([m for m, _, _ in cam.sent if m == "PUT"])
+
+    def test_update_recorders_reports_online_and_never_raises(self):
+        c = Clock()
+        kw = dict(wait=20, step=5, sleep=c.sleep, clock=c.now)
+        text = CL.update_recorders([nvr_row()], [("admin", "n")], "192.168.0.64", "192.168.0.72", ("admin", "pw"),
+                                   send=self.cam(), **kw)
+        self.assertIn("channel 1 now uses 192.168.0.72 and is online", text)
+        text = CL.update_recorders([nvr_row()], [("admin", "n")], "192.168.0.65", "192.168.0.73", None,
+                                   send=self.cam(), **kw)
+        self.assertIn("OFFLINE", text)
+        text = CL.update_recorders([nvr_row()], [("admin", "n")], "192.168.0.64", "192.168.0.72", None,
+                                   send=self.cam(put_code=403), **kw)
+        self.assertIn("did not accept", text)
+        self.assertIn("by hand", CL.update_recorders([], [], "192.168.0.64", "192.168.0.72"))
+        self.assertIn("by hand", CL.update_recorders([nvr_row()], [("admin", "n")], "192.168.0.99", "192.168.0.72",
+                                                     send=self.cam(), **kw))
+
+    def test_dahua_recorder_entry(self):
+        base = "/cgi-bin/configManager.cgi?action="
+        key = "RemoteDevice.uuid:System_CONFIG_NETCAMERA_INFO_3.Address"
+        cam = FakeCam({("GET", base + "getConfig&name=RemoteDevice"):
+                       (200, f"table.{key}=192.168.0.64\ntable.RemoteDevice.uuid:System_CONFIG_NETCAMERA_INFO_4."
+                             "Address=192.168.0.65\n", ""),
+                       ("GET", base + f"setConfig&{key}=192.168.0.72"): (200, "OK", "")})
+        k, note = CL.dahua_nvr_update("192.168.0.142", 80, False, "admin", "x", "192.168.0.64", "192.168.0.72",
+                                      send=cam)
+        self.assertEqual(k, key)
+
+    def test_run_calls_the_recorder_step_only_for_cameras_that_moved(self):
+        c = Clock()
+        rows = [row("192.168.0.64", "192.168.0.72"), row("192.168.0.65", "192.168.0.73")]
+        told = []
+        CL.run(rows, [("admin", "x")], lambda r: "", lambda ip: ip == "192.168.0.72",
+               set_dhcp=lambda *a: "switched", after_move=lambda r, cred: told.append(r["ip_new"]) or "recorder ok",
+               sleep=c.sleep, clock=c.now, wait=9, step=3)
+        self.assertEqual(told, ["192.168.0.72"])
+        self.assertIn("recorder ok", rows[0]["result"])
+        self.assertTrue(rows[1]["result"].startswith("FAILED"))
+
+    def test_recorders_are_picked_from_the_plan(self):
+        rows = [nvr_row(), nvr_row("onvif"), dict(nvr_row(), group="cam")]
+        self.assertEqual(len(CL.recorders(rows)), 1)
+
+
 class HttpRequestKeepsGetBehaviour(unittest.TestCase):
     def test_http_login_is_a_get_through_http_request(self):
         seen = {}

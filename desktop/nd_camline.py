@@ -11,8 +11,10 @@ How a camera is moved (one camera at a time, never several at once):
   3. the app waits until the camera answers on the new IP. If it does not, the run STOPS there - no other
      camera is touched - and the result says where that camera can be found.
 
-What this does NOT do: the NVR / DVR stores each camera's IP, so every moved camera must be given its new IP
-on the recorder (the old -> new list is made for that). This is why the first run moves ONE camera only.
+The NVR / DVR stores each camera's IP. For Hikvision and Dahua recorders that accepted a login in the sweep,
+the channel that pointed at the old IP is given the new one right after the camera has moved (and the app
+checks that the channel comes back online). For other recorders it must be typed by hand - the old -> new list
+is made for that. Either way the first run moves ONE camera only.
 
 Pure logic + the two small device calls; the window is in nd_sweeptab.py. Device calls go through `send`
 (nd_sweep.http_request) so they can be tested without a camera.
@@ -126,6 +128,129 @@ def dahua_set_dhcp(ip, port, ssl_on, user, pw, send=None):
 SETTERS = {"hik": hik_set_dhcp, "dahua": dahua_set_dhcp}
 
 
+# ------------------------------------------------------------------------------------ recorder (NVR / DVR)
+HIK_CH = "/ISAPI/ContentMgmt/InputProxy/channels"
+
+
+def recorders(rows):
+    """Recorders from the plan that accepted a login with a brand whose channel list this app can change."""
+    return [r for r in rows if r["group"] == "nvr" and r.get("method") in MOVABLE and r.get("login")]
+
+
+def hik_channels(xml_text):
+    """[(channel id, IP, whole <InputProxyChannel> block)] from a Hikvision recorder's channel list."""
+    out = []
+    for block in re.findall(r"<InputProxyChannel\b.*?</InputProxyChannel>", xml_text or "", re.S):
+        cid = re.search(r"<id>\s*(\d+)\s*</id>", block)
+        ip = re.search(r"<ipAddress>\s*([\d.]+)\s*</ipAddress>", block)
+        if cid and ip:
+            out.append((cid.group(1), ip.group(1), block))
+    return out
+
+
+def hik_nvr_update(nvr_ip, port, ssl_on, user, pw, old, new, cam_cred=None, send=None):
+    """Hikvision recorder: the channel that points at `old` is pointed at `new`. Only the IP is changed; the
+    camera's login is written again only when the channel uses the same user name as the login that just
+    worked on the camera (a recorder never shows the stored password). Returns (channel id or "", note)."""
+    send = send or S.http_request
+    code, body, _ = send(nvr_ip, port, "GET", HIK_CH, user, pw, ssl_on=ssl_on)
+    if code == 401:
+        raise CamError("the recorder refused the login")
+    if code != 200:
+        raise CamError(f"could not read the recorder's camera list (answer {code})")
+    hit = [c for c in hik_channels(body) if c[1] == old]
+    if not hit:
+        return "", f"no channel on this recorder uses {old}"
+    if len(hit) > 1:
+        raise CamError(f"{len(hit)} channels use {old} - not changed, set it by hand")
+    cid, _ip, block = hit[0]
+    new_block = re.sub(r"<ipAddress>[^<]*</ipAddress>", f"<ipAddress>{new}</ipAddress>", block, count=1)
+    m = re.search(r"<userName>([^<]*)</userName>", new_block)
+    if cam_cred and m and m.group(1) == cam_cred[0] and "<password>" not in new_block:
+        from xml.sax.saxutils import escape
+        new_block = new_block.replace(m.group(0), m.group(0) + f"<password>{escape(cam_cred[1])}</password>", 1)
+    code, _ans, _ = send(nvr_ip, port, "PUT", f"{HIK_CH}/{cid}", user, pw, ssl_on=ssl_on, ctype="application/xml",
+                         body='<?xml version="1.0" encoding="UTF-8"?>' + new_block)
+    if code not in (200, 201):
+        raise CamError(f"the recorder did not accept the new IP for channel {cid} (answer {code})")
+    return cid, f"channel {cid} now uses {new}"
+
+
+def hik_nvr_online(nvr_ip, port, ssl_on, user, pw, cid, send=None):
+    """True / False when the recorder says whether that channel is online; None when it does not say."""
+    send = send or S.http_request
+    code, body, _ = send(nvr_ip, port, "GET", HIK_CH + "/status", user, pw, ssl_on=ssl_on)
+    if code != 200:
+        return None
+    for block in re.findall(r"<InputProxyChannelStatus\b.*?</InputProxyChannelStatus>", body, re.S):
+        if re.search(rf"<id>\s*{cid}\s*</id>", block):
+            m = re.search(r"<online>\s*(true|false)\s*</online>", block, re.I)
+            return m.group(1).lower() == "true" if m else None
+    return None
+
+
+def dahua_nvr_update(nvr_ip, port, ssl_on, user, pw, old, new, cam_cred=None, send=None):
+    """Dahua recorder: the remote device whose Address is `old` gets `new`. Returns (key or "", note)."""
+    send = send or S.http_request
+    base = "/cgi-bin/configManager.cgi?action="
+    code, body, _ = send(nvr_ip, port, "GET", base + "getConfig&name=RemoteDevice", user, pw, ssl_on=ssl_on)
+    if code == 401:
+        raise CamError("the recorder refused the login")
+    if code != 200:
+        raise CamError(f"could not read the recorder's camera list (answer {code})")
+    keys = [k for k, v in S.parse_kv(body).items() if k.endswith(".Address") and v.strip() == old]
+    if not keys:
+        return "", f"no channel on this recorder uses {old}"
+    if len(keys) > 1:
+        raise CamError(f"{len(keys)} channels use {old} - not changed, set it by hand")
+    key = keys[0][len("table."):] if keys[0].startswith("table.") else keys[0]
+    from urllib.parse import quote
+    code, ans, _ = send(nvr_ip, port, "GET", base + "setConfig&" + quote(key, safe=".:_-[]") + "=" + new, user, pw,
+                        ssl_on=ssl_on)
+    if code != 200 or "ok" not in ans.lower():
+        raise CamError(f"the recorder did not accept the new IP (answer {code})")
+    return key, f"recorder entry now uses {new}"
+
+
+def update_recorders(nvr_rows, creds, old, new, cam_cred=None, send=None, wait=60, step=5, sleep=time.sleep,
+                     clock=time.time):
+    """After a camera moved from `old` to `new`: tell every recorder we can talk to. Returns a short text for
+    the row. Never raises - a recorder that cannot be updated is reported, the camera stays moved."""
+    notes, found = [], False
+    for n in nvr_rows:
+        cred = creds[n["login"] - 1] if 0 < n["login"] <= len(creds) else None
+        if not cred:
+            notes.append(f"recorder {n['ip_now']}: its login is not filled in")
+            continue
+        port, ssl_on = S._http_port(n["dev"])
+        try:
+            if n["method"] == "hik":
+                cid, note = hik_nvr_update(n["ip_now"], port, ssl_on, cred[0], cred[1], old, new, cam_cred, send)
+                if cid:
+                    found, end, state = True, clock() + wait, None
+                    while clock() < end:
+                        sleep(step)
+                        state = hik_nvr_online(n["ip_now"], port, ssl_on, cred[0], cred[1], cid, send)
+                        if state is not False:
+                            break
+                    note += {True: " and is online", False: " but still shows OFFLINE - check the camera "
+                             "password on the recorder", None: ""}[state]
+                    notes.append(f"recorder {n['ip_now']}: {note}")
+            else:
+                key, note = dahua_nvr_update(n["ip_now"], port, ssl_on, cred[0], cred[1], old, new, cam_cred, send)
+                if key:
+                    found = True
+                    notes.append(f"recorder {n['ip_now']}: {note}")
+        except CamError as e:
+            notes.append(f"recorder {n['ip_now']}: {e}")
+        except S.Outcome as o:
+            notes.append(f"recorder {n['ip_now']}: {o.detail}")
+    if not notes and not found:
+        return ("no recorder had a channel on " + old + " (or no recorder login worked): give the camera's new "
+                "IP on the NVR / DVR by hand") if nvr_rows else "type the new IP on the NVR / DVR by hand"
+    return "; ".join(notes)
+
+
 # -------------------------------------------------------------------------------------------------- one move
 def move_one(row, cred, reserve, alive, set_dhcp=None, wait=120, step=3, sleep=time.sleep, clock=time.time):
     """Moves ONE camera. reserve(row) -> error text or "" (router reservation); alive(ip) -> bool.
@@ -154,9 +279,10 @@ def move_one(row, cred, reserve, alive, set_dhcp=None, wait=120, step=3, sleep=t
                    f"{d['mac']})")
 
 
-def run(rows, creds, reserve, alive, on_row=None, limit=None, **kw):
+def run(rows, creds, reserve, alive, on_row=None, limit=None, after_move=None, **kw):
     """Moves the "move" rows one after the other and STOPS at the first failure (the rest stay untouched).
-    limit: how many cameras this run may move (1 for the first, pilot run). Each row gets "result"."""
+    limit: how many cameras this run may move (1 for the first, pilot run). Each row gets "result".
+    after_move(row, cred) -> text: called after each camera that moved (updates the recorder)."""
     done = 0
     for r in rows:
         if r["action"] != "move":
@@ -172,6 +298,11 @@ def run(rows, creds, reserve, alive, on_row=None, limit=None, **kw):
         ok, text = move_one(r, cred, reserve, alive, **kw)
         r["result"] = ("MOVED: " if ok else "FAILED: ") + text
         r["moved"] = ok
+        if ok and after_move:
+            try:
+                r["result"] += " | " + after_move(r, cred)
+            except Exception as e:  # noqa: BLE001 - the camera is moved; the recorder part is reported, not fatal
+                r["result"] += f" | recorder not updated ({e.__class__.__name__}): type the new IP there by hand"
         if on_row:
             on_row(r, ok)
         if not ok:

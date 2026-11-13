@@ -365,9 +365,11 @@ class CamLineWindow(tk.Toplevel):
             "visible gap. For every camera: the router reserves the new IP, the camera is switched to automatic "
             "(DHCP) with the login from the scan, and the app waits until it answers on the new IP. One camera "
             "at a time; the run stops at the first camera that does not come back.\n"
-            "IMPORTANT: the NVR / DVR stores each camera's IP. After a camera moves, give it the new IP on the "
-            "recorder (the list below is for that) - until then that channel shows no picture. So: move ONE "
-            "camera first, fix it on the recorder, and only then move the rest. Recorders are never moved here."
+            "The NVR / DVR stores each camera's IP. A Hikvision or Dahua recorder that accepted a login in the "
+            "scan is given the camera's new IP automatically, right after the camera has moved; for any other "
+            "recorder type it by hand (Save old -> new list). Until the recorder has the new IP that channel "
+            "shows no picture. So: move ONE camera first, check its picture on the recorder, and only then "
+            "move the rest. Recorders themselves are never moved here."
         )).pack(anchor="w")
         top = ttk.Frame(f)
         top.pack(fill="x", pady=(8, 4))
@@ -458,8 +460,11 @@ class CamLineWindow(tk.Toplevel):
         first = todo[0]
         if not messagebox.askyesno(
                 APP, f"Move {n} camera(s) now?\n\nFirst: {first['ip_now']} -> {first['ip_new']}\n\nEach moved camera "
-                     "shows NO PICTURE on the NVR / DVR until you give it the new IP there. The run stops at the "
-                     "first camera that does not answer on its new IP.", parent=self):
+                     "shows NO PICTURE on the NVR / DVR until the recorder has its new IP ("
+                     + (f"{len(self.CL.recorders(self.rows))} recorder(s) will be updated automatically"
+                        if self.CL.recorders(self.rows) else "no recorder accepted a login in the scan, so type "
+                        "it there by hand") + "). The run stops at the first camera that does not answer on its "
+                     "new IP.", parent=self):
             return
         tags = T.tags_of(self.app.db)
 
@@ -479,6 +484,11 @@ class CamLineWindow(tk.Toplevel):
         def alive(ip):
             return any(core.tcp_open(ip, p, 1.0) for p in (80, 8000, 554, 37777, 443)) or core.ping(ip) is not None
 
+        nvrs = self.CL.recorders(self.rows)
+
+        def after_move(row, cred):
+            return self.CL.update_recorders(nvrs, creds, row["ip_now"], row["ip_new"], cred)
+
         self.busy = True
         for b in (self.b_one, self.b_all):
             b.configure(state="disabled")
@@ -489,7 +499,7 @@ class CamLineWindow(tk.Toplevel):
                 self.app.q.put(("call", lambda: self.winfo_exists() and self._draw()))
             done = 0
             try:
-                done = self.CL.run(todo, creds, reserve, alive, on_row=on_row, limit=limit)
+                done = self.CL.run(todo, creds, reserve, alive, on_row=on_row, limit=limit, after_move=after_move)
             finally:
                 self.app.q.put(("call", lambda: self._finished(done, todo)))
         threading.Thread(target=work, daemon=True).start()
@@ -511,8 +521,9 @@ class CamLineWindow(tk.Toplevel):
         self.var_msg.set(
             (f"{done} camera(s) moved. " if done else "No camera was moved. ")
             + (f"STOPPED at {failed['ip_now']}: {failed['result']}" if failed else
-               "Now give each moved camera its new IP on the NVR / DVR (Save old -> new list), check the picture, "
-               "then run a Scan so the device list shows the new IPs."))
+               "Check the picture of each moved camera on the NVR / DVR (the Note column says whether the "
+               "recorder took the new IP, or needs it typed by hand), then run a Scan so the device list shows "
+               "the new IPs."))
 
     def save_csv(self):
         if not self.rows:

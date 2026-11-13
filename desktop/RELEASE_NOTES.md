@@ -1,3 +1,15 @@
+## Network Doctor 3.30.1
+
+### Line up cameras: the recorder gets the new IP automatically (Hikvision and Dahua NVR / DVR)
+- Right after a camera has moved, each recorder that accepted a login in the Login sweep is asked for its
+  camera list; the one channel that pointed at the camera's old IP is pointed at the new one. Nothing else
+  on the recorder is changed. On Hikvision the app then waits for the recorder to show that channel online
+  and says so in the Note column (or says it is still offline).
+- Include the recorders in the Login sweep and keep their login filled in when you press Move.
+- Other recorder brands, or a recorder whose login was refused: type the new IP there by hand as before.
+- NOT yet tested on a real recorder (only against simulated ones) - move ONE camera first and check its
+  picture before moving the rest.
+
 ## Network Doctor 3.30.0
 
 ### Inventory: real Excel sheet, and edits come back
