@@ -1,3 +1,16 @@
+## Network Doctor 3.27.1
+
+### Fix: "Remote access (VPN)" check could give a false CGNAT reading with Tailscale/a VPN active
+- Real-world case: the check reported a different "seen from the internet" address than the router's own
+  IP Cloud address, suggesting CGNAT - but an independent browser check (whatismyip.com) agreed with the
+  router, not with the app's reading. Cause: a VPN/tunnel (Tailscale) was active on the PC at the time and
+  rerouted that one outbound check through its own exit path.
+- The check now: (1) detects an active VPN/tunnel on this PC (Tailscale, WireGuard, ZeroTier, OpenVPN,
+  a 100.64.0.0/10 tunnel IP...) and warns up front if one looks active; (2) reads the public IP from two
+  independent providers, not one, and compares both against the router's own address; a mixed result (one
+  matches, one doesn't) is now reported as "inconclusive - recheck with the VPN off" instead of a confident
+  CGNAT verdict. Still fully read-only.
+
 ## Network Doctor 3.27.0
 
 ### Menu reorganization - fewer items per tab, clearer categories
