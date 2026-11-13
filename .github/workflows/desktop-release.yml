@@ -86,6 +86,16 @@ jobs:
             --collect-all scapy NetworkDoctor.py
           ./store/build_msix.ps1 -Version "${{ steps.ver.outputs.version }}"
 
+      - name: Build NetworkDoctor-Setup.exe (a normal Windows installer around the same exe)
+        if: steps.ver.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          # Inno Setup (ISCC.exe) ships preinstalled on windows-latest runners.
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { Write-Error "ISCC.exe not found - Inno Setup missing on this runner"; exit 1 }
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "/DAppSourceDir=$PWD\dist" store\installer.iss
+          if (-not (Test-Path dist\NetworkDoctor-Setup.exe)) { Write-Error "installer was not produced"; exit 1 }
+
       - name: Checksum
         if: steps.ver.outputs.exists == 'false'
         shell: pwsh
@@ -93,6 +103,9 @@ jobs:
           $h = (Get-FileHash dist\NetworkDoctor.exe -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText("$PWD\dist\NetworkDoctor.exe.sha256", "$h  NetworkDoctor.exe")
           Write-Host "SHA-256: $h"
+          $h2 = (Get-FileHash dist\NetworkDoctor-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD\dist\NetworkDoctor-Setup.exe.sha256", "$h2  NetworkDoctor-Setup.exe")
+          Write-Host "SHA-256 (installer): $h2"
 
       - name: Publish GitHub Release
         if: steps.ver.outputs.exists == 'false'
@@ -105,6 +118,8 @@ jobs:
           files: |
             desktop/dist/NetworkDoctor.exe
             desktop/dist/NetworkDoctor.exe.sha256
+            desktop/dist/NetworkDoctor-Setup.exe
+            desktop/dist/NetworkDoctor-Setup.exe.sha256
             desktop/dist/NetworkDoctor-Store.msix
 
   # Linux app (x86-64). Built on the oldest supported Ubuntu so it also runs on older distributions.
