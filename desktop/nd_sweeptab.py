@@ -6,10 +6,7 @@ be reached, or that answered with data missing are listed. Also checks phones wi
 same IP / block mix-up that cut phones off (3.19.1) does not come back.
 The rules are in nd_sweep.py; this file is only the window.
 """
-import csv
-import os
 import threading
-import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 

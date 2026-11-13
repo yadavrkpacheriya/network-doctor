@@ -18,7 +18,6 @@ import ipaddress
 import os
 import re
 import secrets
-import socket
 import ssl
 import subprocess
 import threading

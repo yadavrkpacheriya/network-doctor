@@ -11,7 +11,6 @@ import ssl
 import struct
 import time
 
-import nd_core as core
 
 # vendor -> the default login that ships on it, so you can be told to change it (we never try it)
 DEFAULT_LOGINS = {

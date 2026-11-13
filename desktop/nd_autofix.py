@@ -90,7 +90,6 @@ def repeat_threshold(stats, kind, base):
     s = stats.get(kind)
     if not s or not s["tries"]:
         return base
-    c = confidence(stats, kind)
     if s["undone"]:
         return base + s["undone"]  # at least one undo on record: be more cautious, not less
     # clean record: ease the threshold down as tries accumulate, floor of 1

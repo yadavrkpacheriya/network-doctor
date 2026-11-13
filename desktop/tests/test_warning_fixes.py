@@ -79,6 +79,18 @@ class BroadcastVsMulticast(unittest.TestCase):
         self.assertIn("IGMP", i["fix"])
         self.assertIn(("Loop overall", "pass", "based on the tests above"), checks)
 
+    def test_quick_check_runs_without_the_undefined_auto_nameerror(self):
+        """Regression: quick_check() referenced an 'auto' variable it never defined (scan() defines it,
+        quick_check() didn't) - every single periodic quick check (loop/conflict/rogue-DHCP) raised
+        NameError immediately, silently logged in the health log as "check failed" and never actually
+        ran. A stop event set up front makes it exit fast (via Stopped) once past the buggy line, instead
+        of running the real multi-second network probes."""
+        import threading
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaises(core.Stopped):
+            core.quick_check("192.168.0.0/24", [], {}, stop=stop)
+
     def test_quick_check_keeps_multicast(self):
         issues, _ = core.analyse_quick(raw_with({"bcast_pps": 10.0, "mcast_pps": 5000.0}), [], fresh_db())
         self.assertTrue(any("multicast" in x.lower() for x in titles(issues)))

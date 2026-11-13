@@ -303,7 +303,6 @@ def build_map(devices, db, gw_ip, problems=None, port_events=None):
     problems = problems or {}
     port_events = port_events or {}
     online = [d for d in devices if d.get("mac") or d.get("ip")]
-    by_mac = {d["mac"]: d for d in online if d.get("mac")}
     router = next((d for d in online if d.get("ip") == gw_ip and d.get("online", True)), None)
 
     def sev_of(d):

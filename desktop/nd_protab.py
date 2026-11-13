@@ -326,7 +326,11 @@ class TunnelPanel:
                 q = TN.QuickTunnel(path, SH.HTTP_PORT).start()
                 url = q.wait_url(30)
             except Exception as e:  # noqa: BLE001 - shown to the person
-                self.app.q.put(("call", lambda: self._quick_failed(str(e))))
+                # Python deletes 'e' when the except block ends, so it must be captured into a plain
+                # variable here - a lambda closing over 'e' itself would raise NameError when the queued
+                # call finally runs, hiding the real error behind a second, unrelated crash.
+                msg = str(e)
+                self.app.q.put(("call", lambda: self._quick_failed(msg)))
                 return
             self.app.q.put(("call", lambda: self._quick_started(q, url)))
         threading.Thread(target=work, daemon=True).start()
@@ -370,7 +374,8 @@ class TunnelPanel:
                 r = TN.setup_permanent(token, domain, sub, SH.HTTP_PORT)
                 TN.install_service(path, r["run_token"])
             except Exception as e:  # noqa: BLE001 - shown to the person
-                self.app.q.put(("call", lambda: self._perm_failed(str(e))))
+                msg = str(e)  # see note above: must not close over 'e' itself
+                self.app.q.put(("call", lambda: self._perm_failed(msg)))
                 return
             self.app.q.put(("call", lambda: self._perm_done(r)))
         threading.Thread(target=work, daemon=True).start()
@@ -408,7 +413,8 @@ class TunnelPanel:
                 rec = TN.find_dns_record_id(token, zone, t["hostname"])
                 TN.remove_tunnel_and_dns(token, TN.account_id_of(token), t["tunnel_id"], zone, rec)
             except Exception as e:  # noqa: BLE001 - shown to the person
-                self.app.q.put(("call", lambda: messagebox.showerror("Network Doctor", f"Could not remove it: {e}")))
+                msg = str(e)  # see note above: must not close over 'e' itself
+                self.app.q.put(("call", lambda: messagebox.showerror("Network Doctor", f"Could not remove it: {msg}")))
                 return
             self.app.q.put(("call", self._perm_removed))
         threading.Thread(target=work, daemon=True).start()
