@@ -165,7 +165,10 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            + R._ros_off("/ip firewall nat", f"action=dst-nat and to-addresses={ip} and disabled=no") + "\n"
                            # also drop any traffic reaching it from the internet, so it is no longer exposed even
                            # if a port-forward is re-created; local viewing on the LAN keeps working.
-                           + _no_internet(lan, f"ND: no-inbound {ip}", ip=ip, out=False, inp=True)) if ip
+                           + _no_internet(lan, f"ND: no-inbound {ip}", ip=ip, out=False, inp=True),
+                           "/ip upnp set enabled=yes\n" + R._ros_on("/ip firewall nat", extra=f" and to-addresses={ip}")
+                           + f'\n:do {{/ip firewall filter remove [find where comment="ND: no-inbound {ip}"]}} '
+                             f'on-error={{}}') if ip
                           else ("Turn off UPnP", "router", "/ip upnp set enabled=no")])
 
     if "rogue" in low or "second dhcp" in low or "another dhcp" in low or "extra router" in low or \
@@ -222,13 +225,26 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            _top_rule(f'chain=forward src-mac-address={mac} action=drop comment="ND: blocked {mac}"'))
                           if mac else None])
 
-    if "malware" in low or "threat" in low or "botnet" in low or "c&c" in low:
+    # Keywords cover every public block-list label nd_monitor.FEEDS actually uses ("Hijacked criminal
+    # network (Spamhaus DROP)", "Known attacker (FireHOL level 1)", "Compromised / attacking host..."
+    # none of which contain the word "malware" itself) - without these the real-world alert fell through
+    # to the generic/root-cause handling with no specific fix, no undo, and no way to find the offending
+    # program (3.24.1's real-world bug: a Spamhaus hit showed no "find the app" guidance at all).
+    if ("malware" in low or "threat" in low or "botnet" in low or "c&c" in low or "criminal" in low
+            or "attacker" in low or "attacking" in low or "compromised" in low or "malicious" in low):
+        ips_in_text = [x for x in IP_RE.findall(t) if x not in ("255.255.255.255", "0.0.0.0")]
+        remote_ip = next((x for x in ips_in_text if x != ip), "")
         return _fix(1, "malware", f"Possible malware on {ip or 'a device'}",
                     "The device talks to an address on a malware / botnet list.",
                     "Cut its internet now, then clean the PC.",
                     ["Press 'Block this device's internet' (Undo: remove the ND rule in IP > Firewall).",
+                     f"Find WHICH program did it, on that PC ({ip or 'see the alert'}): open Task Manager > "
+                     "Performance tab > 'Open Resource Monitor' > Network tab, sort by 'Remote Address' and look "
+                     f"for a process talking to {remote_ip or 'the remote address in the alert'} - or run "
+                     f"'netstat -ano | findstr {remote_ip or '<the remote IP>'}' in Command Prompt to get its PID, "
+                     "then find that PID in Task Manager's Details tab to see the program's name.",
                      "On the PC: Windows Security > Virus scan > Microsoft Defender Offline scan.",
-                     "Uninstall unknown programs and browser extensions; update Windows.",
+                     "Uninstall unknown programs and browser extensions found this way; update Windows.",
                      "Change the passwords used on that PC (email, banking, ERP) from another PC.",
                      "Unblock and watch the Live monitor for a day."],
                     auto=[("Block this device's internet (keeps local network)", "router",
