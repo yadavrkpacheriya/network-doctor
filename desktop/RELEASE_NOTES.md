@@ -1,3 +1,12 @@
+## Network Doctor 3.34.1
+
+### The router log is no longer filled with "logged in / logged out via api"
+- Every reading the app takes from the router (DNS names each minute, leases, bandwidth, backups...) used
+  to log in and out again - hundreds of lines an hour in the router's log, hiding the lines that matter.
+- The app now keeps ONE login open and reuses it. You will see a single "logged in ... via api" when the app
+  starts (and again only if the router restarts or the connection drops).
+- If the router login is changed in Setup, the kept login is closed at once.
+
 ## Network Doctor 3.34.0
 
 ### Scan: everything after "finding devices" now runs side by side

@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.34.0"
+VERSION = "3.34.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -994,6 +994,7 @@ class App(tk.Tk):
                                      "http:// and no :port (the API-SSL box above already picks 8728 vs 8729).")
             return
         self.var_ro_host.set(host)  # reflect what was actually cleaned/saved, e.g. a pasted "http://x/80" -> "x"
+        RO.close_all()   # a login kept open with the old user / password must not be reused
         st = self._settings()
         st["router_api"] = {"host": host, "user": user,
                             "pw": RO.protect(self.var_ro_pw.get()), "ssl": self.var_ro_ssl.get()}
