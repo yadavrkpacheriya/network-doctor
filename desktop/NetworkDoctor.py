@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.33.1"
+VERSION = "3.34.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1671,6 +1671,10 @@ class App(tk.Tk):
     def _finish(self):
         m = self.raw["meta"]
         self._reset(f"Scan finished in {m['duration']} s at {m['finished']}.")
+        tm = m.get("timing") or {}
+        if tm:   # where the time went (Health log): the first place to look when a scan feels slow
+            self._health_log("Full scan", "info", f"Scan took {m['duration']} s: finding devices {tm.get('find')} s, "
+                             f"identifying + tests {tm.get('identify_and_tests')} s.")
         self.pb["value"] = 100
         self.last_scan_t = time.time()
         self._feed_monitor()

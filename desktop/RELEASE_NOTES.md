@@ -1,3 +1,16 @@
+## Network Doctor 3.34.0
+
+### Scan: everything after "finding devices" now runs side by side
+- Once the devices are found, the IP-conflict rounds, the packet tests (all-replies ARP, rogue-DHCP listen,
+  loop echo), the duplicate-reply test, computer names, UPnP, reverse DNS, open services and device web
+  pages no longer wait for each other. Every check is still done; only the waiting overlaps.
+- The conflict rounds (which empty this PC's ARP cache) start only after the short service probes, so they
+  cannot hide an open service.
+- A device that answers only late (it slept through the first sweep) is still identified, in a short extra
+  pass at the end.
+- The Health log now says where the time went: "Scan took N s: finding devices X s, identifying + tests Y s".
+- Aim: about a minute on an office /24 instead of about 140 s. Not measured on a real network yet.
+
 ## Network Doctor 3.33.1
 
 ### Faster scan
