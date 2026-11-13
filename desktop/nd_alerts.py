@@ -367,6 +367,17 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            'tcp-mss=!0-1440 action=change-mss new-mss=1440 passthrough=yes comment="ND: MSS clamp"',
                            ':do {/ip firewall mangle remove [find where comment="ND: MSS clamp"]} on-error={}')])
 
+    if "router configuration changed" in low or "router config changed" in low:
+        return _fix(3, "config_changed", "Router configuration changed",
+                    "Someone (or something) changed a setting directly on the router - outside this app - since "
+                    "the last backup. This is just a record of that; it is not necessarily wrong.",
+                    "Review what changed; keep it if it was intentional, undo it in Winbox if it was not.",
+                    ["Open Setup > Config backup & diff and press 'Show diff' to see exactly what changed.",
+                     "If you made this change on purpose, nothing else to do - it's now the new baseline.",
+                     "If nobody on your team meant to change this, check who else has router access and "
+                     "consider changing the router password."],
+                    app=("Open Config backup", "t_backup"))
+
     if "new device" in low or "randomized" in low or "random mac" in low:
         return _fix(3, "new_device", "New device(s) joined the network",
                     "Phones with a 'private / randomized' MAC show as new devices every time, so their history and "

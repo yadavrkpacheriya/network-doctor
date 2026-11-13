@@ -1,3 +1,13 @@
+## Network Doctor 3.28.2
+
+### Config backup now runs itself every 6h, and a real change raises an alert
+- The config backup added in 3.28.0 was manual-only (had to press "Backup now"). It now also runs itself
+  in the background every 6 hours (read-only `/export compact`, same as the button).
+- If that auto-backup finds a real change since the last one, it now raises a normal "Router configuration
+  changed" alert - P3, informational, links straight to Setup > Config backup & diff to see what changed.
+  Not auto-fixed (nothing to "fix" - it's a record of a change someone already made, not a problem).
+- A first-ever backup never raises an alert (nothing to compare it against yet).
+
 ## Network Doctor 3.28.1
 
 ### Code audit (pyflakes pass + manual review) - one real bug fixed, several latent ones fixed before they bit
