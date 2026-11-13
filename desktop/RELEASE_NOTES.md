@@ -1,3 +1,17 @@
+## Network Doctor 3.29.0
+
+### New: Line up cameras - one fixed IP each, in one block (Network Tools > Login sweep)
+- "Line up cameras (fixed IPs in one block)..." lists every camera with the IP it would get, in order, inside
+  the camera block. The default blocks are now: .2 - .25 free for router / switches, .26 - .70 PCs and
+  laptops, .71 - .140 cameras, .141 - .150 recorders (edit them as before; saved choices are kept).
+- For Hikvision and Dahua cameras that accepted a login in the sweep, the app can do the move itself: the
+  router reserves the new IP, the camera is switched to automatic (DHCP), and the app waits until it answers
+  on the new IP. One camera at a time; the run stops at the first camera that does not come back.
+- "Move ONE camera (test first)" exists on purpose: the NVR / DVR stores each camera's IP, so a moved camera
+  shows no picture until its new IP is typed on the recorder. "Save old -> new list" is for that.
+- Other brands, or cameras without a working login, are marked "by hand". Recorders are never moved.
+- NOT yet tested on real cameras (only against simulated ones) - start with one camera.
+
 ## Network Doctor 3.28.5
 
 ### Second re-check pass

@@ -323,7 +323,10 @@ def default_ranges(net):
     if n.num_addresses < 256:
         return {}
     base = int(n.network_address)
-    offs = {"infra": (2, 19), "nvr": (20, 29), "vip": (30, 49), "pc": (50, 149), "cam": (150, 199), "mobile": (200, 250)}
+    # .1 - .25 kept free for the router / switches / access points, PCs and laptops next, then one unbroken
+    # line for the cameras with the recorders at its end, so a missing camera is a visible gap in the list
+    offs = {"infra": (2, 25), "pc": (26, 70), "cam": (71, 140), "nvr": (141, 150), "vip": (151, 199),
+            "mobile": (200, 250)}
     return {g: (str(ipaddress.IPv4Address(base + lo)), str(ipaddress.IPv4Address(base + hi)))
             for g, (lo, hi) in offs.items()}
 
