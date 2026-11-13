@@ -79,6 +79,11 @@ def methods_for(d):
             m.append("xmeye")
         if not m or ports & {554, 80, 8080}:
             m += ["onvif", "web"]
+        if "xmeye" in m and "onvif" in m:
+            # a camera that answers ONVIF keeps being read that way; its own XMeye login is tried only
+            # when ONVIF gives nothing (so a login that works today is never refused by another door)
+            m.remove("xmeye")
+            m.insert(m.index("onvif") + 1, "xmeye")
     elif cat == core.CAT_PC or ports & {135, 445}:
         m.append("wmi")
     elif ports & {80, 443, 8080, 8443} or cat in (core.CAT_NET, core.CAT_PRN, core.CAT_ROUTER):
@@ -233,10 +238,35 @@ def _x(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def onvif_envelope(user, pw, nonce=None, created=None):
+ONVIF_INFO = "<GetDeviceInformation xmlns=\"http://www.onvif.org/ver10/device/wsdl\"/>"
+ONVIF_PORTS = (80, 8080, 8899, 2020)
+
+
+def onvif_envelope(user, pw, nonce=None, created=None, body=ONVIF_INFO):
     return ("<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
             f"<s:Header>{onvif_token(user, pw, nonce, created)}</s:Header><s:Body>"
-            "<GetDeviceInformation xmlns=\"http://www.onvif.org/ver10/device/wsdl\"/></s:Body></s:Envelope>")
+            f"{body}</s:Body></s:Envelope>")
+
+
+def onvif_call(ip, port, user, pw, body, timeout=6):
+    """One ONVIF device-service request. Returns (HTTP status, answer text); raises OSError when nothing answers."""
+    c = _conn(ip, port, False, timeout)
+    try:
+        c.request("POST", "/onvif/device_service", body=onvif_envelope(user, pw, body=body).encode(),
+                  headers={"Content-Type": "application/soap+xml; charset=utf-8", "Connection": "close"})
+        r = c.getresponse()
+        return r.status, r.read(60000).decode("utf-8", "replace")
+    except http.client.HTTPException as e:
+        raise OSError(str(e)) from None
+    finally:
+        c.close()
+
+
+def onvif_name(xml_text):
+    """The camera's own name from its ONVIF scopes ('onvif://www.onvif.org/name/Gate%20cam' -> 'Gate cam')."""
+    from urllib.parse import unquote
+    m = re.search(r"onvif://www\.onvif\.org/name/([^<\s\"]+)", xml_text or "")
+    return unquote(m.group(1)).replace("_", " ").strip() if m else ""
 
 
 def parse_onvif(xml_text):
@@ -290,23 +320,25 @@ def t_hik(ip, user, pw, d):
 
 def t_onvif(ip, user, pw, d):
     last = None
-    for port in [p for p in (80, 8080, 8899, 2020) if p in set(d.get("ports") or []) or not d.get("ports")]:
-        c = _conn(ip, port, False, 6)
+    for port in [p for p in ONVIF_PORTS if p in set(d.get("ports") or []) or not d.get("ports")]:
         try:
-            c.request("POST", "/onvif/device_service", body=onvif_envelope(user, pw).encode(),
-                      headers={"Content-Type": "application/soap+xml; charset=utf-8", "Connection": "close"})
-            r = c.getresponse()
-            body = r.read(40000).decode("utf-8", "replace")
-        except (OSError, http.client.HTTPException):
+            status, body = onvif_call(ip, port, user, pw, ONVIF_INFO)
+        except OSError:
             continue
-        finally:
-            c.close()
         data, refused = parse_onvif(body)
         if refused:
             raise Outcome(AUTH, "user name or password refused (ONVIF)")
         if data.get("model") or data.get("serial"):
+            try:   # the name typed on the camera itself, when it gives one (not every camera does)
+                _st, scopes = onvif_call(ip, port, user, pw, "<GetScopes xmlns=\"http://www.onvif.org/ver10/device/wsdl\"/>")
+                nm = onvif_name(scopes)
+                if nm and not data.get("name"):
+                    data["name"] = nm
+            except OSError:
+                pass
+            data["onvif_port"] = port
             return data
-        last = r.status
+        last = status
     raise Outcome(UNSUP if last else UNREACH, "no ONVIF service answered" if last is None else f"ONVIF answered {last} without device data")
 
 
