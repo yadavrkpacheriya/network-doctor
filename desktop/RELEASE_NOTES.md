@@ -1,3 +1,24 @@
+## Network Doctor 3.24.0
+
+### A proper Windows installer, trusted services, and a "learning" auto-fix
+- **Windows installer**: NetworkDoctor-Setup.exe (alongside the existing portable .exe on the Releases
+  page) - installs to Program Files-style location, adds a Start Menu entry and optional Desktop
+  shortcut, and a real uninstaller in "Add or remove programs". The portable .exe is unaffected; the
+  installed copy keeps self-updating exactly as before.
+- **Trusted services**: mark an app as trusted (Usage tab > App list > "Trusted (ignore usage
+  spikes)"). A deliberate high-traffic service you run on purpose - a backup, say - stops showing up as
+  a "used Nx its usual daily traffic" problem in alerts.
+- **IP-conflict auto-fix with a priority device**: tag a device "Default device for its IP" (Devices
+  tab > tag editor). When two devices fight over one IP, the auto-fix now binds that IP permanently to
+  the tagged one - and leaves the alert for you to resolve by hand if nobody (or more than one device)
+  is tagged, since it must not guess.
+- **Auto-fixes now have an Undo, and the app learns from its own fixes**: Alerts tab > "Auto-fixes..."
+  lists every fix Network Doctor applied by itself with a one-click Undo, plus a per-fix-kind
+  confidence score. After every applied fix the app re-checks a short while later whether a NEW problem
+  appeared on the same device - if so it undoes the fix itself and remembers that outcome, so a fix-kind
+  that keeps needing an Undo is tried more cautiously next time, and one with a clean record is tried
+  sooner.
+
 ## Network Doctor 3.23.12
 
 ### "32 cameras yesterday, 40 today, but I can't find the difference" - now you can
