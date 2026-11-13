@@ -108,6 +108,9 @@ TOOLS = [
      "Manufacturer of a MAC address, whether it is randomized, and where that MAC was last seen on this network."),
     ("ready", "Setup check - what is missing",
      "Checks everything Network Doctor needs to see the whole network and tells you what to switch on."),
+    ("backup", "Router config backup & diff",
+     "Saves a snapshot of the router's own settings (/export) and shows exactly what changed since the last "
+     "one - who hand-added a firewall rule or port forward last week, with no record anywhere else in the app."),
 ]
 
 
@@ -1124,6 +1127,87 @@ class ToolsTab:
                 "fixes: ask your ISP for a static/public IP (often a paid business add-on), or accept a "
                 "relayed VPN connection - the delay you saw is the normal cost of CGNAT, not a misconfiguration.",
                 "crit")
+
+    # ------------------------------------------------------------------ router config backup & diff
+    def _build_backup(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        self._run_btn(row, "backup", "Backup now", self._backup)
+        ttk.Button(row, text="Show diff (last two backups)", command=self._backup_show_diff).pack(side="left", padx=4)
+        ttk.Button(row, text="Save last backup to file", command=self._backup_export).pack(side="left", padx=4)
+        ttk.Label(f, text="Saves a copy of the router's own settings (read-only '/export') and compares it "
+                          "with the previous one, so a hand-made change (a firewall rule, a port forward, a "
+                          "new static lease...) someone added in Winbox shows up here instead of being a "
+                          "silent mystery later.", foreground="#667085", wraplength=640,
+                  justify="left").pack(anchor="w", pady=(2, 4))
+        self._out_box(f, "backup")
+
+    def _config_backups(self):
+        return self.app._settings().setdefault("config_backups", [])
+
+    def _backup(self, out, stop):
+        out("Backing up the router's own configuration (read-only - this only reads it)", "h")
+        import nd_routeros as RO
+        import nd_configbak as CB
+        c = RO.from_settings(self.app._settings(), self.app.gw)
+        if not c:
+            out("\nNo router login saved (Setup > Router) - add it there first.", "warn")
+            return
+        try:
+            with c:
+                text = c.run_cli("/export compact")
+        except Exception as e:
+            out(f"\nCould not read the router's config: {e}", "crit")
+            return
+        if not text or not text.strip():
+            out("\nThe router returned nothing - try again.", "warn")
+            return
+        hist = self._config_backups()
+        prev = CB.latest(hist)
+        entry = CB.add_snapshot(hist, text)
+        self.app._save_settings()
+        if entry is None:
+            out(f"  No changes since the last backup ({len(hist)} saved in total).", "ok")
+            return
+        out(f"  Saved - {len(hist)} backup(s) now kept (oldest ones are dropped past "
+            f"{CB.MAX_SNAPSHOTS}).", "ok")
+        if prev:
+            diff = CB.diff_snapshots(prev["text"], entry["text"])
+            out("  " + CB.summarize_diff(diff))
+            if diff:
+                out("\n" + "\n".join(diff))
+
+    def _backup_show_diff(self):
+        import nd_configbak as CB
+        hist = self._config_backups()
+        prev, last = CB.previous(hist), CB.latest(hist)
+        t = self.texts["backup"]
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        if not last:
+            t.insert("end", "No backup saved yet - press 'Backup now'.")
+        elif not prev:
+            t.insert("end", "Only one backup saved so far - nothing to compare it with yet.")
+        else:
+            diff = CB.diff_snapshots(prev["text"], last["text"])
+            t.insert("end", CB.summarize_diff(diff) + "\n\n" + ("\n".join(diff) if diff else "(identical)"))
+        t.configure(state="disabled")
+
+    def _backup_export(self):
+        import nd_configbak as CB
+        hist = self._config_backups()
+        last = CB.latest(hist)
+        if not last:
+            messagebox.showinfo("Config backup", "No backup saved yet - press 'Backup now' first.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".rsc", filetypes=[("RouterOS script", "*.rsc"),
+                                                                                 ("Text", "*.txt")],
+                                             initialfile="router-config-backup.rsc")
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(last["text"])
+        messagebox.showinfo("Config backup", f"Saved to {path}")
 
     # ------------------------------------------------------------------ LAN speed
     def _build_lan(self, f):

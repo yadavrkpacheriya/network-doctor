@@ -1,3 +1,12 @@
+## Network Doctor 3.28.0
+
+### New: Router config backup & diff (Setup)
+- Closes a real gap: nothing in the app recorded what changed in the ROUTER'S OWN SETTINGS over time -
+  a firewall rule, port forward, or static lease someone added by hand in Winbox left no trace anywhere.
+- "Backup now" reads the router's config (read-only `/export compact`) and compares it with the last saved
+  copy, showing exactly what was added/removed. Unchanged backups aren't re-saved (no pointless duplicates).
+  Keeps the last 30 backups. "Save last backup to file" exports a `.rsc` you can keep outside the app too.
+
 ## Network Doctor 3.27.3
 
 ### Menu reorganization, part 2: "Fix & Commands" split out "This PC & Wi-Fi"
