@@ -109,7 +109,7 @@ TOOLS = [
     ("ready", "Setup check - what is missing",
      "Checks everything Network Doctor needs to see the whole network and tells you what to switch on."),
     ("backup", "Router config backup & diff",
-     "Saves a snapshot of the router's own settings (/export) and shows exactly what changed since the last "
+     "Saves a snapshot of the router's own settings (read-only) and shows exactly what changed since the last "
      "one - who hand-added a firewall rule or port forward last week, with no record anywhere else in the app."),
 ]
 
@@ -1135,15 +1135,13 @@ class ToolsTab:
         self._run_btn(row, "backup", "Backup now", self._backup)
         ttk.Button(row, text="Show diff (last two backups)", command=self._backup_show_diff).pack(side="left", padx=4)
         ttk.Button(row, text="Save last backup to file", command=self._backup_export).pack(side="left", padx=4)
-        ttk.Label(f, text="Saves a copy of the router's own settings (read-only '/export') and compares it "
-                          "with the previous one, so a hand-made change (a firewall rule, a port forward, a "
-                          "new static lease...) someone added in Winbox shows up here instead of being a "
-                          "silent mystery later.", foreground="#667085", wraplength=640,
-                  justify="left").pack(anchor="w", pady=(2, 4))
+        ttk.Label(f, text="Reads the router's own settings (read-only; passwords and keys are never stored) "
+                          "and compares them with the previous copy, so a hand-made change (a firewall rule, "
+                          "a port forward, a new static lease...) someone added in Winbox shows up here "
+                          "instead of being a silent mystery later. Also runs by itself every 6 hours. "
+                          "Rules Network Doctor added itself are left out - they are in Alerts > Auto-fixes.",
+                  foreground="#667085", wraplength=640, justify="left").pack(anchor="w", pady=(2, 4))
         self._out_box(f, "backup")
-
-    def _config_backups(self):
-        return self.app._settings().setdefault("config_backups", [])
 
     def _backup(self, out, stop):
         out("Backing up the router's own configuration (read-only - this only reads it)", "h")
@@ -1155,31 +1153,27 @@ class ToolsTab:
             return
         try:
             with c:
-                text = c.run_cli("/export compact")
+                res = CB.run_backup(c, self.app.config_backup_path())
         except Exception as e:
             out(f"\nCould not read the router's config: {e}", "crit")
             return
-        if not text or not text.strip():
+        if not res["ok"]:
             out("\nThe router returned nothing - try again.", "warn")
             return
-        hist = self._config_backups()
-        prev = CB.latest(hist)
-        entry = CB.add_snapshot(hist, text)
-        self.app._save_settings()
-        if entry is None:
-            out(f"  No changes since the last backup ({len(hist)} saved in total).", "ok")
+        if res["first"]:
+            out("  " + res["summary"], "ok")
             return
-        out(f"  Saved - {len(hist)} backup(s) now kept (oldest ones are dropped past "
+        if not res["diff"]:
+            out(f"  No changes since the last backup ({res['count']} saved in total).", "ok")
+            return
+        out(f"  Saved - {res['count']} backup(s) now kept (oldest ones are dropped past "
             f"{CB.MAX_SNAPSHOTS}).", "ok")
-        if prev:
-            diff = CB.diff_snapshots(prev["text"], entry["text"])
-            out("  " + CB.summarize_diff(diff))
-            if diff:
-                out("\n" + "\n".join(diff))
+        out("  " + res["summary"])
+        out("\n" + "\n".join(res["diff"]))
 
     def _backup_show_diff(self):
         import nd_configbak as CB
-        hist = self._config_backups()
+        hist = CB.load(self.app.config_backup_path())
         prev, last = CB.previous(hist), CB.latest(hist)
         t = self.texts["backup"]
         t.configure(state="normal")
@@ -1190,23 +1184,29 @@ class ToolsTab:
             t.insert("end", "Only one backup saved so far - nothing to compare it with yet.")
         else:
             diff = CB.diff_snapshots(prev["text"], last["text"])
-            t.insert("end", CB.summarize_diff(diff) + "\n\n" + ("\n".join(diff) if diff else "(identical)"))
+            when = lambda e: time.strftime("%d-%b-%Y %H:%M", time.localtime(e["at"]))  # noqa: E731
+            t.insert("end", f"{when(prev)}  ->  {when(last)}\n" + CB.summarize_diff(diff) + "\n\n"
+                     + ("\n".join(diff) if diff else "(identical)"))
         t.configure(state="disabled")
 
     def _backup_export(self):
         import nd_configbak as CB
-        hist = self._config_backups()
-        last = CB.latest(hist)
+        last = CB.latest(CB.load(self.app.config_backup_path()))
         if not last:
             messagebox.showinfo("Config backup", "No backup saved yet - press 'Backup now' first.")
             return
-        path = filedialog.asksaveasfilename(defaultextension=".rsc", filetypes=[("RouterOS script", "*.rsc"),
-                                                                                 ("Text", "*.txt")],
-                                             initialfile="router-config-backup.rsc")
+        path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")],
+                                            initialfile="router-config-record.txt")
         if not path:
             return
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(last["text"])
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("# Network Doctor - record of the router's settings (for comparing, not a restore file;\n"
+                         "# passwords and keys are left out on purpose). For a restorable backup use WinBox >\n"
+                         "# Files > Backup.\n" + last["text"])
+        except OSError as e:
+            messagebox.showerror("Config backup", f"Could not save the file: {e}")
+            return
         messagebox.showinfo("Config backup", f"Saved to {path}")
 
     # ------------------------------------------------------------------ LAN speed
