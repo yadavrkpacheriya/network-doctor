@@ -1074,16 +1074,24 @@ class ToolsTab:
 
     def _remote(self, out, stop):
         out("Checking whether this office has its own public IP, or shares one via your ISP's NAT (CGNAT)", "h")
+        tunnel = NT.vpn_tunnel_active()
+        if tunnel:
+            out("  A VPN/tunnel (Tailscale, WireGuard, etc.) looks ACTIVE on this PC right now - its own "
+                "exit path can be mistaken for your ISP's address. Disconnect it for the most reliable "
+                "result; this check cross-checks two independent sources below to guard against that.", "warn")
         info = NT.public_ip_info()
         if not info or not info.get("ip"):
             out("\nCould not reach the internet to check - try again once online.", "crit")
             return
-        out(f"  Seen from the internet (what every outside server sees you as): {info['ip']}")
+        out(f"  Seen from the internet, source 1: {info['ip']}")
+        second = NT.second_opinion_ip()
+        if second:
+            out(f"  Seen from the internet, source 2 (independent provider): {second}")
         import nd_routeros as RO
         c = RO.from_settings(self.app._settings(), self.app.gw)
         if not c:
             out("\nNo router login saved (Setup > Router), so I can't ask it directly. In Winbox, open "
-                "IP > Cloud and compare its 'Public Address' with the address above - different = CGNAT.", "warn")
+                "IP > Cloud and compare its 'Public Address' with the address(es) above - different = CGNAT.", "warn")
             return
         try:
             with c:
@@ -1097,17 +1105,25 @@ class ToolsTab:
                 "just asks MikroTik's own server what your address looks like from outside) and check again.", "warn")
             return
         out(f"  What the router itself sees as its own public address: {router_ip}")
-        if router_ip == info["ip"]:
-            out("\nSame address both ways - this office is NOT behind CGNAT. A VPN CAN connect directly here "
-                "instead of relaying, but that needs opening exactly one port to exactly one trusted device - "
-                "never a blanket 'allow everything in' setting. Tell me which device/VPN and I'll give you the "
-                "single, scoped rule (with an Undo), not a wide-open one.", "ok")
+        readings = [v for v in (info["ip"], second) if v]
+        agree = sum(1 for v in readings if v == router_ip)
+        if agree == len(readings) and readings:
+            out("\nEvery reading matches the router's own address - this office is NOT behind CGNAT. A VPN "
+                "CAN connect directly here instead of relaying, but that needs opening exactly one port to "
+                "exactly one trusted device - never a blanket 'allow everything in' setting. Tell me which "
+                "device/VPN and I'll give you the single, scoped rule (with an Undo), not a wide-open one.", "ok")
+        elif agree > 0:
+            out(f"\nMixed result - {agree} of {len(readings)} independent readings match the router's own "
+                "address" + (" while a VPN/tunnel was active on this PC, which is the likely cause" if tunnel
+                              else "") + ". Disconnect any VPN/Tailscale on this PC and press Check again before "
+                "trusting a CGNAT verdict either way.", "warn")
         else:
-            out("\nDIFFERENT addresses - your ISP shares one public IP across many customers (CGNAT). No router "
-                "setting - port-forward, UPnP, even a brand-new VPN server - can fix this, because the real "
-                "public address never reaches your router at all. The only fixes: ask your ISP for a static/"
-                "public IP (often a paid business add-on), or accept a relayed VPN connection - the delay you "
-                "saw is the normal cost of CGNAT, not a misconfiguration.", "crit")
+            out("\nEvery reading differs from the router's own address - your ISP shares one public IP across "
+                "many customers (CGNAT). No router setting - port-forward, UPnP, even a brand-new VPN server - "
+                "can fix this, because the real public address never reaches your router at all. The only "
+                "fixes: ask your ISP for a static/public IP (often a paid business add-on), or accept a "
+                "relayed VPN connection - the delay you saw is the normal cost of CGNAT, not a misconfiguration.",
+                "crit")
 
     # ------------------------------------------------------------------ LAN speed
     def _build_lan(self, f):

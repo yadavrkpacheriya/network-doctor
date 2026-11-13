@@ -694,6 +694,45 @@ def public_ip_info():
         return {}
 
 
+def second_opinion_ip():
+    """A public-IP reading from a source NOT behind Cloudflare, to cross-check public_ip_info(): on some
+    ISPs (or with a VPN/tunnel active - see vpn_tunnel_active()) one provider's reading can briefly differ
+    from the router's own, and trusting a single source would wrongly call that CGNAT. "" when unreachable."""
+    for url in ("https://api64.ipify.org?format=json", "https://ifconfig.me/ip"):
+        try:
+            body = _get(url, timeout=6)
+            if url.endswith("json"):
+                return json.loads(body).get("ip", "")
+            return body.strip()
+        except Exception:
+            continue
+    return ""
+
+
+def vpn_tunnel_active():
+    """True if this PC currently has an active VPN/overlay tunnel (Tailscale, WireGuard, ZeroTier, OpenVPN,
+    a NordVPN-style NordLynx adapter...) up. A public-IP/CGNAT check run while one of these is active can
+    see the tunnel's own exit path instead of this PC's real ISP-facing connection - a false reading, not a
+    CGNAT finding (seen for real: a PC with Tailscale installed showed a different "seen from the internet"
+    address only while a Tailscale peer was connected, even though the router's own public address - and an
+    independent browser check - never changed)."""
+    try:
+        out = run(["ipconfig", "/all"], 10) if core.IS_WIN else (run(["ifconfig"], 10) or run(["ip", "addr"], 10))
+    except Exception:
+        return False
+    low = (out or "").lower()
+    if any(k in low for k in ("tailscale", "wireguard", "zerotier", "nordlynx", "openvpn", "tap-windows")):
+        return True
+    try:
+        net = ipaddress.ip_network("100.64.0.0/10")
+        for ip in re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", out or ""):
+            if ipaddress.ip_address(ip) in net:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _down_stream(deadline, counter, lock, stop, errors):
     while time.time() < deadline and not (stop is not None and stop.is_set()):
         try:
