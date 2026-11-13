@@ -1410,6 +1410,9 @@ class AppListDialog(tk.Toplevel):
         for c in (self.US.WORK, self.US.NEUTRAL, self.US.PERSONAL):
             ttk.Button(top, text=self.US.CAT_LABEL[c], command=lambda c=c: self.set(c)).pack(side="left", padx=2)
         ttk.Button(top, text="Built-in", command=lambda: self.set(None)).pack(side="left", padx=2)
+        ttk.Button(top, text="Trusted (ignore usage spikes)",
+                   command=lambda: self.set_trust(True)).pack(side="left", padx=(12, 2))
+        ttk.Button(top, text="Not trusted", command=lambda: self.set_trust(False)).pack(side="left", padx=2)
         ttk.Label(top, text=" for").pack(side="left")
         self.var_for = tk.StringVar(value=tab.var_for.get() or "Everyone")
         ttk.Combobox(top, textvariable=self.var_for, state="readonly", width=18,
@@ -1422,9 +1425,10 @@ class AppListDialog(tk.Toplevel):
                   padding=(8, 0)).pack(anchor="w")
         fr = ttk.Frame(self, padding=8)
         fr.pack(fill="both", expand=True)
-        self.tv = UI["make_tree"](fr, ("group", "cat", "builtin", "depts", "domains"),
-                                  ("Group", "Category now", "Built-in", "Per department", "Websites (endings)"),
-                                  (150, 105, 95, 190, 560), first=("App", 210), search=True)
+        self.tv = UI["make_tree"](fr, ("group", "cat", "builtin", "trusted", "depts", "domains"),
+                                  ("Group", "Category now", "Built-in", "Trusted", "Per department",
+                                   "Websites (endings)"),
+                                  (150, 105, 95, 70, 190, 560), first=("App", 210), search=True)
         self.fill()
 
     def fill(self):
@@ -1439,6 +1443,7 @@ class AppListDialog(tk.Toplevel):
             now = x["chosen"] or x["builtin"]
             iid = tv.insert("", "end", text=x["app"], tags=(now,),
                             values=(x["group"], lab[now] + (" *" if x["chosen"] else ""), lab[x["builtin"]],
+                                    "Yes" if self.store.is_trusted(x["app"]) else "",
                                     ", ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
                                     ", ".join(x["domains"])))
             self.rows[iid] = x
@@ -1457,6 +1462,15 @@ class AppListDialog(tk.Toplevel):
         self.fill()
         self.tab.refresh()
 
+    def set_trust(self, trusted):
+        sel = [self.rows[i] for i in self.tv.selection() if i in self.rows]
+        if not sel:
+            messagebox.showinfo(APP, "Select one or more apps (Ctrl / Shift + click).", parent=self)
+            return
+        for x in sel:
+            self.store.set_trusted(x["app"], trusted)
+        self.fill()
+
     def export(self):
         os.makedirs(core.REPORT_DIR, exist_ok=True)
         p = filedialog.asksaveasfilename(parent=self, initialdir=core.REPORT_DIR, initialfile="app-list.csv",
@@ -1467,9 +1481,11 @@ class AppListDialog(tk.Toplevel):
         lab = self.US.CAT_LABEL
         with open(p, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
-            w.writerow(["App", "Group", "Category now", "Built-in", "Per department", "Websites (endings)"])
+            w.writerow(["App", "Group", "Category now", "Built-in", "Trusted", "Per department",
+                        "Websites (endings)"])
             for x in sorted(self.store.app_list(), key=lambda r: (r["group"], r["app"].lower())):
                 w.writerow([x["app"], x["group"], lab[x["chosen"] or x["builtin"]], lab[x["builtin"]],
+                            "Yes" if self.store.is_trusted(x["app"]) else "",
                             "; ".join(f"{d}: {lab[c]}" for d, c in sorted(x["depts"].items())),
                             " ".join(x["domains"])])
         self.tab.app.var_status.set(f"App list saved: {p}")
