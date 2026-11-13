@@ -1,3 +1,12 @@
+## Network Doctor 3.33.1
+
+### Faster scan
+- The scan asked its questions one after the other, and most of each step is waiting for devices that never
+  answer. Computer names, UPnP, reverse DNS and the rogue-DHCP check now run at the same time as the port
+  check; file-sharing names run beside the web pages. Nothing was removed from the scan.
+- Empty addresses are swept in fewer waves (each empty address costs seconds of waiting, not CPU).
+- Not measured on a real network yet - the last scan there took about 140 s; tell me the new time.
+
 ## Network Doctor 3.33.0
 
 ### Login check runs by itself after every scan
