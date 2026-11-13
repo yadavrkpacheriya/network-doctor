@@ -7,11 +7,11 @@ How a camera is moved (one camera at a time, never several at once):
   1. the router reserves the new IP for the camera's MAC (a DHCP reservation - the same one "IP-MAC binding"
      makes; it has an Undo);
   2. the camera itself is switched from a hand-typed IP to "automatic (DHCP)" through its own web API
-     (Hikvision ISAPI, Dahua configManager) with the login from the Login sweep;
+     (Hikvision ISAPI, Dahua configManager, XMeye port 34567) with the login from the Login sweep;
   3. the app waits until the camera answers on the new IP. If it does not, the run STOPS there - no other
      camera is touched - and the result says where that camera can be found.
 
-The NVR / DVR stores each camera's IP. For Hikvision and Dahua recorders that accepted a login in the sweep,
+The NVR / DVR stores each camera's IP. For Hikvision, Dahua and XMeye recorders that accepted a login in the sweep,
 the channel that pointed at the old IP is given the new one right after the camera has moved (and the app
 checks that the channel comes back online). For other recorders it must be typed by hand - the old -> new list
 is made for that. Either way the first run moves ONE camera only.
@@ -25,7 +25,7 @@ import time
 import nd_bandwidth as B
 import nd_sweep as S
 
-MOVABLE = ("hik", "dahua")          # brands whose "use DHCP" switch this app knows
+MOVABLE = ("hik", "dahua", "xmeye")  # brands whose "use DHCP" switch this app knows
 HIK_IP_PATH = "/ISAPI/System/Network/interfaces/1/ipAddress"
 
 
@@ -59,7 +59,7 @@ def line_plan(devices, gw_ip, net, ranges, results, tags=None, over=None):
         if row["action"] == "move" and not res:
             row["action"] = "manual"
             row["why"] = ("no working login for this device in the last Login sweep, or a brand this app cannot "
-                          "switch (only Hikvision and Dahua): type the new IP on the device by hand")
+                          "switch (only Hikvision, Dahua and XMeye): type the new IP on the device by hand")
         elif row["action"] == "move":
             row["why"] = "router reserves the new IP, then the camera is switched to automatic (DHCP)"
         out.append(row)
@@ -77,7 +77,7 @@ def old_new_csv(rows, tags=None):
         d = r["dev"]
         t = (tags or {}).get(d["mac"], {})
         w.writerow([t.get("name") or d.get("name") or "", d["mac"], r["ip_now"], r["ip_new"],
-                    {"hik": "Hikvision", "dahua": "Dahua"}.get(r.get("method"), ""), r.get("result", r["action"])])
+                    BRAND.get(r.get("method"), ""), r.get("result", r["action"])])
     return buf.getvalue()
 
 
@@ -125,7 +125,19 @@ def dahua_set_dhcp(ip, port, ssl_on, user, pw, send=None):
     return "switched to automatic (DHCP)"
 
 
-SETTERS = {"hik": hik_set_dhcp, "dahua": dahua_set_dhcp}
+def xmeye_set_dhcp(ip, port, ssl_on, user, pw, send=None):
+    """XMeye / NetSurveillance: its own protocol on port 34567 (the web port and `send` are not used)."""
+    import nd_dvrip as DV
+    try:
+        return DV.set_dhcp(ip, user, pw)
+    except DV.DvrError as e:
+        raise CamError("the camera refused the login" if e.refused else str(e)) from None
+    except OSError as e:
+        raise CamError(f"the camera did not answer on port {DV.PORT} ({e.__class__.__name__})") from None
+
+
+SETTERS = {"hik": hik_set_dhcp, "dahua": dahua_set_dhcp, "xmeye": xmeye_set_dhcp}
+BRAND = {"hik": "Hikvision", "dahua": "Dahua", "xmeye": "XMeye"}
 
 
 # ------------------------------------------------------------------------------------ recorder (NVR / DVR)
@@ -213,7 +225,7 @@ def dahua_nvr_update(nvr_ip, port, ssl_on, user, pw, old, new, cam_cred=None, se
 
 
 def update_recorders(nvr_rows, creds, old, new, cam_cred=None, send=None, wait=60, step=5, sleep=time.sleep,
-                     clock=time.time):
+                     clock=time.time, xmeye_update=None):
     """After a camera moved from `old` to `new`: tell every recorder we can talk to. Returns a short text for
     the row. Never raises - a recorder that cannot be updated is reported, the camera stays moved."""
     notes, found = [], False
@@ -235,6 +247,17 @@ def update_recorders(nvr_rows, creds, old, new, cam_cred=None, send=None, wait=6
                             break
                     note += {True: " and is online", False: " but still shows OFFLINE - check the camera "
                              "password on the recorder", None: ""}[state]
+                    notes.append(f"recorder {n['ip_now']}: {note}")
+            elif n["method"] == "xmeye":
+                import nd_dvrip as DV
+                try:
+                    changed, note = (xmeye_update or DV.recorder_update)(n["ip_now"], cred[0], cred[1], old, new)
+                except DV.DvrError as e:
+                    raise CamError("the recorder refused the login" if e.refused else str(e)) from None
+                except OSError as e:
+                    raise CamError(f"the recorder did not answer on port {DV.PORT} ({e.__class__.__name__})") from None
+                if changed:
+                    found = True
                     notes.append(f"recorder {n['ip_now']}: {note}")
             else:
                 key, note = dahua_nvr_update(n["ip_now"], port, ssl_on, cred[0], cred[1], old, new, cam_cred, send)

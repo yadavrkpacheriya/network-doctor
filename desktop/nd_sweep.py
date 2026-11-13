@@ -325,8 +325,16 @@ def t_web(ip, user, pw, d):
 
 
 def t_xmeye(ip, user, pw, d):
-    raise Outcome(UNSUP, "XMeye / NetSurveillance DVRs use their own login protocol: test the password in the DVR's web "
-                         "page or phone app")
+    """XMeye / NetSurveillance cameras and recorders: their own protocol on port 34567 (nd_dvrip.py)."""
+    import nd_dvrip as DV
+    try:
+        return DV.read_info(ip, user, pw)
+    except DV.DvrError as e:
+        if e.refused:
+            raise Outcome(AUTH, f"{e} (XMeye device)") from None
+        raise Outcome(ERR, str(e)) from None
+    except OSError as e:
+        raise Outcome(UNREACH, f"{_UNREACH_TEXT} ({e.__class__.__name__})") from None
 
 
 def t_ros(ip, user, pw, d):
