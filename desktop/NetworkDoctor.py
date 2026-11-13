@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.28.3"
+VERSION = "3.28.4"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1266,38 +1266,35 @@ class App(tk.Tk):
                 self._snmp_bw_busy = False
         threading.Thread(target=work, daemon=True).start()
 
+    def config_backup_path(self):
+        st = self._settings()
+        if "config_backups" in st:      # 3.28.0 - 3.28.3 kept "/export" text here (see nd_configbak.py)
+            st.pop("config_backups", None)
+            self._save_settings()
+        return os.path.join(core.DATA_DIR, "config_backups.json")
+
     def _config_backup_auto(self):
-        """Every 6h: back up the router's own config (read-only) and, if it changed since the last backup,
-        raise a normal alert - the same place a hand-made change in Winbox (a firewall rule, a port
+        """Every 6h: read the router's own settings (print only) and, if they changed since the last
+        backup, raise a normal alert - the same place a hand-made change in Winbox (a firewall rule, a port
         forward...) would otherwise go completely unnoticed. Never runs on the Tk thread (reads over the
         network); never writes anything to the router."""
         if getattr(self, "_configbak_busy", False):
             return
+        import nd_routeros as RO
+        import nd_configbak as CB
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            return
+        path = self.config_backup_path()
         self._configbak_busy = True
 
         def work():
             try:
-                import nd_routeros as RO
-                import nd_configbak as CB
-                c = RO.from_settings(self._settings(), self.gw)
-                if not c:
-                    return
                 with c:
-                    text = c.run_cli("/export compact")
-                if not text or not text.strip():
-                    return
-                hist = self._settings().setdefault("config_backups", [])
-                had_prev = bool(hist)
-                entry = CB.add_snapshot(hist, text)
-                if entry is None:
-                    return
-                self._save_settings()
-                if had_prev:  # first-ever backup is just a baseline, not a "change"
-                    prev = hist[-2]
-                    diff = CB.diff_snapshots(prev["text"], entry["text"])
-                    if diff:
-                        self.q.put(("call", lambda: self._record_alert_plain(
-                            "warning", "Router configuration changed", "Config backup")))
+                    res = CB.run_backup(c, path)
+                if res["ok"] and res["changed"]:  # the first-ever backup is a baseline, not a "change"
+                    self.q.put(("call", lambda: self._record_alert_plain(
+                        "warning", "Router configuration changed: " + res["summary"], "Config backup")))
             except Exception:
                 pass
             finally:
@@ -3372,6 +3369,26 @@ class App(tk.Tk):
                 self.alert_log.save()
                 self._refresh_alerts()
             return res
+        if name == "config_backup":
+            # Phone-app parity for Setup > Config backup & diff: the PC does the real work (it already
+            # has the router login saved), the phone just gets the summary text back - same pattern as
+            # every other phone action. Read-only; never changes the router.
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+            path = self.config_backup_path()
+
+            def backup():
+                import nd_configbak as CB
+                with c:
+                    res = CB.run_backup(c, path)
+                if not res["ok"]:
+                    return "The router returned nothing - try again."
+                msg = res["summary"] + f"\n{res['count']} backup(s) kept on the PC."
+                if res["diff"]:
+                    msg += "\n\n" + "\n".join(res["diff"][:200])
+                return msg
+            return self._job("Router config backup", backup)
         if name == "block":
             d = self._dev_by(a)
             mac = (d or {}).get("mac") or core.norm_mac(str(a.get("mac", "")))

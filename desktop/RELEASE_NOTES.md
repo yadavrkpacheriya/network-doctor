@@ -1,3 +1,22 @@
+## Network Doctor 3.28.4
+
+### Fixed: Router config backup (3.28.0 - 3.28.3) did not work properly
+Found while re-checking this feature against a real RouterOS 6 router:
+- It read the config with "/export". On RouterOS 6 that text can only come back through a file, and files
+  over 4 KB cannot be read through the API - so "Backup now" ended in "no output in 15 seconds".
+- "/export" starts with a date/time line, so on RouterOS 7 every backup looked different from the last one:
+  the 6-hourly check would have raised "Router configuration changed" every time.
+- RouterOS 6 "/export" also prints passwords (PPPoE, Wi-Fi, PPP secrets), which were then kept on disk.
+Now the settings are read section by section (print only, RouterOS 6 and 7 alike): counters and other values
+that change by themselves are ignored, passwords and keys are never stored, and rules Network Doctor added
+itself are left out (they have their own Undo list). The history moved out of settings.json into its own
+file; old "/export" copies are dropped. "Save last backup to file" now writes a readable record (.txt) and
+says plainly that it is not a restore file - use WinBox > Files > Backup for that.
+
+### Phone app: Router config backup (same feature as the PC, run from the phone)
+- New phone action "config_backup": the Office PC tab on the phone gets a "Router config backup" card.
+  The PC does the work and the phone shows the result and what changed. Needs the phone app 1.16.0.
+
 ## Network Doctor 3.28.3
 
 ### Learning brain: the "find" half, not just "fix"

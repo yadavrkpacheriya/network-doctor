@@ -469,6 +469,16 @@ class HealthTab extends StatelessWidget {
             trailing: TextButton(onPressed: () => runOnPc(context, 'quick', {}), child: const Text('Check now')),
           ),
         ),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.history_edu),
+            title: const Text('Router config backup'),
+            subtitle: const Text('Saves the router\'s own settings (read-only) and shows what changed'),
+            trailing: TextButton(
+                onPressed: () => runOnPc(context, 'config_backup', {}, title: 'Router config backup'),
+                child: const Text('Backup now')),
+          ),
+        ),
         if (watch.isNotEmpty) ...[
           Text('Watched devices', style: t.titleMedium),
           for (final w in watch)
