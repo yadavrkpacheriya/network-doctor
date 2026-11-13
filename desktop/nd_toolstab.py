@@ -1006,23 +1006,55 @@ class ToolsTab:
 
     # ------------------------------------------------------------------ web check
     def _build_web(self, f):
+        import nd_outage as O
         row = ttk.Frame(f)
         row.pack(fill="x")
-        self.var_url, _ = self._combo(row, "Address:", [], 44, "https://www.google.com")
+        self.var_url, _ = self._combo(row, "Address:", [], 36, "https://www.google.com")
         self._run_btn(row, "web", "Check", self._web)
-        ttk.Label(row, text="e.g. http://192.168.0.50  or  erp-server:8080  or  https://yourdomain.com",
-                  foreground="#667085").pack(side="left")
+        row2 = ttk.Frame(f)
+        row2.pack(fill="x", pady=(4, 0))
+        ttk.Label(row2, text="Or a known service:").pack(side="left")
+        self.var_known_svc = tk.StringVar(value="")
+        cb = ttk.Combobox(row2, textvariable=self.var_known_svc, state="readonly", width=28,
+                          values=[""] + sorted(O.STATUSPAGE_PRESETS))
+        cb.pack(side="left", padx=4)
+        ttk.Button(row2, text="Check this instead", command=self._web_known).pack(side="left")
+        ttk.Label(f, text="\"Is it down for everyone, or just us?\" - checks how far a connection gets "
+                          "(DNS/connect/secure handshake/response) from THIS network, which is itself the "
+                          "diagnosis, plus the official status page for services that publish one "
+                          "(Microsoft 365 doesn't, so that one is the network check only).",
+                  foreground="#667085", wraplength=640, justify="left").pack(anchor="w", pady=(2, 4))
         self._out_box(f, "web")
 
+    def _web_known(self):
+        name = self.var_known_svc.get()
+        if name:
+            self.var_url.set(name)
+            self.start("web", self._web)
+
     def _web(self, out, stop):
+        import nd_outage as O
         tgt = self.var_url.get().strip()
         if tgt and tgt[0].isdigit() and "   " in tgt:
             tgt = tgt.split()[0]
         if not tgt:
             return
-        out(tgt, "h")
-        for lab, val, sev in NT.web_check(tgt):
+        known = tgt if tgt in O.STATUSPAGE_PRESETS else None
+        host = O.STATUSPAGE_PRESETS[known][0] if known else tgt
+        out(known or host, "h")
+        rows = NT.web_check(host)
+        for lab, val, sev in rows:
             out(f"  {lab:<14}{val}", {"critical": "crit", "warning": "warn"}.get(sev, ""))
+        level, msg = O.verdict(rows)
+        out(f"\nIs it just us?  {msg}", {"critical": "crit", "warn": "warn"}.get(level, "ok"))
+        if known:
+            st = O.official_status(known)
+            if st["available"]:
+                out(f"Official status: {st['indicator']} - {st['description']}",
+                    "" if st["indicator"] == "none" else "warn")
+            else:
+                out(f"No public status page for {known} (needs sign-in) - check manually: "
+                    f"{st.get('manual_link', '')}", "")
 
     # ------------------------------------------------------------------ LAN speed
     def _build_lan(self, f):
