@@ -1,3 +1,15 @@
+## Network Doctor 3.27.2
+
+### Auto-fix brain widened by one kind: MTU/MSS clamp now self-applies
+- "Large packets do not pass the line (MTU/MSS)" now auto-fixes like the other safe kinds (dhcp_conflict,
+  multicast, loop, ip_conflict): it only adds a passthrough firewall rule that lets big sites load properly -
+  it never blocks, exposes, or changes anything a user would notice - and it now has a real Undo, so a bad
+  outcome reverts itself through the same regression check as the others.
+- Deliberately still manual: anything that blocks a device's internet (torrent, malware), closes/opens
+  internet exposure, or touches DNS (changing the router's own resolver settings is a real open-resolver
+  risk if it were ever reachable from the WAN) - these can affect a real user or loosen what reaches the
+  network from outside, so they stay one-click-confirm, not silent.
+
 ## Network Doctor 3.27.1
 
 ### Fix: "Remote access (VPN)" check could give a false CGNAT reading with Tailscale/a VPN active
