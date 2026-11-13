@@ -1,3 +1,19 @@
+## Network Doctor 3.25.1
+
+### Blank "Bandwidth now" for cameras - a real fallback, not just an explanation
+- Root cause (confirmed in code): the Devices list's bandwidth comes from NetFlow, which only sees
+  traffic that crosses the router. A camera that only ever talks to a local NVR on the same switch never
+  crosses the router, so it showed blank - correctly, but not usefully.
+- **New fallback: SNMP switch port counters.** Go to Devices > Switches (SNMP), read your switch once,
+  then press "Save for bandwidth fallback". Network Doctor then asks that switch for its port counters
+  every ~25 seconds in the background and uses them to fill in the Devices list's bandwidth for any
+  device that NetFlow has nothing for - marked "(switch)" so it's clear where the number came from.
+- Only applied where a port has **exactly one** device on it - a port with 2+ devices (an unmanaged
+  switch or hub cascading off this one) is left blank rather than guessing how to split the total between
+  them, same as before.
+- Read-only: no port is ever turned off, renamed, or changed by this - same community string you'd use to
+  just "Read" a switch.
+
 ## Network Doctor 3.25.0
 
 ### Asset records, alert history, and camera names fetched from the camera itself
