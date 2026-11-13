@@ -91,8 +91,9 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       _mbps = result;
       if (result <= 0) {
         _speedErr = s.otherHostReachable
-            ? 'Could not reach the speed-test server, but another site answered fine - this network does '
-                'have internet, it may just be blocking or slow to that one server. Try again.'
+            ? 'Could not reach any of the 3 speed-test servers tried, but another site answered fine - '
+                'this network does have internet, it may just be blocking or slow to those specific '
+                'servers right now. Try again.'
             : 'Could not measure - this network may have no internet.';
       }
     });

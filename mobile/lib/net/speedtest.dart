@@ -16,45 +16,66 @@ class SpeedTest {
   /// instead of reporting every failed download the same way.
   bool otherHostReachable = false;
 
-  // Cloudflare's open speed endpoint, used by speed.cloudflare.com. Public, no key, available worldwide.
-  static final Uri _downUrl = Uri.parse('https://speed.cloudflare.com/__down?bytes=100000000');
+  /// Which server actually answered, once one does - shown to the person so a repeat "it didn't work"
+  /// report says which one, instead of every failure looking identical.
+  String? usedHost;
 
-  // A second, unrelated host used only to probe general connectivity when the download above gets
+  // Several independent, well-known throughput-test endpoints on different providers, tried in order.
+  // A single hardcoded server (the original design) fails every day a network's firewall/DNS filter/
+  // transient outage happens to block *that one* host - which is exactly what "doesn't work everyday"
+  // reported. Rotating through unrelated providers means one being blocked or slow doesn't take the
+  // whole feature down; it just falls through to the next.
+  static final List<Uri> _downUrls = [
+    Uri.parse('https://speed.cloudflare.com/__down?bytes=100000000'),
+    Uri.parse('https://speed.hetzner.de/100MB.bin'),
+    Uri.parse('http://ipv4.download.thinkbroadband.com/100MB.zip'),
+  ];
+
+  // A second, unrelated host used only to probe general connectivity when every download above gets
   // nothing - small and fast on purpose, since it is not measuring speed, only reachability.
   static final Uri _probeUrl = Uri.parse('https://www.gstatic.com/generate_204');
 
-  /// Downloads for up to [budget], calling [onProgress] with the running Mbps and elapsed seconds.
-  /// Returns the overall Mbps, or 0 if it could not run (no internet on this network).
+  /// Downloads for up to [budget] (tried against each candidate host in turn until one answers with
+  /// enough data), calling [onProgress] with the running Mbps and elapsed seconds. Returns the overall
+  /// Mbps, or 0 if none of them could run (this network likely has no usable internet right now).
   Future<double> downloadMbps({
     Duration budget = const Duration(seconds: 8),
     void Function(double mbps, double seconds)? onProgress,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
-    final sw = Stopwatch()..start();
-    var bytes = 0;
-    try {
-      final req = await client.getUrl(_downUrl).timeout(const Duration(seconds: 6));
-      final resp = await req.close().timeout(const Duration(seconds: 6));
-      await for (final chunk in resp) {
-        if (_cancel) break;
-        bytes += chunk.length;
-        final secs = sw.elapsedMilliseconds / 1000.0;
-        if (secs > 0.25) onProgress?.call((bytes * 8 / 1e6) / secs, secs);
-        if (sw.elapsed >= budget) break;
+    for (final url in _downUrls) {
+      if (_cancel) break;
+      // A shorter connect timeout than the original single-server design on purpose: when a host is
+      // blocked outright (not just slow), failing fast here is what keeps the total wait for all 3
+      // candidates reasonable instead of piling up to 18s+ of connect timeouts before giving up.
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+      final sw = Stopwatch()..start();
+      var bytes = 0;
+      try {
+        final req = await client.getUrl(url).timeout(const Duration(seconds: 4));
+        final resp = await req.close().timeout(const Duration(seconds: 4));
+        await for (final chunk in resp) {
+          if (_cancel) break;
+          bytes += chunk.length;
+          final secs = sw.elapsedMilliseconds / 1000.0;
+          if (secs > 0.25) onProgress?.call((bytes * 8 / 1e6) / secs, secs);
+          if (sw.elapsed >= budget) break;
+        }
+      } catch (_) {
+        // this host didn't answer (blocked, down, or slow to connect) - try the next one
+      } finally {
+        client.close(force: true);
       }
-    } catch (_) {
-      // network error / no internet on this network - handled by the "too little" check below
-    } finally {
-      client.close(force: true);
+      final secs = sw.elapsedMilliseconds / 1000.0;
+      if (bytes >= 50000 && secs > 0.25) {
+        usedHost = url.host;
+        return (bytes * 8 / 1e6) / secs;
+      }
+      if (_cancel) break;
     }
-    final secs = sw.elapsedMilliseconds / 1000.0;
-    if (bytes < 50000 || secs <= 0.25) {
-      // too little downloaded to be meaningful - find out whether that's "no internet" or just
-      // "couldn't reach that one server" before reporting 0
-      otherHostReachable = !_cancel && await _probeOtherHost();
-      return 0;
-    }
-    return (bytes * 8 / 1e6) / secs;
+    // every candidate host failed - find out whether that's "no internet at all" or just "every one of
+    // those particular hosts happens to be blocked/down" before reporting 0
+    otherHostReachable = !_cancel && await _probeOtherHost();
+    return 0;
   }
 
   Future<bool> _probeOtherHost() async {
