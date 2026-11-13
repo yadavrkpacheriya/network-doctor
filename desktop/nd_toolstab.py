@@ -460,6 +460,7 @@ class ToolsTab:
         ttk.Combobox(row, textvariable=self.var_sw_ver, values=["2c", "1"], width=4,
                      state="readonly").pack(side="left", padx=4)
         self._run_btn(row, "switch", "Read", self._switch)
+        ttk.Button(row, text="Save for bandwidth fallback", command=self._switch_save_bw).pack(side="left", padx=(16, 0))
         row2 = ttk.Frame(f)
         row2.pack(fill="x", pady=(4, 0))
         self._run_btn(row2, "switch", "Live traffic + loop check", self._switch_live)
@@ -490,6 +491,22 @@ class ToolsTab:
         if self.app.selected_device:
             self.var_sw.set(self.app.selected_device.get("ip", ""))
         self._out_box(f, "switch")
+
+    def _switch_save_bw(self):
+        """Remembers this switch's SNMP details so Network Doctor can keep asking it for port bandwidth
+        in the background - the fallback the Devices tab uses for cameras/NVRs whose traffic to a local
+        recorder never crosses the router, so NetFlow alone never sees it."""
+        import nd_switchbw as SB
+        host = self._ip_of(self.var_sw.get())
+        if not host:
+            messagebox.showinfo(APP, "Choose a switch or router, or type its IP, first.")
+            return
+        SB.add_switch(self.app.db, host, self.var_sw_comm.get().strip() or "public", self.var_sw_ver.get())
+        core.save_db(self.app.db)
+        messagebox.showinfo(APP, f"Saved. {host} will be asked for port bandwidth every ~25s in the "
+                                 f"background, as a fallback for devices on it that never show up in the "
+                                 f"Devices tab's live bandwidth (only used for ports with exactly one "
+                                 f"device - never guessed when several devices share a port).")
 
     def _switch(self, out, stop):
         host = self._ip_of(self.var_sw.get())

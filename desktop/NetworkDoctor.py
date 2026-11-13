@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.25.0"
+VERSION = "3.25.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1211,6 +1211,9 @@ class App(tk.Tk):
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
                                          for ok, t, d, _, _ in self.home.checklist()]
+            if time.time() - getattr(self, "_snmp_bw_t", 0) > 25:
+                self._snmp_bw_t = time.time()
+                self._snmp_bw_sample()
             if time.time() - getattr(self, "_arpblock_t", 0) > 30:  # release any LAN block past its time limit -
                 self._arpblock_t = time.time()                      # a safety net independent of how it started
                 for ip in self.arpblock.expired():
@@ -1239,6 +1242,28 @@ class App(tk.Tk):
         except Exception:
             pass
         self.after(2000, self._tick)
+
+    def _snmp_bw_sample(self):
+        """Kicks off a background read of every saved switch's port counters (nd_switchbw.sample_switch
+        blocks ~1.2s per switch doing real SNMP I/O, so it must never run on the Tk thread). Devices.
+        fill_devices() reads the result from self._snmp_bw_cache; this never touches it directly."""
+        import nd_switchbw as SB
+        switches = SB.get_switches(self.db)
+        if not switches or getattr(self, "_snmp_bw_busy", False):
+            return
+        self._snmp_bw_busy = True
+
+        def work():
+            try:
+                caches = [SB.sample_switch(s["ip"], s.get("community", "public"), s.get("version", "2c"))
+                          for s in switches]
+                merged = SB.merge_caches(caches)
+                self._snmp_bw_cache, self._snmp_bw_cache_t = merged, time.time()
+            except Exception:
+                pass
+            finally:
+                self._snmp_bw_busy = False
+        threading.Thread(target=work, daemon=True).start()
 
     def _note_feeds(self, mon):
         """Remembers that the router log / NetFlow arrived (and at which PC IP), at most every 10 minutes."""
@@ -1674,7 +1699,13 @@ class App(tk.Tk):
                 typ, _ = M.ip_type(d, self.mon, self.db, self.raw) if d["online"] else ("", "")
                 typ = "Not known yet" if typ == "Unknown" else typ
                 r = rates.get(d["ip"])
-                bw = f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}" if r else ""
+                if r:
+                    bw = f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}"
+                else:
+                    sr = (getattr(self, "_snmp_bw_cache", None) or {}).get(d.get("mac")) \
+                        if time.time() - getattr(self, "_snmp_bw_cache_t", 0) < 90 else None
+                    bw = (f"\u2193 {M.fmt_rate(sr['down_bps'])}  \u2191 {M.fmt_rate(sr['up_bps'])}  (switch)"
+                          if sr else "")
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
                        or ("new" if d.get("mac") in new_macs else ""))
                 name = (d["name"] or "-") + ("  (new)" if tag == "new" else "")

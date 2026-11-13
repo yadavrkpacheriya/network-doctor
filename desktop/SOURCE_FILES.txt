@@ -35,3 +35,4 @@ nd_telemetry.py
 nd_assistant.py
 nd_arpblock.py
 nd_autofix.py
+nd_switchbw.py
