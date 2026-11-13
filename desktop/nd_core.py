@@ -995,6 +995,15 @@ def categorize(d, gw):
         return CAT_NET, f"TTL {ttl} (typical of network equipment)"
     if ttl and 64 < ttl <= 128:
         return CAT_PC, f"TTL {ttl} (typical of Windows)"
+    # last clues, weaker than the ones above - the reason says "likely" so a wrong guess is easy to spot and
+    # correct (right-click > Set label / category), instead of the device sitting under "Unknown"
+    if p & {22, 23, 161}:
+        return CAT_NET, "likely managed equipment (answers on " + ", ".join(
+            PORTS.get(x, str(x)) for x in sorted(p & {22, 23, 161})) + ")"
+    if p & {80, 443, 8080, 8443}:
+        return CAT_IOT, "likely an appliance with its own web page (open it to see what it is)"
+    if ttl and not p:
+        return CAT_PHONE, f"likely a phone / tablet (TTL {ttl}, no services open - answers like Android / iOS)"
     return CAT_UNK, "no clues - right-click > Set label to name it"
 
 
@@ -1432,6 +1441,14 @@ def build_devices(raw, oui, db):
         if h and h.get("names") and nm.get("netbios") and h["names"][-1] != nm["netbios"]:
             d["notes"].append(f"Renamed (was {h['names'][-1]})")
         d["category"], d["reason"] = categorize(d, gw)
+        if d["category"] == CAT_UNK:
+            was = (h or {}).get("category", "")
+            if was and was not in (CAT_UNK, CAT_OFF):
+                # it showed what it is in an earlier scan (ports open then, asleep now): it is still that
+                d["category"], d["reason"] = was, "recognised in an earlier scan (gives no clues right now)"
+            elif d["ip"] in (raw.get("router_arp") or {}) and d["ip"] not in raw["ping"]:
+                d["category"], d["reason"] = CAT_PHONE, ("likely a phone / tablet (only the router sees it - "
+                                                         "asleep or firewalled)")
         if not d["name"]:
             d["name"], d["auto_name"] = auto_name(d), True
         d["status"] = "Online"

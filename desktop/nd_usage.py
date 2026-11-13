@@ -483,6 +483,24 @@ def pretty_site(text):
     return site_of(host) or t
 
 
+_DNS_Q = re.compile(r"query from ([\d.]+): #(\d+) (\S+?)\.? (?:A|AAAA|HTTPS|SVCB)\b", re.I)
+_DNS_A = re.compile(r"done query: #(\d+) (\S+?)\.? ([\d.]+)\b", re.I)
+
+
+def parse_dns_log(text):
+    """A RouterOS DNS log line -> ("query", id, client IP, name, "") or ("answer", id, "", name, IP); else None.
+    'dns query from 192.168.0.50: #812 www.youtube.com. A' / 'dns done query: #812 www.youtube.com 142.250.4.93'."""
+    if "query" not in text:
+        return None
+    m = _DNS_Q.search(text)
+    if m:
+        return "query", m.group(2), m.group(1), m.group(3).lower(), ""
+    m = _DNS_A.search(text)
+    if m:
+        return "answer", m.group(1), "", m.group(2).lower(), m.group(3)
+    return None
+
+
 def cache_pairs(rows):
     """(address, name) from the router's DNS cache. Follows CNAMEs back to the name the person typed:
     docs.google.com -> CNAME googlehosted.l.googleusercontent.com -> A 142.250.x.x gives docs.google.com."""
@@ -544,6 +562,9 @@ class UsageStore:
         self.lock = threading.Lock()
         self.ip_name = collections.OrderedDict()   # internet IP -> {DNS name: times seen} (router cache / DNS firewall)
         self.dev_ip_name = collections.OrderedDict()  # (LAN IP, internet IP) -> name that device looked up
+        self.dev_asked = collections.OrderedDict()    # (LAN IP, DNS name) -> last time that device asked for it
+        self.dns_ids = collections.OrderedDict()      # router DNS log: query id -> (LAN IP, name)
+        self.dns_log_rx = 0                           # router DNS log lines understood (shown in Setup check)
         self.devmap = {}                           # LAN IP -> (key, name)  key = MAC when known
         self.cur = collections.defaultdict(lambda: [0, 0, 0])   # (day, hour, dev, app, site, cat) -> up, down, flows
         self.visits = collections.Counter()        # (day, hour, dev, site) -> DNS look-ups
@@ -742,9 +763,40 @@ class UsageStore:
         names = self.ip_name.get(remote) or {}
         if not names:
             return "", False
+        # the router's DNS log says which names THIS device asked for: of the names this address is known
+        # by, the one this device asked for last is its own (so a shared Google / Meta / CDN address is
+        # named after what this device actually opened, not "service not named")
+        asked = [(self.dev_asked[(lan, n)], n) for n in names if (lan, n) in self.dev_asked]
+        if asked:
+            return max(asked)[1], False
         best = max(names, key=names.get)
         apps = {app_of_name(n) or site_of(n) for n in names}
         return best, len(apps) > 1
+
+    def dns_log(self, text, now=None):
+        """One line of the router's DNS log (syslog, topic dns). Returns True when it was a DNS line."""
+        hit = parse_dns_log(text)
+        if not hit:
+            return False
+        kind, qid, client, name, ip = hit
+        now = now or time.time()
+        if kind == "query":
+            with self.lock:
+                self.dns_log_rx += 1
+                self.dns_ids[qid] = (client, name)
+                while len(self.dns_ids) > 5000:
+                    self.dns_ids.popitem(last=False)
+                self.dev_asked[(client, name)] = now
+                self.dev_asked.move_to_end((client, name))
+                while len(self.dev_asked) > 200_000:
+                    self.dev_asked.popitem(last=False)
+            self.dns_seen(client, name, (), now)          # counts the visit
+        else:
+            with self.lock:
+                client, asked = self.dns_ids.get(qid, ("", ""))
+            if ip and (name or asked):
+                self.learn_names([(ip, asked or name)], client or None)
+        return True
 
     def dns_seen(self, client, name, ips=(), now=None):
         """One DNS look-up by a device (website firewall): counts a visit and learns the answer's addresses."""

@@ -39,3 +39,4 @@ nd_switchbw.py
 nd_outage.py
 nd_configbak.py
 nd_camline.py
+nd_xlsx.py

@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.29.0"
+VERSION = "3.30.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1164,6 +1164,7 @@ class App(tk.Tk):
         self.mon = M.Monitor(lan, self.gw, self.lip, self.threat, self.orgs)
         if self.usage:
             self.mon.traffic.sink = self.usage.add_flow
+            self.mon.on_dns = self.usage.dns_log
             M.NAME_APP = self.usage.app_for
         self._feed_monitor()
         self.mon.start()

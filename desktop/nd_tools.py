@@ -703,7 +703,11 @@ INV_COLS = (("name", "Name", 150), ("ip", "IP", 110), ("mac", "MAC", 135), ("ven
             ("ram_gb", "RAM GB", 60), ("disk_gb", "Disk GB", 60), ("disk_free_gb", "Free GB", 60),
             ("user", "User", 130), ("disks", "Disks", 170), ("antivirus", "Antivirus", 160),
             ("printers", "Printers", 160), ("flag_text", "Needs attention", 200), ("router_port", "Router port", 80),
-            ("notes", "Notes", 200))
+            ("owner", "Owner", 130), ("purchase_date", "Purchase date", 100),
+            ("warranty_until", "Warranty until", 100), ("last_seen", "Last seen", 115), ("notes", "Notes", 200))
+# columns of the Excel sheet that are read back by "Import" (the rest comes from the scan / the PC itself)
+INV_EDITABLE = ("name", "dept", "location", "owner", "serial", "purchase_date", "warranty_until", "router_port",
+                "notes")
 
 
 def inventory_rows(devices, db, leases=None):
@@ -754,12 +758,16 @@ def _inv_row(mac, d, h, t, rep, lease):
            "first_seen": d.get("first_seen") or h.get("first_seen", ""), "os": (r or {}).get("os", "") or d.get("os", ""),
            "user": hw.get("logged_on") or (r or {}).get("user", ""), "router_port": t.get("router_port", ""),
            "notes": t.get("notes", ""), "online": online, "random": core.is_random_mac(mac) if mac else False,
-           "report_time": (r or {}).get("time", "")}
+           "report_time": (r or {}).get("time", ""), "owner": t.get("owner", ""),
+           "purchase_date": t.get("purchase_date", ""), "warranty_until": t.get("warranty_until", ""),
+           "last_seen": "online now" if online else h.get("last_seen", "")}
     for k, _ in HW_FIELDS:
         if not row.get(k):
             row[k] = hw.get(k, "")
     for k in ("model", "serial", "cpu", "ram_gb", "disk_gb", "disk_free_gb"):
         row[k] = hw.get(k, "")
+    if not row["serial"]:
+        row["serial"] = t.get("serial", "")      # typed by hand for devices that cannot report one (cameras...)
     if not row.get("vendor") and hw.get("maker"):
         row["vendor"] = hw.get("maker")
     row["flags"] = inv_flags(row)
@@ -853,6 +861,64 @@ def export_inventory_csv(path, rows):
         w.writerow([c[1] for c in INV_COLS] + ["PC report time"])
         for r in rows:
             w.writerow([r.get(c[0], "") for c in INV_COLS] + [r.get("report_time", "")])
+
+
+def export_inventory_xlsx(path, rows):
+    """The inventory as a real Excel sheet (frozen bold header, filter buttons). Edit the columns named in
+    INV_EDITABLE and read the file back with inventory_import()."""
+    import nd_xlsx
+    cols = list(INV_COLS) + [("report_time", "PC report time", 115)]
+    nd_xlsx.write(path, [c[1] for c in cols], [[r.get(c[0], "") for c in cols] for r in rows],
+                  [max(8, c[2] // 7) for c in cols])
+
+
+def inventory_table(path):
+    """Rows of text from an inventory sheet saved as .xlsx or .csv."""
+    if path.lower().endswith(".xlsx"):
+        import nd_xlsx
+        return nd_xlsx.read(path)
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
+        return list(csv.reader(f))
+
+
+def inventory_import(table, db, current_rows):
+    """Reads an edited inventory sheet back. Only the INV_EDITABLE columns are taken, only for rows whose MAC
+    is known, and only cells that differ from what the app shows now - so an automatic name the app made up
+    is not frozen as a typed name, and nothing is wiped by an empty sheet. Returns (devices changed, cells
+    changed, rows skipped)."""
+    if not table:
+        return 0, 0, 0
+    title = {c[1].lower(): c[0] for c in INV_COLS}
+    head = [title.get((h or "").strip().lower(), "") for h in table[0]]
+    if "mac" not in head:
+        raise ValueError("the sheet needs the MAC column (do not delete or rename the header row)")
+    now = {r["mac"]: r for r in current_rows if r.get("mac")}
+    devs = cells = skipped = 0
+    for r in table[1:]:
+        vals = {k: (r[i].strip() if i < len(r) else "") for i, k in enumerate(head) if k}
+        if not any(vals.values()):
+            continue
+        mac = core.norm_mac(vals.get("mac", ""))
+        if not mac or mac not in now:
+            skipped += 1
+            continue
+        change = {}
+        for k in INV_EDITABLE:
+            if k not in vals:
+                continue
+            v = vals[k]
+            if k in ("purchase_date", "warranty_until"):
+                import nd_xlsx
+                v = nd_xlsx.excel_date(v)
+            if v != str(now[mac].get(k, "") or "").strip():
+                if k == "serial" and now[mac].get("report_time"):
+                    continue                      # a PC reports its own serial number: the sheet cannot change it
+                change[k] = v[:200]
+        if change:
+            set_tag(db, mac, **change)
+            devs += 1
+            cells += len(change)
+    return devs, cells, skipped
 
 
 REPORT_TITLES = re.compile(r"^(Half-duplex cable link|PC cable runs at 100 Mbps|Cable errors on) ")
