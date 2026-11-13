@@ -26,10 +26,17 @@ class SpeedTest {
   // reported. Rotating through unrelated providers means one being blocked or slow doesn't take the
   // whole feature down; it just falls through to the next.
   static final List<Uri> _downUrls = [
-    Uri.parse('https://speed.cloudflare.com/__down?bytes=100000000'),
-    Uri.parse('https://speed.hetzner.de/100MB.bin'),
+    // 25 MB, not 100: the PC app has always used a moderate size here, and a fast line simply finishes
+    // early (the speed is bytes / time either way)
+    Uri.parse('https://speed.cloudflare.com/__down?bytes=25000000'),
+    Uri.parse('https://proof.ovh.net/files/100Mb.dat'),
+    Uri.parse('https://speedtest.tele2.net/100MB.zip'),
+    Uri.parse('https://ash-speed.hetzner.com/100MB.bin'),
     Uri.parse('http://ipv4.download.thinkbroadband.com/100MB.zip'),
   ];
+
+  /// How many servers are tried before giving up (for the message shown to the person).
+  static int get serverCount => _downUrls.length;
 
   // A second, unrelated host used only to probe general connectivity when every download above gets
   // nothing - small and fast on purpose, since it is not measuring speed, only reachability.
@@ -46,14 +53,18 @@ class SpeedTest {
       if (_cancel) break;
       // A shorter connect timeout than the original single-server design on purpose: when a host is
       // blocked outright (not just slow), failing fast here is what keeps the total wait for all 3
-      // candidates reasonable instead of piling up to 18s+ of connect timeouts before giving up.
+      // candidates reasonable instead of piling up long connect timeouts before giving up.
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
-      final sw = Stopwatch()..start();
+      // started when the server answers, not before connecting: the connect / TLS time is not download
+      // time, and counting it made a short test on a fast line read low
+      final sw = Stopwatch();
       var bytes = 0;
       try {
         final req = await client.getUrl(url).timeout(const Duration(seconds: 4));
         final resp = await req.close().timeout(const Duration(seconds: 4));
-        await for (final chunk in resp) {
+        if (resp.statusCode != 200) throw const HttpException('not a download');
+        sw.start();
+        await for (final chunk in resp.timeout(const Duration(seconds: 5))) {
           if (_cancel) break;
           bytes += chunk.length;
           final secs = sw.elapsedMilliseconds / 1000.0;
