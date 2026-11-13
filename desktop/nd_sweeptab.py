@@ -7,6 +7,7 @@ same IP / block mix-up that cut phones off (3.19.1) does not come back.
 The rules are in nd_sweep.py; this file is only the window.
 """
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -21,6 +22,10 @@ KIND_LABEL = (("pc", "Windows PCs"), ("cam", "Cameras / NVR / DVR"), ("net", "Ro
 STATUS_TAG = {S.OK: "pass", S.AUTH: "fail", S.UNREACH: "skip", S.UNSUP: "warn", S.BLOCKED: "warn", S.ERR: "fail",
              S.SKIP: "skip"}
 FILTERS = ("All", "Needs attention", S.OK, S.AUTH, S.UNREACH, S.BLOCKED, S.UNSUP, S.ERR, S.SKIP)
+
+
+def n_attention(results):
+    return len(S.needs_attention(results))
 
 
 class SweepPage:
@@ -210,7 +215,13 @@ class SweepPage:
         self._save_result(r)
 
     def _save_result(self, r):
+        # every result, good or bad: the Inventory shows when each device's login was last checked and how
+        with core.DB_LOCK:
+            self.app.db.setdefault("sweep_status", {})[r["mac"] or r["ip"]] = {
+                "time": core.now_s(), "status": r["status"], "detail": (r.get("detail") or "")[:120],
+                "method": r["method"]}
         if r["status"] != S.OK:
+            core.save_db(self.app.db)
             return
         if r["method"] == "wmi":
             data = {"hostname": r["data"].get("hostname") or r["name"] or r["ip"], "user": r["data"].get("user", ""),
@@ -241,6 +252,13 @@ class SweepPage:
             self.app._save_settings()
         self._typed = []
         self._clear_passwords()
+        # what was read is in the Inventory now; this page keeps showing only what still needs a person
+        if n_attention(self.results) and len(self.results) > n_attention(self.results):
+            self.var_filter.set("Needs attention")
+        try:
+            self.app.after_tags_changed()
+        except Exception:
+            pass
         n_ok = sum(1 for r in self.results if r["status"] == S.OK)
         n_bad = len(S.needs_attention(self.results))
         total = len(self._store()) if self.var_keep.get() else 0
@@ -341,6 +359,18 @@ class SweepPage:
         core.save_db(self.app.db)
         self.app.after_tags_changed()
         messagebox.showinfo(APP, f"Named {n} device(s) from what's stored on them.")
+
+    def show_auto(self, results, findings):
+        """Results of the automatic check after a scan (remembered logins only)."""
+        if self.running:
+            return
+        self.results, self.rows = list(results), {}
+        self.var_filter.set("Needs attention" if n_attention(results) else "All")
+        self._redraw()
+        ok = sum(1 for r in results if r["status"] == S.OK)
+        self.var_sum.set(f"Automatic check with the remembered logins at {time.strftime('%H:%M')}: {ok} of "
+                         f"{len(results)} OK (details are in the Inventory)"
+                         + (f"; {len(findings)} alert(s) raised." if findings else "."))
 
     def open_camline(self):
         CamLineWindow(self)

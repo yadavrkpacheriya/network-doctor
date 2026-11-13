@@ -96,6 +96,31 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
     mac = macs[0].upper() if macs else ""
     lan = _lan_cidr(net, lip)
 
+    if "saved login refused" in low:
+        return _fix(1, "password_changed", "A device's password was changed",
+                    "The login Network Doctor remembered for this device worked before and is refused now: someone "
+                    "changed the password on the device, or the account got locked after wrong attempts.",
+                    "Find out who changed it; then run the Login sweep once with the new password.",
+                    ["Ask your team first: was this password changed on purpose?",
+                     "Nobody changed it: treat it as a break-in. Check the device's own log / user list, and "
+                     "whether it is reachable from the internet (Security > Internet exposure).",
+                     "Network Tools > Login sweep: type the new login and Start scan - it is remembered again.",
+                     "A camera with a new password also needs that password typed on the NVR / DVR channel."],
+                    app=("Open Login sweep", "sweep"))
+
+    if "stopped responding" in low and ("login service" in low or "saved login" in low):
+        return _fix(1 if "camera(s) / recorder(s)" in low else 2, "device_down",
+                    "A camera / recorder stopped responding",
+                    "A device that Network Doctor could log in to before does not answer now: no power, a pulled or "
+                    "damaged cable, a dead PoE port, or the device has hung.",
+                    "Check its power and cable; restart it if it still has link.",
+                    ["Find it in Devices (the IP is in the alert) and look at its switch port: link light on?",
+                     "No link: check the PoE switch / adapter and the cable; try another port.",
+                     "Link but no answer: power it off and on.",
+                     "Several at once: they share a switch or a power supply - check that first.",
+                     "Back online: the next scan clears this by itself."],
+                    app=("Open Login sweep", "sweep"))
+
     m = re.search(r"conflict by arp response for ((?:\d{1,3}\.){3}\d{1,3}) from ([0-9a-f:]{17})", low)
     if m:
         cip, cmac = m.group(1), m.group(2).upper()

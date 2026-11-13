@@ -704,7 +704,9 @@ INV_COLS = (("name", "Name", 150), ("ip", "IP", 110), ("mac", "MAC", 135), ("ven
             ("user", "User", 130), ("disks", "Disks", 170), ("antivirus", "Antivirus", 160),
             ("printers", "Printers", 160), ("flag_text", "Needs attention", 200), ("router_port", "Router port", 80),
             ("owner", "Owner", 130), ("purchase_date", "Purchase date", 100),
-            ("warranty_until", "Warranty until", 100), ("last_seen", "Last seen", 115), ("notes", "Notes", 200))
+            ("warranty_until", "Warranty until", 100), ("last_seen", "Last seen", 115),
+            ("firmware", "Firmware", 110), ("device_name", "Name on the device", 140),
+            ("login_check", "Login check", 190), ("notes", "Notes", 200))
 # columns of the Excel sheet that are read back by "Import" (the rest comes from the scan / the PC itself)
 INV_EDITABLE = ("name", "dept", "location", "owner", "serial", "purchase_date", "warranty_until", "router_port",
                 "notes")
@@ -717,6 +719,7 @@ def inventory_rows(devices, db, leases=None):
     with core.DB_LOCK:
         hist = dict(db.get("devices") or {})
         reports = dict(db.get("pc_reports") or {})
+        sweep = (dict(db.get("sweep") or {}), dict(db.get("sweep_status") or {}))
     by_mac_report = {}
     for host, r in reports.items():
         for mac in r.get("macs") or []:
@@ -738,8 +741,29 @@ def inventory_rows(devices, db, leases=None):
         if mac and mac not in seen:
             seen.add(mac)
             rows.append(_inv_row(mac, None, None, tags.get(mac, {}), by_mac_report.get(mac), ls))
+    for r in rows:
+        _inv_sweep(r, sweep[0].get(r["mac"]), sweep[1].get(r["mac"]))
     rows.sort(key=lambda r: (r["status"] != "online", core.ip_key(r["ip"] or "255.255.255.255")))
     return rows
+
+
+def _inv_sweep(row, got, state):
+    """What the Login sweep read from the device itself (cameras, recorders, switches...) and when its login
+    was last checked. A PC's own report wins for model / serial."""
+    data = (got or {}).get("data") or {}
+    for k in ("model", "serial"):
+        if not row.get(k) and data.get(k):
+            row[k] = str(data[k])
+    row["firmware"] = str(data.get("firmware") or data.get("version") or "")
+    row["device_name"] = str(data.get("name") or data.get("identity") or "")
+    if state:
+        word = {"OK": "OK", "LOGIN REFUSED": "LOGIN REFUSED"}.get(state.get("status"), state.get("status", ""))
+        row["login_check"] = f"{word}  {state.get('time', '')}".strip()
+    else:
+        row["login_check"] = ""
+    if state and state.get("status") not in (None, "", "OK") and row.get("online"):
+        row["flags"] = list(row.get("flags") or []) + ["login check: " + str(state.get("status", "")).lower()]
+        row["flag_text"] = ", ".join(row["flags"])
 
 
 def _inv_row(mac, d, h, t, rep, lease):

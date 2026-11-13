@@ -1,3 +1,23 @@
+## Network Doctor 3.33.0
+
+### Login check runs by itself after every scan
+- After each scan (also the one at start-up) every device that has a remembered login is asked once, with
+  exactly that login - nothing typed, nothing guessed. Turn "Remember the login that works for each device"
+  off to stop this.
+- What was read goes to the Inventory: model, serial number, firmware, the name stored on the device, and a
+  new "Login check" column (OK / LOGIN REFUSED / NOT REACHABLE with the time). The Excel export has them too.
+- The Login sweep page now shows only what needs a person ("Needs attention"): new devices without a login,
+  refused logins, devices that did not answer. Choose "All" to see everything.
+
+### New alerts (pop-up at once, then in Alerts)
+- "A device's password was changed": the remembered login of a camera / recorder / PC is refused. The login
+  is forgotten at once, so it is never sent again.
+- "A camera / recorder stopped responding": it is on the network but its login service does not answer, or
+  a camera / recorder with a remembered login is gone from the network.
+- The same problem pops up once, not after every scan; it is counted in Alerts until it is fixed.
+- These are found only for devices whose login was remembered by a sweep with 3.32.0 or later - run the
+  Login sweep once with the logins typed.
+
 ## Network Doctor 3.32.0
 
 ### Login sweep remembers the login that works for each device
