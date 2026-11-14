@@ -637,8 +637,8 @@ def sites_for(groups=(), extra=()):
     return out
 
 
-def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
-    """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random. Returns (apply_text, undo_text)."""
+def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge", gw="", gw_mac=""):
+    """opts: dhcp, dns, dns_target ("router" / "pc"), rogue, random, gw_protect. Returns (apply_text, undo_text)."""
     ts = time.strftime("%Y-%m-%d %H:%M")
     a = [f"# Network Doctor - network guard - generated {ts}",
          "# Paste in WinBox > New Terminal, or Apply on router. Safe to run again: old ND rules are replaced."]
@@ -722,6 +722,21 @@ def guard_commands(opts, rogue_macs=(), lip="", bridge="bridge"):
               'action=drop comment="ND guard: random MAC"',
               "/interface bridge filter add chain=forward src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 "
               'action=drop comment="ND guard: random MAC"']
+    if opts.get("gw_protect"):
+        a += ["# 5) Stop the router's own address being faked (the cause of the router 'dropping for a few",
+              "#    seconds' again and again). Only the router answers ARP on the LAN, and a device that already",
+              "#    holds an IP from the router keeps it pinned - so a PC running NetCut, or a wrong static IP,",
+              "#    can no longer steal the gateway's address.",
+              "#    IMPORTANT: turn this on only AFTER every device is bound to its IP (Devices > IP-MAC binding),",
+              "#    or a device without a reservation will lose the network.",
+              '/ip dhcp-server set [find] add-arp=yes',
+              ':do {/ip dhcp-server lease make-static [find where dynamic]} on-error={}']
+        if gw and gw_mac:
+            a += [f':do {{/ip arp remove [find where address={gw} and comment~"^ND guard"]}} on-error={{}}',
+                  f'/ip arp add address={gw} mac-address={gw_mac} interface={bridge} comment="ND guard: gateway"']
+        a += [f'/interface bridge set [find name={bridge}] arp=reply-only']
+        u += [f'/interface bridge set [find name={bridge}] arp=enabled', '/ip dhcp-server set [find] add-arp=no',
+              ':do {/ip arp remove [find where comment~"^ND guard: gateway"]} on-error={}']
     fclean = ':do {/ip firewall filter remove [find where comment~"^ND guard"]} on-error={}'
     if fclean not in u:
         u.append(fclean)

@@ -1,3 +1,20 @@
+## Network Doctor 3.40.0
+
+### "Router keeps dropping for a few seconds" is now diagnosed and fixed
+Your router vanishing for 5-10 seconds many times a day is almost never the internet or a cable - it is a
+device faking addresses (ARP spoofing / a wrong static IP), a loop, or a broadcast storm flapping the router's
+address. Network Doctor now tells these apart from a real outage.
+
+- The live monitor correlates repeated short gateway losses with ARP conflicts, storms and loops in the same
+  window and raises ONE clear alert: "Router keeps dropping for a few seconds (N times) - this is NOT the
+  internet going down. Cause: ... Devices: ...", naming the MAC(s) behind it.
+- The fixer brain has a new permanent fix for it: find and unplug the offender (MAC lookup > Find on the
+  network), bind every device to its IP, then turn on "only the router answers ARP" (reply-only) so a faked
+  gateway address is simply ignored. An immediate PC shield (lock the router's MAC) is included.
+- New router guard option: gateway ARP protection (static ARP for the gateway + reply-only), fully reversible,
+  with a built-in warning to bind all devices first so nothing loses the network. It is never auto-applied -
+  it can cut a mis-set device off, so it stays a reviewed, one-click action.
+
 ## Network Doctor 3.39.1
 
 ### Fix: the app now actually reads the PC agent's data
