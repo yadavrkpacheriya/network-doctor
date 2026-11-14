@@ -1,3 +1,19 @@
+## Network Doctor 3.46.0
+
+### Clearer, better-categorised menus
+The top menu is reorganised so each section does one job:
+- Scan & Devices (IP scan: all devices, network map, login sweep)
+- Inventory (asset register, IP-MAC binding)
+- Network Issues (alerts, problems, root cause, health checks, history)
+- Fixer (commands, PC Care repair & clean-up)
+- Internet & Usage (live monitor, usage, bandwidth plan, slow website)
+- Advanced Network (switches, port scanner, MAC lookup, Wake-on-LAN, remote access, DNS/website/speed tests)
+- This PC & Wi-Fi (LAN speed, Wi-Fi analyzer, adapters, MTU, subnet)
+- Security (login attempts / brute force, critical devices)
+- Firewall (network guard, website firewall)
+- Setup
+Nothing was removed - every page is the same, just grouped where you would look for it.
+
 ## Network Doctor 3.45.0
 
 ### New page: Login attempts (brute force) - with logs, history and inside-vs-outside
