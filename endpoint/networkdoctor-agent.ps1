@@ -167,6 +167,7 @@ if ($Mode -eq "fix") {
 # ================================ BACKGROUND (starts at logon, no window) ================================
 Log-Usb "AGENT_START" "PC agent started" "" 0
 Send-Details
+Lock-Gateway        # shield the router's address at every logon (background runs as SYSTEM, so it has the rights)
 $watchers = @{}
 function Watch($drive) {
     if ($watchers.ContainsKey($drive)) { return }
@@ -193,5 +194,5 @@ while ($true) {
     $known = $now
     $tick++
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
-    if ($tick % 600 -eq 0) { Send-Details }              # every ~30 min: refresh details + CPU/RAM
+    if ($tick % 600 -eq 0) { Send-Details; Lock-Gateway }  # every ~30 min: refresh details + CPU/RAM, re-pin router
 }
