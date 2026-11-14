@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.39.0"
+VERSION = "3.39.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2395,7 +2395,7 @@ class App(tk.Tk):
     def _endpoint_check(self):
         """New USB-drive copies reported by the LeakWatch agent on the office PCs (nd_endpoint) become alerts -
         the one leak the office network can never see. Each PC+user group is raised once per its latest event."""
-        folder = self._settings().get("endpoint_dir") or EP.default_dir()
+        folder = EP.default_dirs(self._settings().get("endpoint_dir") or "")
         try:
             events = EP.read_events(folder, since_days=7)
         except Exception:  # noqa: BLE001 - a bad share should never stop the tick
