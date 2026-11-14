@@ -46,3 +46,35 @@ def test_summarize_and_alerts(tmp_path):
 def test_empty_and_missing_folder():
     assert E.read_events("/no/such/folder") == []
     assert E.summarize([]) == [] and E.leak_alerts([]) == []
+
+
+def test_proc_app_native_only():
+    assert E.proc_app("WhatsApp.exe") == "WhatsApp"
+    assert E.proc_app("AnyDesk.exe") == "AnyDesk"
+    assert E.proc_app("TrueImage.exe") == "Acronis Cloud Backup"
+    assert E.proc_app("chrome.exe") is None        # a browser keeps its DNS-based website name
+    assert E.proc_app("msedge") is None
+    assert E.proc_app("unknownthing.exe") is None
+
+
+def test_read_reports_adds_lan_ip(tmp_path):
+    import json
+    (tmp_path / "pc-ACC1.json").write_text(json.dumps({
+        "hostname": "ACC1", "user": "hitesh", "os": "Windows 11",
+        "adapters": [{"mac": "AA-BB-CC-00-00-01", "ip": "8.8.8.8,192.168.0.57", "status": "Up"}],
+        "hw": {"model": "OptiPlex"}}), encoding="utf-8")
+    (tmp_path / "pc-bad.json").write_text("{not json", encoding="utf-8")
+    reps = E.read_reports(str(tmp_path))
+    assert len(reps) == 1 and reps[0]["ip"] == "192.168.0.57" and reps[0]["hostname"] == "ACC1"
+
+
+def test_proc_name_map_newest_wins(tmp_path):
+    import time as _t
+    now = _t.mktime(_t.strptime("2026-11-14 16:00:00", "%Y-%m-%d %H:%M:%S"))
+    with open(tmp_path / "conn-ACC1-202611.csv", "w", encoding="utf-8", newline="") as fh:
+        fh.write("time,pc,user,process,local_ip,remote_ip,remote_port\n")
+        fh.write("2026-11-14 10:00:00,ACC1,h,chrome.exe,192.168.0.57,142.250.1.1,443\n")   # browser: ignored
+        fh.write("2026-11-14 10:01:00,ACC1,h,WhatsApp.exe,192.168.0.57,5.5.5.5,443\n")
+        fh.write("2026-11-14 10:05:00,ACC1,h,AnyDesk.exe,192.168.0.57,5.5.5.5,443\n")       # newer: wins
+    m = E.proc_name_map(E.read_conns(str(tmp_path), since_days=1, now=now))
+    assert m == {("192.168.0.57", "5.5.5.5"): "AnyDesk"}

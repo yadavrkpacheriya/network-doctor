@@ -1,3 +1,29 @@
+## Network Doctor 3.39.0
+
+### One PC agent: users get a single "Fix my PC" button; Network Doctor gets everything
+Replaces the separate USB and cleanup scripts with one agent (repo `endpoint/` folder, install per PC with
+`install-agent.cmd` as administrator). Users see only a "Fix my PC" shortcut on the Desktop; everything else is
+background.
+
+- **Fix my PC (one click):** cleans junk (temp, caches, Windows Update leftovers when admin, Recycle Bin),
+  flushes DNS, restarts Explorer, shows space freed - never touches real files - and then sends this PC's
+  fresh details, resource use and connections to Network Doctor. So the inventory and usage update the moment
+  a user clicks.
+- **Background (from logon):** watches USB drives (plug in / out, files copied - the leak alerts from 3.38),
+  every minute records which app (process) is using the network, every 30 min refreshes details + CPU/RAM.
+- **No more per-PC detail script:** each PC lists itself into the inventory automatically (maker, model,
+  serial, Windows, CPU, RAM, disk, user, printers, antivirus).
+
+### Usage names get accurate from the PCs
+- The network alone sees only address-to-address, so it guessed "CDN" / "service not known". The agent reports
+  which app opened each connection, so a **native app owns its traffic**: WhatsApp, Telegram, Acronis, AnyDesk,
+  OneDrive, Teams, Steam, torrents and more are named exactly. Browser traffic keeps its website name (better
+  than "chrome.exe").
+- Resource monitor per PC: CPU %, memory % and the heaviest apps.
+
+Honest limit: the agent must be installed on each PC; per-process byte totals are not collected (Network Doctor
+already has the bytes per address from the router and uses the agent only to put the right app name on them).
+
 ## Network Doctor 3.38.1
 
 ### Fix: the Windows release build failed on 3.37.1 / 3.38.0
