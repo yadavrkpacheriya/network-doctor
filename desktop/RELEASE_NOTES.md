@@ -1,3 +1,8 @@
+## Network Doctor 3.56.0
+
+### Brain curriculum deepened with the real mechanisms
+The built-in networking curriculum now teaches not just the problem names but how each one actually shows up and gets fixed on a MikroTik - e.g. "ten cameras died together because one shared unmanaged switch lost power" (camera outage), "move a data-leaking PC into a restricted VLAN" (quarantine), "ready-to-run RouterOS commands to patch firewall gaps" (MikroTik fix). So the brain recognises these issues even when worded in detail, and links them to the right fix approach. Existing installs re-learn the richer set automatically.
+
 ## Network Doctor 3.55.0
 
 ### The fixer brain now ships knowing networking
