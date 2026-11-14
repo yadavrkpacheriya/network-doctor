@@ -81,7 +81,6 @@ def parse_challenge(data):
         return None
     c = data[i:]
     try:
-        _flags = struct.unpack("<I", c[20:24])[0]
         ti_len, _, ti_off = struct.unpack("<HHI", c[40:48])
         major, minor, build = c[48], c[49], struct.unpack("<H", c[50:52])[0]
         info = c[ti_off:ti_off + ti_len]

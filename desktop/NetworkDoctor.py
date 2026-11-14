@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.56.0"
+VERSION = "3.57.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2912,7 +2912,9 @@ class App(tk.Tk):
         problems = [{"text": a.get("title") or a.get("text", ""), "sev": a.get("sev", "warning"),
                      "kind": a.get("kind", ""), "count": a.get("count", 1), "source": a.get("source", "")}
                     for a in self.alert_log.items if start <= a.get("t", 0) < end]
-        smap = {"ok": "ok", "undone": "undone", "auto_undone": "undone"}
+        # ok = held; undone/auto_undone = rolled back; failed = the command itself failed - all three show
+        # as "did not work" so nothing a user shares back silently disappears. applied = still in its check window.
+        smap = {"ok": "ok", "undone": "undone", "auto_undone": "undone", "failed": "undone"}
         fixes = [{"title": f.get("title", ""), "kind": f.get("kind", ""),
                   "status": smap.get(f.get("status"), "applied"), "note": f.get("note", "")}
                  for f in self._fix_history() if start <= f.get("at", 0) < end]
