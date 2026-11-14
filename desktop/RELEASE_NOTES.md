@@ -1,3 +1,17 @@
+## Network Doctor 3.38.0
+
+### USB / data-leak watch on the PCs (LeakWatch endpoint agent)
+- The office network can never see a file copied to a USB pen drive, phone or external disk - it never touches
+  the network. A tiny agent (in the repo's `endpoint/` folder) now runs on each PC and reports it.
+- It records a removable drive plugged in or removed, and any file copied / created / renamed on it (path and
+  size, never contents), with the PC and the logged-in user. It reads nothing else and sends nothing to the
+  internet - it only appends CSV lines to a shared folder on the IT PC.
+- Network Doctor reads that folder every 5 minutes and raises an alert when files are copied to USB, named by
+  user, PC and department (critical over 20 MB). Point it at the share in Settings > endpoint_dir.
+- Install per PC with `endpoint/install-leakwatch.cmd` (run as administrator); `uninstall-leakwatch.cmd`
+  removes it. See `endpoint/README.md`. Honest limit: a PC without the agent is not watched, and it cannot
+  catch a leak by screenshot or printing.
+
 ## Network Doctor 3.37.1
 
 ### Data-leak watch: large uploads leaving the office

@@ -41,6 +41,7 @@ import nd_net as NT
 import nd_toolstab
 import nd_routeros as RO
 import nd_usage as US
+import nd_endpoint as EP
 import nd_home
 import nd_bwtab
 import nd_sweeptab
@@ -67,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.37.1"
+VERSION = "3.38.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1232,6 +1233,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_usage_insight_t", 0) > 86400:
                 self._usage_insight_t = time.time()
                 self._usage_spike_check()
+            if time.time() - getattr(self, "_endpoint_t", 0) > 300:   # USB copies seen by the LeakWatch agent
+                self._endpoint_t = time.time()
+                self._endpoint_check()
             if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
@@ -2387,6 +2391,28 @@ class App(tk.Tk):
             self.alerts_active[key] = {"title": i["title"], "sev": i["sev"], "first": now, "last": now,
                                        "source": "Usage insights"}
             self._raise_alert(i["sev"], i["title"], [i["text"], i["action"]], "Usage insights")
+
+    def _endpoint_check(self):
+        """New USB-drive copies reported by the LeakWatch agent on the office PCs (nd_endpoint) become alerts -
+        the one leak the office network can never see. Each PC+user group is raised once per its latest event."""
+        folder = self._settings().get("endpoint_dir") or EP.default_dir()
+        try:
+            events = EP.read_events(folder, since_days=7)
+        except Exception:  # noqa: BLE001 - a bad share should never stop the tick
+            return
+        self._endpoint_events = events
+
+        def who(pc, user):
+            dev = next((d for d in self.devices if (d.get("name") or "").lower() == (pc or "").lower()), None)
+            dept = (dev.get("dept") if dev else "") or ""
+            return f"{user or '?'} on {pc or '?'}" + (f" - {dept}" if dept else "")
+        for sev, title, text in EP.leak_alerts(events, who=who):
+            key = "usb_copy:" + title
+            if key in self.alerts_active:
+                continue
+            self.alerts_active[key] = {"title": title, "sev": sev, "first": time.time(), "last": time.time(),
+                                       "source": "LeakWatch (USB)"}
+            self._raise_alert(sev, title, [text, "Ask the person what was copied and why."], "LeakWatch (USB)")
 
     def _record_alert(self, sev, text, source):
         """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""
