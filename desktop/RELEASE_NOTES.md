@@ -1,3 +1,13 @@
+## Network Doctor 3.47.0
+
+### Simpler IP-MAC binding: one button
+- The binding page now opens with a single big button - "Bind all devices to their current IP" - which ticks
+  every bindable device, keeps each on the IP it already has, and reserves them all on the router in one go.
+  No strict mode, no manual IPs, nothing that can cut a device off.
+- All the old controls (strict mode, block randomized MACs, moved-device re-bind, bridge name, set-IP, forget,
+  show/copy/save commands, PC fix script) are still there - tucked behind an "Advanced" tick box, so the normal
+  view stays clean.
+
 ## Network Doctor 3.46.0
 
 ### Clearer, better-categorised menus
