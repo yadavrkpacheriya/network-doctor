@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.40.1"
+VERSION = "3.41.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -648,7 +648,7 @@ class App(tk.Tk):
         self.var_q.trace_add("write", lambda *a: self.fill_devices())
         ttk.Entry(sf, textvariable=self.var_q, width=34).pack(side="left", padx=6)
         self.var_fdept, self.var_floc, self.var_fshow = tk.StringVar(value="All"), tk.StringVar(value="All"), \
-            tk.StringVar(value=T.SHOW[0])
+            tk.StringVar(value=T.SHOW[1])   # "Online only": a powered-off / unplugged device drops off the list
         for label, var, field in (("Department:", self.var_fdept, "dept"), ("Location:", self.var_floc, "location")):
             ttk.Label(sf, text=label).pack(side="left", padx=(6, 0))
             cb = ttk.Combobox(sf, textvariable=var, width=14, state="readonly", values=["All"])
@@ -2301,6 +2301,19 @@ class App(tk.Tk):
             c = d["ip"] in conflict_ips
             changed = changed or (bool(d.get("conflict")) != c)
             d["conflict"] = c
+        # the quick check's ARP sweep is a liveness signal: mark a device offline the moment it stops
+        # answering, so a PC that was switched off disappears from the (connected-only) list within minutes,
+        # not only after the next full scan.
+        alive_now = set(raw.get("arp") or {})
+        if raw["meta"]["tests"].get("scapy_arp") and alive_now:
+            alive_now.add(self.lip)
+            if self.gw:
+                alive_now.add(self.gw)
+            for d in self.devices:
+                on = any(ip in alive_now for ip in (d.get("ips") or [d.get("ip")]))
+                if on != d.get("online"):
+                    d["online"] = on
+                    changed = True
         self.fill_problems()
         self.fill_checks()
         if changed:

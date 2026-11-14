@@ -1,3 +1,11 @@
+## Network Doctor 3.41.0
+
+### Powered-off / disconnected devices drop off the active device list
+- All devices now opens on "Online only" by default, so a PC that is switched off or unplugged is not shown in
+  the active list. Pick "All devices" in the Show box to see offline/known devices again (nothing is deleted).
+- The quick loop/conflict check (every few minutes) now also updates who is online from its ARP sweep, so a
+  device that stops answering leaves the list within minutes - not only after the next full scan.
+
 ## Network Doctor 3.40.1
 
 ### Router-drop fix now leads with a shield that needs no binding
