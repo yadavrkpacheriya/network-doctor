@@ -14,28 +14,58 @@ class ToolsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget tool(IconData icon, String title, String sub, Widget page) => ListTile(
-          leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
-          title: Text(title),
-          subtitle: Text(sub),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => page)),
+    Widget tool(Color color, IconData icon, String title, String sub, Widget page) => Card(
+          margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+          clipBehavior: Clip.antiAlias,
+          child: ListTile(
+            leading: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
+              child: Icon(icon, color: color),
+            ),
+            title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(sub),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => page)),
+          ),
         );
     return Scaffold(
       appBar: AppBar(title: const Text('Tools')),
       body: ListView(children: [
-        tool(Icons.network_ping, 'Ping', 'Reply time and loss to any device or website', const _PingTool()),
-        tool(Icons.router, 'Switch / router details', 'Ports, speed, errors and neighbours over SNMP - any brand',
-            const _SwitchTool()),
-        tool(Icons.speed, 'Internet speed', 'Download, upload and reply time', const _SpeedTool()),
-        tool(Icons.lan, 'Port scanner', 'Which services a device offers, risky ones marked', const _PortTool()),
-        tool(Icons.dns, 'DNS lookup', 'Find the IP address of a name, and how fast DNS answers', const _DnsTool()),
-        tool(Icons.power_settings_new, 'Wake-on-LAN', 'Switch on a PC that is off', const _WolTool()),
-        tool(Icons.calculate, 'Subnet calculator', 'Network, mask, broadcast and host range', const _SubnetTool()),
+        _header(context, 'Network tests', const Color(0xFF0F766E)),
+        tool(const Color(0xFF0F766E), Icons.network_ping, 'Ping', 'Reply time and loss to any device or website',
+            const _PingTool()),
+        tool(const Color(0xFF0F766E), Icons.speed, 'Internet speed', 'Download, upload and reply time',
+            const _SpeedTool()),
+        tool(const Color(0xFF0F766E), Icons.lan, 'Port scanner', 'Which services a device offers, risky ones marked',
+            const _PortTool()),
+        tool(const Color(0xFF0F766E), Icons.dns, 'DNS lookup', 'Find the IP of a name, and how fast DNS answers',
+            const _DnsTool()),
+        _header(context, 'Equipment', const Color(0xFF1D4ED8)),
+        tool(const Color(0xFF1D4ED8), Icons.router, 'Switch / router details',
+            'Ports, speed, errors and neighbours over SNMP - any brand', const _SwitchTool()),
+        _header(context, 'This PC & helpers', const Color(0xFFA16207)),
+        tool(const Color(0xFFA16207), Icons.power_settings_new, 'Wake-on-LAN', 'Switch on a PC that is off',
+            const _WolTool()),
+        tool(const Color(0xFFA16207), Icons.calculate, 'Subnet calculator',
+            'Network, mask, broadcast and host range', const _SubnetTool()),
+        const SizedBox(height: 12),
       ]),
     );
   }
 }
+
+/// A small coloured section heading, so the tool list reads as clear categories.
+Widget _header(BuildContext context, String text, Color color) => Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Row(children: [
+        Container(width: 4, height: 18, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Text(text.toUpperCase(),
+            style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12, letterSpacing: 0.5)),
+      ]),
+    );
 
 /// A page with one input, a Run button and a result area.
 class _ToolPage extends StatelessWidget {
