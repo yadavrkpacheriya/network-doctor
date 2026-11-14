@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.50.0"
+VERSION = "3.51.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -637,6 +637,7 @@ class App(tk.Tk):
 
     def _tab_devices(self):
         f = self.nav.page("devices")
+        self._page_header(f, "devices", "All devices")
         sf = ttk.Frame(f, padding=(0, 6))
         sf.pack(fill="x")
         sf2 = ttk.Frame(f)
@@ -688,7 +689,13 @@ class App(tk.Tk):
 
     def _tab_map(self):
         f = self.nav.page("map")
+        self._page_header(f, "map", "Network map")
         self.map = nd_tabs.MapTab(self, f)
+
+    def _page_header(self, f, key, title):
+        col = nd_tabs.PAGE_COLOR.get(key, "#334155")
+        tk.Label(f, text=title, bg=col, fg="white", font=("Segoe UI", 12, "bold"),
+                 anchor="w", padx=10, pady=5).pack(fill="x")
 
     def _tab_home(self):
         f = self.nav.page("home")
@@ -697,6 +704,7 @@ class App(tk.Tk):
 
     def _tab_assist(self):
         f = self.nav.page("assist")
+        self._page_header(f, "assist", "Fix Assistant")
         self.assist = nd_tabs.AssistantTab(self, f)
 
     def _tab_slow(self):
@@ -717,14 +725,17 @@ class App(tk.Tk):
 
     def _tab_usage(self):
         f = self.nav.page("usage")
+        self._page_header(f, "usage", "Usage - apps & websites per device")
         self.usage_tab = nd_tabs.UsageTab(self, f)
 
     def _tab_binding(self):
         f = self.nav.page("binding")
+        self._page_header(f, "binding", "IP-MAC binding")
         self.binding = nd_tabs.BindingTab(self, f)
 
     def _tab_commands(self):
         f = self.nav.page("commands")
+        self._page_header(f, "commands", "Commands - ready-made router & PC fixes")
         self.commands = nd_tabs.CommandsTab(self, f)
 
     def _tab_tools(self):
@@ -733,6 +744,7 @@ class App(tk.Tk):
 
     def _tab_alerts(self):
         f = self.nav.page("alerts")
+        self._page_header(f, "alerts", "Alerts")
         self.alerts_tab = nd_tabs.AlertsTab(self, f)
 
     def _tab_inventory(self):
@@ -741,6 +753,7 @@ class App(tk.Tk):
 
     def _tab_history(self):
         f = self.nav.page("history")
+        self._page_header(f, "history", "History & trends")
         self.history_tab = nd_tabs.HistoryTab(self, f)
 
     def show_tab(self, name):
@@ -816,6 +829,7 @@ class App(tk.Tk):
 
     def _tab_monitor(self):
         f = self.nav.page("monitor")
+        self._page_header(f, "monitor", "Live monitor")
         top = ttk.Frame(f, padding=(0, 6))
         top.pack(fill="x")
         self.btn_mon = ttk.Button(top, text="Stop monitor", command=self.toggle_monitor)
@@ -847,6 +861,7 @@ class App(tk.Tk):
 
     def _tab_rca(self):
         f = self.nav.page("rca")
+        self._page_header(f, "rca", "Root cause")
         top = ttk.Frame(f, padding=(0, 6))
         top.pack(fill="x")
         ttk.Button(top, text="Run root cause analysis", style="Big.TButton", command=self.run_rca).pack(side="left")
@@ -857,6 +872,7 @@ class App(tk.Tk):
 
     def _tab_problems(self):
         f = self.nav.page("problems")
+        self._page_header(f, "problems", "Problems")
         pw = ttk.PanedWindow(f, orient="vertical")
         pw.pack(fill="both", expand=True)
         a, b = ttk.Frame(pw), ttk.Frame(pw)
@@ -869,6 +885,7 @@ class App(tk.Tk):
 
     def _tab_checks(self):
         f = self.nav.page("checks")
+        self._page_header(f, "checks", "Health checks")
         self.tc = make_tree(f, ("res", "det"), ("Result", "Details"), (100, 800), first=("Check", 300))
 
     def _tab_setup(self):
