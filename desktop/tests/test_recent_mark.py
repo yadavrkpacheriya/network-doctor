@@ -33,7 +33,7 @@ class Mark(unittest.TestCase):
 class HistoryAndFilter(unittest.TestCase):
     def test_type_change_is_remembered_in_the_history(self):
         db = {"devices": {"AA:BB:CC:00:00:01": {"first_seen": BASE, "names": [], "ips": [],
-                                                 "category": core.CAT_UNK}}, "ip_owner": {}}
+                                                 "category": core.CAT_UNK}}, "ip_owner": {}, "scans": 0}
         devs = [{"mac": "AA:BB:CC:00:00:01", "ip": "192.168.0.90", "online": True, "category": core.CAT_CAM,
                  "vendor": "", "names": {}, "name": "cam", "upnp": {}}]
         raw = {"meta": {"started": "2026-11-13 23:10", "finished": "2026-11-13 23:12"}}
