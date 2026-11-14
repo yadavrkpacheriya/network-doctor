@@ -277,3 +277,33 @@ def auth_alerts(events, warn=10, crit=30):
                        "the password now. " if ext or rdp else "It is from inside the network - find that device. ")
                     + "Seen by the agent reading Windows Event ID 4625."))
     return out
+
+
+def auth_history(events, devices=None, now=None):
+    """Failed-logon rows for the Login-attempts page, grouped by PC + account + source, newest first, with each
+    source marked internal / external / local and (for internal) the device it belongs to. 'devices' is the
+    scan's device list, used to name an internal IP and to tell a LAN address from an internet one."""
+    by_ip = {}
+    for d in devices or []:
+        for ip in d.get("ips") or [d.get("ip")]:
+            if ip:
+                by_ip[ip] = d.get("name") or d.get("category") or ip
+    groups = {}
+    for e in events:
+        key = (e["pc"], e["account"], e["source"], e["logon"])
+        g = groups.setdefault(key, {"pc": e["pc"], "account": e["account"], "source": e["source"],
+                                    "logon": e["logon"], "fails": 0, "last": "", "first": e["time"]})
+        g["fails"] += e["fails"]
+        g["last"] = max(g["last"], e["time"])
+        g["first"] = min(g["first"], e["time"])
+    out = []
+    for g in groups.values():
+        src = g["source"]
+        if src in ("this PC / console", "", "::1", "127.0.0.1"):
+            g["scope"], g["who"] = "local", "at the keyboard / this PC"
+        elif _is_external(src):
+            g["scope"], g["who"] = "external", "OUTSIDE your network (internet)"
+        else:
+            g["scope"], g["who"] = "internal", by_ip.get(src, "a device on your network")
+        out.append(g)
+    return sorted(out, key=lambda g: (g["scope"] == "external", g["last"]), reverse=True)

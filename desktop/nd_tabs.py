@@ -2363,7 +2363,7 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
                                                   ("history", "History & trends")]),
     ("devices_s", "Devices", "#1d4ed8", "#dbeafe", [("devices", "All devices"), ("inventory", "Inventory"),
                                                     ("map", "Network map"), ("binding", "IP-MAC binding")]),
-    ("nettools_s", "Network Tools", "#0369a1", "#e0f2fe", [("sweep", "Login sweep"),
+    ("nettools_s", "Network Tools", "#0369a1", "#e0f2fe", [("sweep", "Login sweep"), ("t_login", "Login attempts"),
                                                            ("t_switch", "Switches (SNMP)"), ("t_ports", "Port scanner"),
                                                            ("t_mac", "MAC lookup"), ("t_wol", "Wake-on-LAN")]),
     ("internet_s", "Internet & Usage", "#047857", "#d1fae5", [("monitor", "Live monitor"), ("usage", "Usage"),

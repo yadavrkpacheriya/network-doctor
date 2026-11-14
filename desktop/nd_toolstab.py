@@ -21,6 +21,7 @@ import nd_plugins
 import nd_snmp
 import nd_tabs
 import nd_tools as T
+import nd_endpoint as EP
 
 APP = "Network Doctor"
 
@@ -60,6 +61,10 @@ def build_dns_filter(cfg=None):
 
 
 TOOLS = [
+    ("login", "Login attempts (brute force)",
+     "Who tried to log in and failed, on every PC that runs the agent - the account, how many tries, and whether "
+     "it came from a device on your network or from an outside (internet) IP. Reads Windows' own failed-logon log "
+     "(Event ID 4625). An attempt from an outside IP raises an alert on its own."),
     ("watch", "Critical devices (alert if down)",
      "Ping the devices the office cannot work without (router, server, ERP PC, DVR, switches) every 30 seconds. "
      "If one stops answering for about 1.5 minutes you get a pop-up, a sound and a line in the health log."),
@@ -1816,6 +1821,48 @@ class ToolsTab:
                             + (f"\n{skipped} row(s) skipped: MAC missing or not a device of this network."
                                if skipped else "")
                             + ("" if devs else "\nNothing was different from what the app already has."))
+
+    def _build_login(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=4)
+        ttk.Button(row, text="Check now", style="Big.TButton", command=self._login_refresh).pack(side="left", padx=4)
+        ttk.Label(row, text="  Failed logins from the PC agents. Outside-IP attempts are shown first and in red.",
+                  foreground="#667085").pack(side="left")
+        self._out_box(f, "login")
+        self._login_refresh()
+
+    def _login_refresh(self):
+        t = self.texts["login"]
+
+        def show(lines):
+            if not t.winfo_exists():
+                return
+            t.configure(state="normal")
+            t.delete("1.0", "end")
+            for text, kind in lines:
+                t.insert("end", "  " + text + "\n", {"ok": "ok", "warn": "warn"}.get(kind, "mute"))
+            t.configure(state="disabled")
+
+        app = self.app
+        folder = EP.default_dirs((app._settings() or {}).get("endpoint_dir") or "")
+        try:
+            rows = EP.auth_history(EP.read_auth(folder, since_days=7), list(app.devices))
+        except Exception as e:  # noqa: BLE001
+            show([(f"Could not read the login log: {e}", "warn")])
+            return
+        if not rows:
+            show([("No failed logins recorded yet. The PC agent writes these - install it on the PCs you want "
+                   "watched (endpoint folder, install-agent.cmd).", "mute")])
+            return
+        ext = [g for g in rows if g["scope"] == "external"]
+        lines = [(f"{len(rows)} source(s) of failed logins in the last 7 days"
+                  + (f" - {len(ext)} from OUTSIDE your network" if ext else ""), "warn" if ext else "mute"), ("", "mute")]
+        for g in rows:
+            kind = "warn" if g["scope"] == "external" else "ok" if g["scope"] == "internal" else "mute"
+            tag = {"external": "[OUTSIDE/internet]", "internal": "[inside network]", "local": "[this PC]"}[g["scope"]]
+            lines.append((f"{tag}  {g['fails']} tries  account '{g['account']}' on {g['pc']}", kind))
+            lines.append((f"       from {g['source']} ({g['who']}), {g['logon']}, last {g['last']}", "mute"))
+        show(lines)
 
     def _build_mac(self, f):
         row = ttk.Frame(f)
