@@ -1,3 +1,14 @@
+## Network Doctor 3.40.1
+
+### Router-drop fix now leads with a shield that needs no binding
+Since IP/MAC binding takes time (and MAC/IP changes can drop users offline), the "router keeps dropping" fix now
+leads with locking the router's real MAC on each PC - the PC then ignores fake ARP for the gateway. No router
+change, no binding, affects no one else.
+- The "Fix my PC" agent does this automatically on every click: it pins the gateway's MAC, but only when the
+  internet is working at that moment, so it can never pin a spoofed address. A reboot clears it.
+- The fixer-brain steps were reordered: shield the PCs now -> find and unplug the offender -> (later, when
+  ready) bind devices + reply-only.
+
 ## Network Doctor 3.40.0
 
 ### "Router keeps dropping for a few seconds" is now diagnosed and fixed

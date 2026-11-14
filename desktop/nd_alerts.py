@@ -296,19 +296,22 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                     "The router is not fully down - it vanishes for 5-10 seconds again and again. That is an ARP "
                     "problem (a device answers for the router's IP, or a loop / storm flaps the router's address), "
                     "not an internet or cable fault.",
-                    "Stop any device from faking addresses: bind every device to its IP and let only the router "
-                    "answer ARP, then find and unplug the offender.",
-                    ["1) Find the offender: the alert lists the MAC(s). Network Tools > MAC lookup > 'Find it on the "
+                    "Shield the PCs now (no binding needed), find and unplug the offender, and only later make it "
+                    "permanent on the router.",
+                    ["1) Shield every PC NOW - this needs no IP/MAC binding and cannot cut anyone off: lock the "
+                     "router's MAC on each PC so it ignores fake ARP. The 'Fix my PC' agent does this "
+                     "automatically on each click; or Commands > PC fix script > 'Lock the router's MAC'; or run "
+                     "as admin 'netsh interface ipv4 set neighbors <adapter> <gateway-IP> <gateway-MAC>'. A reboot "
+                     "undoes it.",
+                     "2) Find the offender: the alert lists the MAC(s). Network Tools > MAC lookup > 'Find it on the "
                      "network' shows the router port; unplug that device or block it, and check it for NetCut / "
                      "malware or a second router plugged in by its LAN port.",
-                     "2) Make it permanent on the router: Devices > bind every device to its IP (IP-MAC binding), "
-                     "then Security > Network guard turns on 'only the router answers ARP' (reply-only) and blocks "
-                     "rogue DHCP/DNS. After this, a device faking the router's IP is simply ignored.",
-                     "3) On each PC now (quick shield until the above is done): lock the router's MAC - "
-                     "Commands > PC fix script > 'Lock the router's MAC', or run "
-                     "'netsh interface ipv4 set neighbors <adapter> <gateway-IP> <gateway-MAC>' as admin.",
-                     "4) If the cause is a loop (two switch ports joined / a cable in two sockets), the storm alert "
-                     "names the port - remove the extra cable."],
+                     "3) If the cause is a loop (two switch ports joined / a cable in two sockets), the storm alert "
+                     "names the port - remove the extra cable.",
+                     "4) Permanent, LATER (when you can bind devices): Devices > bind every device to its IP, then "
+                     "Security > Network guard > 'only the router answers ARP' (reply-only). Do this only after "
+                     "binding, or a device without a reservation loses the network - which is why the quick PC "
+                     "shield above comes first."],
                     app=("Lock devices to their IP (binding)", "binding"))
 
     if ("gateway" in low or "router" in low) and "not answer" in low or "internet is down" in low or \
