@@ -91,9 +91,17 @@ function Lock-Gateway {
     $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
            Sort-Object RouteMetric | Select-Object -First 1).NextHop
     if (-not $gw -or $gw -eq '0.0.0.0') { return }
-    $okNet = (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue $gw) -and
-             (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue 8.8.8.8)
-    if (-not $okNet) { Write-Host "   - Router shield skipped (internet not stable right now)" -ForegroundColor DarkGray; return }
+    if (-not (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue $gw)) { return }
+    # internet check: ICMP to 8.8.8.8 is blocked on many office networks, so fall back to a quick TCP test.
+    $okNet = (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue 8.8.8.8)
+    if (-not $okNet) {
+        foreach ($hp in @(@('8.8.8.8', 53), @('1.1.1.1', 443), @('8.8.4.4', 443))) {
+            try { $c = New-Object Net.Sockets.TcpClient; $a = $c.BeginConnect($hp[0], $hp[1], $null, $null)
+                  if ($a.AsyncWaitHandle.WaitOne(1200) -and $c.Connected) { $okNet = $true; $c.Close(); break }
+                  $c.Close() } catch {}
+        }
+    }
+    if (-not $okNet) { Write-Host "   - Router shield skipped (internet not reachable right now)" -ForegroundColor DarkGray; return }
     $n = Get-NetNeighbor -IPAddress $gw -ErrorAction SilentlyContinue |
          Where-Object { $_.LinkLayerAddress -and $_.State -ne 'Unreachable' } | Select-Object -First 1
     if ($n -and $n.LinkLayerAddress) {
