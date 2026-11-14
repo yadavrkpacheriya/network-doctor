@@ -1895,7 +1895,7 @@ class ToolsTab:
         ttk.Button(row, text="Look up", style="Big.TButton", command=self._mac).pack(side="left", padx=4)
         ttk.Button(row, text="Find it on the network (asks the router)", command=self._mac_find).pack(
             side="left", padx=4)
-        ttk.Button(row, text="Router ports (devices on each)", command=self._ports).pack(side="left", padx=4)
+        ttk.Button(row, text="Router ports (devices on each)", command=self._router_ports).pack(side="left", padx=4)
         ttk.Label(row, text="  any format: 00-11-22-33-44-55, 0011.2233.4455, 001122334455 (first 6 digits are enough "
                             "for the vendor)", foreground="#667085").pack(side="left")
         self._out_box(f, "mac")
@@ -1929,7 +1929,7 @@ class ToolsTab:
             t.insert("end", str(e), "crit")
         t.configure(state="disabled")
 
-    def _ports(self):
+    def _router_ports(self):
         """How many devices sit on each router port - asks the router's bridge host table (read-only). A port
         with many devices has a switch on it; a port full of fake-MAC devices is the camera segment."""
         t = self.texts["mac"]

@@ -1,3 +1,10 @@
+## Network Doctor 3.52.0
+
+### Fix: Port scanner was broken (name clash)
+The new "Router ports" button added a method called `_ports`, the same name the Port scanner already used, so
+Python kept only the new one and the Port scanner's Scan button did nothing (or errored) since 3.43.0. Renamed
+the router-ports method; the Port scanner works again. Found in a full line-by-line review.
+
 ## Network Doctor 3.51.0
 
 ### Colour headers on the rest of the pages
