@@ -104,6 +104,19 @@ function Lock-Gateway {
 
 # ================================ FIX (the one button the user clicks) ================================
 if ($Mode -eq "fix") {
+    # The deep clean, Windows repair and router shield need administrator rights. If the user ran this without
+    # them, relaunch once with a UAC prompt so one click does everything (and skip nothing silently).
+    $amAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+               ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+    if (-not $amAdmin) {
+        try {
+            Start-Process powershell -Verb RunAs -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Mode", "fix")
+            return
+        } catch {
+            Write-Host "  (Running without administrator - some deep steps will be skipped.)" -ForegroundColor DarkGray
+        }
+    }
     $host.UI.RawUI.WindowTitle = "Fix my PC"
     $before = (Get-PSDrive C).Free
     Write-Host "`n  Fixing and cleaning this PC... please wait (about a minute).`n" -ForegroundColor Cyan
