@@ -6,9 +6,11 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../net/model.dart';
 import '../net/snmp.dart' as snmp;
 import '../net/tools.dart';
+import 'router_screen.dart';
 import 'device_screen.dart';
 
 /// Engineer's tools: ping, port scan, switch details, DNS, speed, Wake-on-LAN, subnet calculator.
+
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
 
@@ -45,6 +47,9 @@ class ToolsScreen extends StatelessWidget {
         _header(context, 'Equipment', const Color(0xFF1D4ED8)),
         tool(const Color(0xFF1D4ED8), Icons.router, 'Switch / router details',
             'Ports, speed, errors and neighbours over SNMP - any brand', const _SwitchTool()),
+        tool(const Color(0xFF7C3AED), Icons.vpn_key, 'Router (MikroTik) login',
+            'Log in to the router directly over Wi-Fi: DHCP leases, ARP (IP-MAC), run commands - no PC',
+            const RouterScreen()),
         _header(context, 'This PC & helpers', const Color(0xFFA16207)),
         tool(const Color(0xFFA16207), Icons.power_settings_new, 'Wake-on-LAN', 'Switch on a PC that is off',
             const _WolTool()),
