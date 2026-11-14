@@ -1,3 +1,13 @@
+## Network Doctor 3.37.1
+
+### Data-leak watch: large uploads leaving the office
+- Usage insights now list every large upload of the last 7 days by person (name - department - IP), place and
+  day: over 300 MB in a day to cloud storage, e-mail, messaging, AI tools or photos, and over 100 MB to file
+  sharing (WeTransfer, MEGA, Dropbox), Telegram, remote control (AnyDesk, TeamViewer), VPN, torrents or a
+  server with no name. File-sharing / remote-control / unnamed places are marked critical.
+- Apps marked as trusted (a backup) are left out. It shows size and place only: the network cannot see which
+  file was sent.
+
 ## Network Doctor 3.37.0
 
 ### Usage: clear app names instead of company / whois texts (old days are renamed too)

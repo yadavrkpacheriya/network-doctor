@@ -88,3 +88,27 @@ def test_no_name_share():
 def test_two_addresses_sort_by_first_ip():
     order = T.sorted_order([(1, "192.168.0.80"), (2, "192.168.0.9, 192.168.0.200"), (3, "192.168.0.100")])
     assert order == [2, 1, 3]
+
+
+def test_leak_rows():
+    rows = [("2026-11-13", "a", "Google Drive / Docs", 400e6), ("2026-11-13", "a", "Gmail", 100e6),
+            ("2026-11-13", "b", "MEGA (file sharing)", 150e6), ("2026-11-13", "b", "Instagram", 900e6),
+            ("2026-11-13", "c", "Acronis Cloud Backup", 9e9), ("2026-11-13", "c", U.UNNAMED, 2e9),
+            ("2026-11-13", "d", "AnyDesk", 2e9)]
+    got = U.leak_rows(rows, trusted=lambda app: app == "AnyDesk")
+    assert [(r["dev"], r["app"], r["high"]) for r in got] == [
+        ("c", U.UNNAMED, True), ("a", "Google Drive / Docs", False), ("b", "MEGA (file sharing)", True)]
+
+
+def test_leak_insight_names_person_and_place():
+    import datetime as dt
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        s = U.UsageStore(os.path.join(tmp, "u.db"))
+        s.set_devices([{"mac": "AA:00:00:00:00:01", "ip": "192.168.0.57", "name": "Hitesh", "online": True}],
+                      {"AA:00:00:00:00:01": {"dept": "Accounts"}})
+        s.learn_names([("5.5.5.5", "wetransfer.com")])
+        s.add_flow("192.168.0.57", "5.5.5.5", 443, 6, 250_000_000, True)
+        s.flush(force=True)
+        hit = [i for i in s.insights(today=dt.date.today()) if i["title"].startswith("Large uploads")]
+        assert len(hit) == 1 and hit[0]["sev"] == "critical"
+        assert "Hitesh - Accounts (192.168.0.57) sent" in hit[0]["text"] and "WeTransfer" in hit[0]["text"]

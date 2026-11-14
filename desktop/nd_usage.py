@@ -1173,6 +1173,18 @@ class UsageStore:
                             "action": "Schedule it for the night (Windows: Active hours and Delivery Optimization "
                                       "limits; Dell / Lenovo / HP update tools: set to notify only; backups and CCTV "
                                       "cloud: night schedule)."})
+        week = (today - dt.timedelta(days=7)).isoformat()
+        leaks = leak_rows(self._rows("SELECT day, dev, app, SUM(up) FROM usage WHERE day >= ? GROUP BY day, dev, app",
+                                     (week,)), self.is_trusted)
+        if leaks:
+            out.append({"sev": "critical" if any(r["high"] for r in leaks) else "warning",
+                        "title": f"Large uploads leaving the office: {len(leaks)} in the last 7 days",
+                        "text": "; ".join(f"{self.who(names, r['dev'])} sent {fmt_bytes(r['up'])} to {r['app']} on "
+                                          f"{r['day']}" for r in leaks[:8]) + (" ..." if len(leaks) > 8 else "")
+                                + ". This is the size and the place only - the network cannot see which file.",
+                        "action": "Ask the person what was sent. If it is expected (a backup, a vendor share), mark "
+                                  "the app as trusted in Usage; if not, block the app for that device (Security) "
+                                  "and check the PC."})
         blind = no_name_share(rows)
         if blind["share"] >= 0.15:
             how = ("The router's DNS log is not arriving, so the app cannot see which name each device asked for. "
@@ -1194,6 +1206,28 @@ class UsageStore:
             out.append({"sev": "info", "title": f"Learning: {n_days} day(s) recorded",
                         "text": "Patterns and 'unusual' warnings get reliable after a week of data.", "action": ""})
         return out
+
+
+# where a file can leave the office: upload size to these is watched per device and day
+LEAK_GROUPS = {"Cloud storage & office", "Email", "Messaging", "AI tools", "Remote access", "Photos"}
+LEAK_HIGH = {"WeTransfer / file sharing", "MEGA (file sharing)", "Telegram", "AnyDesk", "TeamViewer",
+             "Chrome Remote Desktop", "VPN", "BitTorrent", "Dropbox", UNNAMED, HOSTING, ISP_DIRECT}
+LEAK_MB, LEAK_HIGH_MB = 300, 100
+
+
+def leak_rows(rows, trusted=lambda app: False):
+    """rows: (day, dev, app, upload bytes). Uploads big enough to be files leaving the office:
+    [{"day","dev","app","up","high"}], biggest first. high = a file-sharing / remote-control / unnamed place.
+    Apps the user marked as expected (backup) are left out."""
+    out = []
+    for day, dev, app, up in rows:
+        high = app in LEAK_HIGH
+        if not high and group_of(app) not in LEAK_GROUPS:
+            continue
+        if up < (LEAK_HIGH_MB if high else LEAK_MB) * 1e6 or trusted(app):
+            continue
+        out.append({"day": day, "dev": dev, "app": app, "up": up, "high": high})
+    return sorted(out, key=lambda r: -r["up"])
 
 
 def no_name_share(rows):
