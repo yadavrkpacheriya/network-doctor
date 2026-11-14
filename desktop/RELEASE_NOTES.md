@@ -1,3 +1,13 @@
+## Network Doctor 3.48.0
+
+### Simpler pages: one main action, the rest under "Advanced"
+Same clean-up as the binding page, now on the busiest pages:
+- Network guard: one "Turn on protection (apply on router)" button; UNDO, make/copy/save commands moved under
+  Advanced.
+- Inventory: "Export to Excel" + "Refresh" stay; Tag, Import, Get PC details, Collect-from-all-PCs moved under
+  Advanced.
+Every option is still there - just hidden until you tick "Advanced", so the normal view is compact and clear.
+
 ## Network Doctor 3.47.0
 
 ### Simpler IP-MAC binding: one button
