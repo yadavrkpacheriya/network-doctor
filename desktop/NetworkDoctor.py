@@ -34,6 +34,7 @@ import nd_auth as AU
 import nd_defense as DF
 import nd_arpblock as AB
 import nd_autofix as AF
+import nd_brain as BR
 import nd_protab
 import nd_tabs
 import nd_tools as T
@@ -68,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.52.0"
+VERSION = "3.53.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2510,6 +2511,10 @@ class App(tk.Tk):
     def _fix_stats(self):
         return self._settings().setdefault("fix_stats", {})
 
+    def _brain(self):
+        """The learning brain (nd_brain). Lives in settings so it syncs like everything else."""
+        return BR._migrate(self._settings().setdefault("brain", BR.blank()))
+
     def _auto_fix(self, e):
         """The same problem repeats several times: apply its safe fix by itself (setting in Alerts; on by
         default). How many repeats it takes starts at AUTO_FIX_AFTER and is adjusted per fix-kind by its
@@ -2519,6 +2524,14 @@ class App(tk.Tk):
             return
         r = AL.explain(e["text"], e["sev"], self.lip, self.gw, self.net)
         need = AF.repeat_threshold(self._fix_stats(), r["kind"], self.AUTO_FIX_AFTER)
+        brain = self._brain()
+        src = "external" if "internet" in (e.get("text") or "").lower() else ""
+        d = BR.decide(brain, e.get("text", ""), r["kind"], e.get("category", ""), src, e.get("sev", "warning"))
+        BR.recurrence(brain, f"{r['kind']}|{e.get('category', '')}")
+        if d["recurring"] or d["confidence"] < 0.4:
+            need += 2                    # keeps coming back, or the brain is unsure here: be more careful
+        elif d["auto_ok"]:
+            need = min(need, 1)          # a proven-safe fix for this exact situation: act sooner
         if e.get("count", 1) < need:
             return
         if r["kind"] == "ip_conflict":
@@ -2621,8 +2634,13 @@ class App(tk.Tk):
         ok, bad = AF.check_regressions(self._fix_history(), self.alert_log.items, before)
         for fid in ok:
             AF.mark_ok(self._fix_history(), self._fix_stats(), fid)
+            fx = AF.find(self._fix_history(), fid)
+            if fx:
+                BR.learn_outcome(self._brain(), fx.get("title", ""), fx.get("kind", ""), ok=True)
         for fid in bad:
             fx = AF.find(self._fix_history(), fid)
+            if fx:
+                BR.learn_outcome(self._brain(), fx.get("title", ""), fx.get("kind", ""), ok=False)
             if fx and fx.get("undo_cmd"):
                 self._undo_fix(fid, auto=True)
             else:
@@ -2654,6 +2672,7 @@ class App(tk.Tk):
                 return
             AF.mark_undone(self._fix_history(), self._fix_stats(), fix_id, auto=auto,
                            note="undone automatically: a new issue appeared" if auto else "undone by you")
+            BR.learn_outcome(self._brain(), fx.get("title", ""), fx.get("kind", ""), ok=False)
             self._save_settings()
             self._refresh_alerts()
             self._log_event("info", ("Auto-fix undone by itself (a new issue appeared after it): "
