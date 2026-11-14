@@ -16,6 +16,20 @@ import nd_core as core
 import nd_tools as T
 
 UI = {}
+
+
+def section_card(parent, title, color="#475569", pady=(0, 8)):
+    """A titled section with a small COLOURED header bar, so a page of settings is easy to scan instead of a
+    wall of same-looking boxes. Returns the body frame - pack the controls into it."""
+    import tkinter as _tk
+    from tkinter import ttk as _ttk
+    outer = _ttk.Frame(parent)
+    outer.pack(fill="x", pady=pady)
+    _tk.Label(outer, text=title, bg=color, fg="white", font=("Segoe UI", 10, "bold"),
+              anchor="w", padx=10, pady=4).pack(fill="x")
+    body = _ttk.Frame(outer, padding=(10, 8))
+    body.pack(fill="x")
+    return body
 APP = "Network Doctor"
 
 # colours: fill, outline
