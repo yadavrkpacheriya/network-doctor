@@ -1085,6 +1085,39 @@ def report_issues(db):
 BOGUS_OUI = ("a00000", "000000", "020000")   # not real vendor blocks: cheap cameras ship MACs like A0:00:00:01:xx
 
 
+def router_port_summary(hosts, devices, tags=None):
+    """Group the router's bridge host table by port: how many devices (MACs) are on each router port, which
+    known devices they are, and how many carry a fake / cloned MAC. A port with many MACs has a SWITCH on it;
+    a port that is mostly fake-MAC devices is the camera segment. Returns [(port, info_dict)] sorted by count.
+    Pure, so it is tested without a router; the window just passes the bridge host rows it read."""
+    tags = tags or {}
+    by_mac = {}
+    for d in devices or []:
+        if d.get("mac"):
+            by_mac[d["mac"].upper()] = d
+    ports = {}
+    for h in hosts or []:
+        mac = core.norm_mac(h.get("mac-address", ""))
+        if not mac or str(h.get("local", "")).lower() == "true":   # skip the router's own interfaces
+            continue
+        port = h.get("on-interface") or h.get("interface") or "?"
+        p = ports.setdefault(port, {"count": 0, "named": [], "bogus": 0, "macs": set()})
+        if mac in p["macs"]:
+            continue
+        p["macs"].add(mac)
+        p["count"] += 1
+        oui = mac.replace(":", "").lower()[:6]
+        if oui in BOGUS_OUI:
+            p["bogus"] += 1
+        d = by_mac.get(mac)
+        nm = (tags.get(mac, {}) or {}).get("name") or (d or {}).get("name")
+        if nm:
+            p["named"].append(f"{nm} ({(d or {}).get('ip', '')})".strip())
+    for p in ports.values():
+        p.pop("macs", None)
+    return sorted(ports.items(), key=lambda kv: -kv[1]["count"])
+
+
 def mac_health_issues(devices, tags=None):
     """MAC problems that quietly flap the gateway on a flat (one-switch) network: the SAME MAC on two devices,
     and cameras shipped with a fake / cloned MAC (A0:00:00:01:xx and the like). Both confuse the router's and

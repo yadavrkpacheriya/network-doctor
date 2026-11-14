@@ -39,3 +39,19 @@ def test_recipe_gives_unique_ip_fix_not_binding():
     joined = " ".join(r["steps"]).lower()
     assert r["kind"] == "bogus_mac" and "fixed ip" in joined and "separate switch" in joined
     assert "do not ip-mac bind" in joined and r["kind"] not in A.AUTO_SAFE
+
+
+def test_router_port_summary():
+    hosts = [{"mac-address": "A0:00:00:01:7F:F0", "on-interface": "ether4"},
+             {"mac-address": "A0:00:00:01:81:0E", "on-interface": "ether4"},
+             {"mac-address": "A0:00:00:01:81:0E", "on-interface": "ether4"},     # duplicate row: counted once
+             {"mac-address": "F8:75:A4:8D:B7:FA", "on-interface": "ether2"},
+             {"mac-address": "CC:2D:E0:B6:DE:5B", "on-interface": "bridge", "local": "true"}]  # router itself: skip
+    devs = [{"mac": "F8:75:A4:8D:B7:FA", "ip": "192.168.0.70", "name": "RAKESH-IT"},
+            {"mac": "A0:00:00:01:81:0E", "ip": "192.168.0.76", "name": "Office Cam"}]
+    r = T.router_port_summary(hosts, devs, {})
+    ports = dict(r)
+    assert r[0][0] == "ether4" and ports["ether4"]["count"] == 2 and ports["ether4"]["bogus"] == 2
+    assert "Office Cam (192.168.0.76)" in ports["ether4"]["named"]
+    assert ports["ether2"]["count"] == 1 and ports["ether2"]["bogus"] == 0
+    assert "bridge" not in ports        # the router's own interface is not a port with devices
