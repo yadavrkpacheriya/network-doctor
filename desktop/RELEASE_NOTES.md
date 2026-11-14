@@ -1,3 +1,18 @@
+## Network Doctor 3.53.0
+
+### A smarter learning brain (no heavy ML library - stays tiny and offline)
+The auto-fix brain now learns properly, not just a single success rate:
+- A Naive-Bayes text model learns which wording means which problem, so it recognises issues even when the exact
+  words differ.
+- An ensemble ("forest") of signals votes on each problem: the keyword rule, the learned text model and the
+  past success history combine into one answer with a confidence.
+- It learns PER SITUATION: the same fix can be trusted for cameras but held back for PCs, or inside the network
+  but never when the attempt comes from the internet.
+- It tracks problems that keep coming back and escalates to a permanent fix instead of patching again.
+- All of this only makes auto-fix act sooner when a fix has a proven clean record in that exact situation, and
+  more cautiously when the brain is unsure or the issue is recurring - it never auto-applies an
+  internet-facing or network-blocking change. Pure Python, syncs in settings like everything else.
+
 ## Network Doctor 3.52.0
 
 ### Fix: Port scanner was broken (name clash)
