@@ -31,6 +31,7 @@ CAT_LABEL = {WORK: "Productive", NEUTRAL: "Neutral", PERSONAL: "Unproductive"}
 SLOT = 300            # seconds: a device counts as "using" an app in a 5-minute slot with at least ACTIVE_BYTES
 ACTIVE_BYTES = 150_000
 KEEP_DAYS = 120
+TIDY_VERSION = 1      # raise when tidy() / the catalog names change, so the stored history is renamed once
 
 PORT_RULES = {25: ("Email", WORK), 465: ("Email", WORK), 587: ("Email", WORK), 993: ("Email", WORK),
               995: ("Email", WORK), 143: ("Email", WORK), 110: ("Email", WORK), 3389: ("Remote Desktop", WORK),
@@ -67,6 +68,16 @@ def site_of(name):
 # (app, category, group, [domain endings])
 # ==========================================================================
 CATALOG = [
+    ("Acronis Cloud Backup", WORK, "Backup", ["acronis.com", "acronis.net", "acroniscloud.com"]),
+    ("Certificate checks", NEUTRAL, "System", ["digicert.com", "pki.goog", "amazontrust.com", "lencr.org",
+                                               "letsencrypt.org", "sectigo.com", "globalsign.com", "ocsp.apple.com",
+                                               "identrust.com", "usertrust.com", "entrust.net"]),
+    ("Website analytics / trackers", NEUTRAL, "System", ["nelreports.net", "datadoghq.com", "hotjar.com",
+                                                         "clarity.ms", "browser-intake-datadoghq.com",
+                                                         "browser-intake-us5-datadoghq.com", "newrelic.com",
+                                                         "nr-data.net", "sentry.io", "mixpanel.com", "segment.io",
+                                                         "amplitude.com"]),
+    ("DNS look-ups (Google DNS)", NEUTRAL, "System", ["dns.google"]),
     # ---- Meta: four different apps on the same company's servers
     ("WhatsApp", NEUTRAL, "Messaging", ["whatsapp.com", "whatsapp.net", "wa.me", "whatsapp.biz"]),
     ("Instagram", PERSONAL, "Social media", ["instagram.com", "cdninstagram.com", "ig.me", "instagr.am"]),
@@ -386,7 +397,11 @@ CATALOG = [
 ]
 
 # when only the address owner is known (no DNS name): honest, wider labels - never "Facebook" for all of Meta
+UNNAMED = "Unnamed servers (only the address owner is known)"
+HOSTING = "Rented / cloud servers (site name not known)"
+ISP_DIRECT = "Indian ISP address (direct link, call or ISP cache)"
 ORG_HINTS = [
+    (("acronis",), "Acronis Cloud Backup", WORK),
     (("meta platforms", "facebook"), "Meta (Facebook / Instagram / WhatsApp - name not known)", NEUTRAL),
     (("google",), "Google (service not known)", NEUTRAL), (("microsoft",), "Microsoft (other)", NEUTRAL),
     (("akamai", "cloudflare", "fastly", "edgecast", "limelight"), "CDN (various)", NEUTRAL),
@@ -394,7 +409,20 @@ ORG_HINTS = [
     (("netflix",), "Netflix", PERSONAL), (("bytedance", "tiktok"), "TikTok", PERSONAL),
     (("telegram",), "Telegram", PERSONAL), (("valve",), "Steam", PERSONAL), (("zoom",), "Zoom", WORK),
     (("hikvision",), "CCTV cloud", NEUTRAL), (("dahua",), "CCTV cloud", NEUTRAL),
+    (("cdn77", "datacamp", "bunnyinfra", "bunny.net", "gcore", "cachefly", "stackpath"), "CDN (various)", NEUTRAL),
+    (("linode", "vultr", "digitalocean", "hwclouds", "huawei cloud", "alibaba", "aliyun", "ucloud", "tencent",
+      "ovh", "hetzner", "contabo", "leaseweb", "oracle"), HOSTING, NEUTRAL),
+    (("airtel", "bharti", "reliance jio", "jio infocomm", "vil apnic", "vodafone idea", "bsnl", "tata tele",
+      "tata communications", "act fibernet", "excitel", "hathway"), ISP_DIRECT, NEUTRAL),
 ]
+
+# buckets that say "we only know whose address it is": a real site name on the row always beats them
+VAGUE_APPS = {"CDN (various)", "Microsoft (other)", "Amazon cloud (AWS)", "Google (service not known)",
+              "Google (other)", "Apple / iCloud", "Other / unknown", "Other", HOSTING, ISP_DIRECT, UNNAMED,
+              "Meta (Facebook / Instagram / WhatsApp - name not known)"}
+_INFRA_SITE = re.compile(r"akamai|cloudfront\.net|amazonaws\.com|fastly|cloudflare|1e100\.net|edgekey|edgesuite|"
+                         r"azureedge|trafficmanager|windows\.net|usercontent|bunnyinfra|cdn77|hwclouds|llnwd")
+_DOMAIN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+")
 
 APP_INFO = {}   # app -> (category, group)
 SUFFIX = {}     # domain ending -> app
@@ -415,6 +443,43 @@ NAME_PATTERNS = [(re.compile(r"(^|\.)doc-[\w-]+-docs\.googleusercontent\.com$"),
                  (re.compile(r"(^|\.)whatsapp-cdn-shv[\w-]*\.fbcdn\.net$"), "WhatsApp")]
 
 
+def tidy(app, site=""):
+    """(app, site) the way a person should see it. Fixes rows that were named after the address owner only:
+      - a real site name on the row wins over a company bucket: site acronis.com under "CDN (various)" or
+        "Microsoft (other)" is Acronis Cloud Backup (backups travel through Akamai / Azure addresses);
+      - an app that is really a server's host name or a whois text ("xx-fbcdn-shv-01-del2.fbcdn.net meta-mnt",
+        "Acronis Asia Pte Ltd administrator") goes to the app it belongs to;
+      - what is left with only an owner ("netutils-mnt", a person's name from an ISP's whois) is collected under
+        one honest line, UNNAMED, with the owner kept as the site - never shown as if it were an app.
+    Used for new traffic and, once, for the history already stored."""
+    app, site = (app or "").strip(), (site or "").strip()
+    low_site = site.lower()
+    real_site = bool(_DOMAIN.fullmatch(low_site)) and not _INFRA_SITE.search(low_site)
+    if real_site and (app in VAGUE_APPS or (app not in APP_INFO and app not in _SHARED_NAMES)):
+        named = app_of_name(low_site)
+        if named:
+            return named, site
+        if app in VAGUE_APPS:
+            return site, site
+    if app in APP_INFO or app in _SHARED_NAMES:
+        return app, site
+    low = app.lower()
+    host = ptr_of(app) or (low if _DOMAIN.fullmatch(low) else "")
+    named = app_of_name(host) if host else None
+    if named:
+        return named, site or pretty_site(app)
+    for words, nm, _c in ORG_HINTS:
+        if any(w in low for w in words):
+            return nm, site or app
+    if host and not re.search(r"\d+[-.]\d+", host):
+        return app, site                      # a plain site name (somecompany.in): it is its own app
+    if host:                                  # 172-236-162-42.ip.linodeusercontent.com: a rented server
+        return HOSTING, site_of(host) or host
+    owner = re.sub(r"\s+(administrator|admin|hostmaster|noc|abuse)$", "", app, flags=re.I)
+    owner = re.sub(r"[-_ ]mnt\b", "", owner, flags=re.I).strip() or app
+    return UNNAMED, f"owner: {owner}"
+
+
 # Small "front door" addresses (login, page, chat) that Google / Meta share between their apps. When the router's
 # DNS cache shows several apps for such an address and the device's own look-up is unknown, the traffic is
 # shown under this name instead of being given to one app. Video (googlevideo.com) and app-own addresses
@@ -425,6 +490,9 @@ SHARED_FRONTENDS = {a: "Google (shared address)" for a in ("Google Drive / Docs"
                                                             "Google Maps", "Gemini (Google AI)")}
 SHARED_FRONTENDS.update({a: "Meta (shared address)" for a in ("Facebook", "Instagram", "WhatsApp", "Messenger",
                                                                "Threads")})
+
+
+_SHARED_NAMES = set(SHARED_FRONTENDS.values())
 
 
 def app_of_name(name):
@@ -697,6 +765,50 @@ class UsageStore:
                 db.execute("PRAGMA journal_mode=WAL")  # the UI reads while the monitor writes
             except sqlite3.DatabaseError:
                 pass
+        try:
+            self.retidy()
+        except sqlite3.DatabaseError:
+            pass                 # the history stays as it was; new traffic is still named the new way
+
+    def retidy(self, force=False):
+        """Once per naming version: rename the stored history with tidy(), so old days show the same clear
+        names as new traffic (Acronis in one line, no whois texts as apps). Rows that end up with the same
+        name are added together. Returns the number of (app, site) names changed."""
+        with self._db() as db:
+            if not force and db.execute("PRAGMA user_version").fetchone()[0] >= TIDY_VERSION:
+                return 0
+            db.execute("CREATE TEMP TABLE IF NOT EXISTS ren (a TEXT, s TEXT, na TEXT, ns TEXT, nc TEXT, "
+                       "PRIMARY KEY (a, s))")
+            db.execute("DELETE FROM ren")
+            n = 0
+            for a, st in db.execute("SELECT DISTINCT app, site FROM usage").fetchall():
+                na, ns = tidy(a, st)
+                ns = (ns or "")[:60]
+                if (na, ns) != (a, st or ""):
+                    cat = self.overrides.get("app:" + na) or (APP_INFO[na][0] if na in APP_INFO else None)
+                    db.execute("INSERT OR REPLACE INTO ren VALUES (?,?,?,?,?)", (a, st, na, ns, cat))
+                    n += 1
+            if n:
+                db.execute("INSERT INTO usage SELECT u.day, u.hour, u.dev, r.na, r.ns, COALESCE(r.nc, u.cat), "
+                           "u.up, u.down, u.flows FROM usage u JOIN ren r ON r.a = u.app AND r.s IS u.site "
+                           "WHERE true ON CONFLICT(day, hour, dev, app, site) DO UPDATE SET up=up+excluded.up, "
+                           "down=down+excluded.down, flows=flows+excluded.flows")
+                db.execute("DELETE FROM usage WHERE EXISTS (SELECT 1 FROM ren r WHERE r.a = usage.app "
+                           "AND r.s IS usage.site)")
+            db.execute("DELETE FROM ren")
+            for (a,) in db.execute("SELECT DISTINCT app FROM active").fetchall():
+                na = tidy(a, "")[0]
+                if na != a:
+                    cat = self.overrides.get("app:" + na) or (APP_INFO[na][0] if na in APP_INFO else None)
+                    db.execute("INSERT OR REPLACE INTO ren VALUES (?,?,?,?,?)", (a, "", na, "", cat))
+            # minutes of two old names in the same hour overlap, so the larger one is kept (never over 60)
+            db.execute("INSERT INTO active SELECT x.day, x.hour, x.dev, r.na, COALESCE(r.nc, x.cat), x.minutes "
+                       "FROM active x JOIN ren r ON r.a = x.app WHERE true ON CONFLICT(day, hour, dev, app) "
+                       "DO UPDATE SET minutes=MAX(minutes, excluded.minutes)")
+            db.execute("DELETE FROM active WHERE app IN (SELECT a FROM ren)")
+            db.execute("DROP TABLE ren")
+            db.execute(f"PRAGMA user_version = {TIDY_VERSION}")
+        return n
 
     # ---- inputs
     def set_devices(self, devices, tags=None):
@@ -836,6 +948,11 @@ class UsageStore:
             # a page / login address shared by several Google or Meta apps: do not guess the app
             app = SHARED_FRONTENDS[app]
             cat = (ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app) or NEUTRAL
+        app2, site = tidy(app, site)
+        if app2 != app:
+            app = app2
+            cat = ((ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app)
+                   or APP_INFO.get(app, (NEUTRAL,))[0])
         with self.lock:
             r = self.cur[(day, hour, dev, app, (site or "")[:60], cat)]
             r[0 if up else 1] += nbytes
@@ -881,6 +998,18 @@ class UsageStore:
         self.flush(force=True)
         with self._db() as db:
             return db.execute(sql, args).fetchall()
+
+    @staticmethod
+    def who(names, dev):
+        """A device for an alert line: "Hitesh - Accounts (192.168.0.57)". Two people can have the same name,
+        so the department and the IP are always added when they are known."""
+        n = names.get(dev) or {}
+        text = n.get("name") or dev
+        if n.get("dept"):
+            text += f" - {n['dept']}"
+        if n.get("ip") and n["ip"] not in text:
+            text += f" ({n['ip']})"
+        return text
 
     def names(self):
         return {r[0]: {"name": r[1], "ip": r[2], "dept": r[3]} for r in self._rows("SELECT * FROM devices")}
@@ -1011,7 +1140,7 @@ class UsageStore:
         for dev, per_day in dev_day.items():
             hist = [b for d, b in per_day.items() if d != last]
             if len(hist) >= 3 and per_day.get(last, 0) > 3 * max(statistics.mean(hist), 200e6 / 3):
-                nm = names.get(dev, {}).get("name") or dev
+                nm = self.who(names, dev)
                 top = dev_app[dev].most_common(1)[0][0] if dev_app[dev] else "?"
                 if self.is_trusted(top):
                     continue  # a deliberate, expected service (e.g. Acronis backup) - not a problem
@@ -1026,7 +1155,7 @@ class UsageStore:
         if dev_total and len(dev_total) >= 3:
             d, b = dev_total.most_common(1)[0]
             if b / total >= 0.3:
-                nm = names.get(d, {}).get("name") or d
+                nm = self.who(names, d)
                 out.append({"sev": "warning", "title": f"{nm} alone uses {100 * b / total:.0f}% of the internet",
                             "text": "Top apps: " + ", ".join(f"{a} {fmt_bytes(x)}" for a, x in
                                                              dev_app[d].most_common(3)) + ".",
@@ -1044,10 +1173,41 @@ class UsageStore:
                             "action": "Schedule it for the night (Windows: Active hours and Delivery Optimization "
                                       "limits; Dell / Lenovo / HP update tools: set to notify only; backups and CCTV "
                                       "cloud: night schedule)."})
+        blind = no_name_share(rows)
+        if blind["share"] >= 0.15:
+            how = ("The router's DNS log is not arriving, so the app cannot see which name each device asked for. "
+                   if not self.dns_log_rx else "")
+            if blind["own_dns_devs"] >= 3:
+                how += (f"{blind['own_dns_devs']} devices ask Google DNS directly instead of the router, so the "
+                        "router never sees the names they open. ")
+            out.append({"sev": "warning",
+                        "title": f"{100 * blind['share']:.0f}% of the traffic has no website name "
+                                 f"({fmt_bytes(blind['bytes'])})",
+                        "text": how + "Only the owner of the address is known for it (Akamai, Google, Amazon...), "
+                                      "which is why it shows as 'CDN (various)' or 'service not known'.",
+                        "action": "1) Setup > Apply router settings now (turns on the router's DNS log). "
+                                  "2) Security > Network guard > 'All DNS through the router' (also stops browsers' "
+                                  "secure DNS from hiding names). Both can be undone on the same pages. From then on "
+                                  "every new connection is named per device; pages opened through a VPN or a "
+                                  "private relay still cannot be named by anyone on the network."})
         if n_days < 7:
             out.append({"sev": "info", "title": f"Learning: {n_days} day(s) recorded",
                         "text": "Patterns and 'unusual' warnings get reliable after a week of data.", "action": ""})
         return out
+
+
+def no_name_share(rows):
+    """rows: (day, hour, app, cat, dev, bytes). How much traffic is known only by the owner of the address,
+    and how many devices send their DNS questions straight to Google instead of the router."""
+    total = blind = 0
+    own = set()
+    for _day, _hour, app, _cat, dev, b in rows:
+        total += b
+        if app in VAGUE_APPS:
+            blind += b
+        elif app == "DNS look-ups (Google DNS)":
+            own.add(dev)
+    return {"share": blind / total if total else 0.0, "bytes": blind, "own_dns_devs": len(own)}
 
 
 def productivity(work_min, personal_min):
