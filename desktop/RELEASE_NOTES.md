@@ -1,3 +1,11 @@
+## Network Doctor 3.57.0
+
+### Audit fixes
+- **Daily report now shows failed fixes.** A fix whose command itself failed (router unreachable, script error) was silently dropped from the report; it now appears under "Tried but rolled back" with its reason, so nothing you share back disappears.
+- Small code cleanup (removed an unused field in the SMB OS-detect parser).
+
+Full line-by-line audit this round: all 46 modules compile, 760 tests pass, no attribute errors, mute/brain/report/recurrence logic verified correct.
+
 ## Network Doctor 3.56.0
 
 ### Brain curriculum deepened with the real mechanisms
