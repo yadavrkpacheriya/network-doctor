@@ -291,6 +291,26 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "WinBox > System > Users: change the admin password; remove unused users.",
                      "If the attempts come from outside: make sure no port forward points to the router itself."])
 
+    if "keeps dropping" in low or ("router" in low and "few seconds" in low) or "gw_flap" in low:
+        return _fix(1, "gw_flap", "Router keeps dropping for a few seconds",
+                    "The router is not fully down - it vanishes for 5-10 seconds again and again. That is an ARP "
+                    "problem (a device answers for the router's IP, or a loop / storm flaps the router's address), "
+                    "not an internet or cable fault.",
+                    "Stop any device from faking addresses: bind every device to its IP and let only the router "
+                    "answer ARP, then find and unplug the offender.",
+                    ["1) Find the offender: the alert lists the MAC(s). Network Tools > MAC lookup > 'Find it on the "
+                     "network' shows the router port; unplug that device or block it, and check it for NetCut / "
+                     "malware or a second router plugged in by its LAN port.",
+                     "2) Make it permanent on the router: Devices > bind every device to its IP (IP-MAC binding), "
+                     "then Security > Network guard turns on 'only the router answers ARP' (reply-only) and blocks "
+                     "rogue DHCP/DNS. After this, a device faking the router's IP is simply ignored.",
+                     "3) On each PC now (quick shield until the above is done): lock the router's MAC - "
+                     "Commands > PC fix script > 'Lock the router's MAC', or run "
+                     "'netsh interface ipv4 set neighbors <adapter> <gateway-IP> <gateway-MAC>' as admin.",
+                     "4) If the cause is a loop (two switch ports joined / a cable in two sockets), the storm alert "
+                     "names the port - remove the extra cable."],
+                    app=("Lock devices to their IP (binding)", "binding"))
+
     if ("gateway" in low or "router" in low) and "not answer" in low or "internet is down" in low or \
             "no internet" in low or "wan down" in low or "gateway" in low and " down" in low:
         return _fix(1, "internet_down", "Router or internet not answering",

@@ -36,6 +36,46 @@ SYSLOG_PORT = 514 if core.IS_WIN else 5514  # macOS/Linux do not let normal apps
 STORM_PPS = 300
 
 
+def gateway_drop_cause(events, now=None, window=900, min_drops=3):
+    """Why does the router keep disappearing for a few seconds? Looks at the live-monitor events of the last
+    `window` seconds: if the gateway dropped (gw_down) at least `min_drops` times AND there were ARP conflicts,
+    a broadcast storm or a loop in the same stretch, the brief drops are that - not the internet going down.
+    Returns {"flapping", "drops", "cause", "macs", "text"} (cause: 'arp' / 'storm' / 'loop' / 'unknown').
+    Pure, so it is tested without a live network; the monitor just feeds it its own event list."""
+    import time as _t
+    now = now or _t.time()
+    recent = [e for e in (events or []) if now - e.get("t", 0) <= window]
+    drops = sum(1 for e in recent if e.get("kind") == "gw_down")
+    if drops < min_drops:
+        return {"flapping": False, "drops": drops, "cause": "", "macs": [], "text": ""}
+    macs, arp, storm, loop = [], 0, 0, 0
+    for e in recent:
+        k = e.get("kind")
+        if k in ("arp_spoof", "ip_conflict", "dhcp_conflict"):
+            arp += 1
+            m = (e.get("data") or {}).get("mac")
+            if m and m not in macs:
+                macs.append(m)
+        elif k in ("storm", "multicast", "mcast"):
+            storm += 1
+            for m in ((e.get("data") or {}).get("top") or [])[:3]:
+                mm = m[0] if isinstance(m, (list, tuple)) else m
+                if mm and mm not in macs:
+                    macs.append(mm)
+        elif k in ("loop", "loop_echo", "mac_flap"):
+            loop += 1
+    cause = "arp" if arp else "loop" if loop else "storm" if storm else "unknown"
+    why = {"arp": "ARP conflicts / a device answering for addresses that are not its own (ARP spoofing)",
+           "loop": "a network loop (two switch ports joined, or a cable in two sockets)",
+           "storm": "a broadcast / multicast storm flooding the network",
+           "unknown": "repeated short losses of the router (cause not pinned down yet)"}[cause]
+    mins = max(1, round(window / 60))
+    tail = (" Devices involved: " + ", ".join(macs[:4]) + ".") if macs else ""
+    text = (f"Router keeps dropping for a few seconds ({drops} times in ~{mins} min) - this is NOT the internet "
+            f"going down. Cause: {why}.{tail}")
+    return {"flapping": True, "drops": drops, "cause": cause, "macs": macs, "text": text}
+
+
 def storm_report(pps, mixed, top, seconds, self_mac=None, sniffing=False):
     """What to say about a high broadcast rate: (kind, severity, text, data), or (None, ...) when it is this
     PC's own traffic. top: [(mac, frames in the last `seconds`)] from the packet listener (broadcasts only).
@@ -1070,8 +1110,14 @@ class Monitor:
                 if fails >= 3 and not self._state["gw_down"] and not own_work:
                     self._state["gw_down"] = True
                     self.event("critical", "Monitor", f"Router {self.gw} not answering (3 pings lost)", "gw_down")
+                    cause = gateway_drop_cause(self.events_copy())
+                    if cause["flapping"] and not self._state.get("gw_flap"):
+                        self._state["gw_flap"] = True
+                        self.event("critical", "Monitor", cause["text"], "gw_flap",
+                                   {"cause": cause["cause"], "macs": cause["macs"], "gw": self.gw})
                 elif ms is not None and self._state["gw_down"]:
                     self._state["gw_down"] = False
+                    self._state["gw_flap"] = False
                     self.event("info", "Monitor", f"Router answering again ({ms:.0f} ms)", "gw_up")
             if self.sniffer_state == "running" and now - last_echo > 60:
                 last_echo = now
