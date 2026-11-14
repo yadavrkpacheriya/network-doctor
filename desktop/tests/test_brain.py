@@ -72,3 +72,29 @@ def test_migrate_handles_garbage_state():
     kb = {"nb": None, "kinds": None}
     d = B.decide(kb, "something", recipe_kind="loop")
     assert d["kind"] == "loop"
+
+
+def test_seed_teaches_curriculum_once_and_recognises_it():
+    kb = B.blank()
+    n = B.seed(kb)
+    assert n > 0
+    # every curriculum kind is now known
+    for kind in B.KNOWLEDGE:
+        assert kind in kb["kinds"]
+    # seeding is idempotent at the same version
+    assert B.seed(kb) == 0
+    # and the brain now names a problem it has only ever seen in the curriculum
+    d = B.decide(kb, "the switch keeps flooding broadcast packets and the network is slow")
+    assert d["kind"] == "broadcast_storm"
+    d2 = B.decide(kb, "someone covered the cctv lens and the view went black")
+    assert d2["kind"] == "camera_tamper"
+
+
+def test_seeded_blocking_kinds_never_auto_apply():
+    kb = B.blank()
+    B.seed(kb)
+    # kinds that block / reboot / shape / quarantine must NEVER be auto-safe, however confident
+    for kind in ("quarantine", "camera_reboot", "qos", "poe_overload", "mikrotik_fix"):
+        assert kind not in B.AUTO_SAFE
+        d = B.decide(kb, "x", recipe_kind=kind, cat="cam", src="int", sev="warning")
+        assert d["auto_ok"] is False

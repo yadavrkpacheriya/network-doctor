@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.54.0"
+VERSION = "3.55.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2558,8 +2558,12 @@ class App(tk.Tk):
         return self._settings().setdefault("fix_stats", {})
 
     def _brain(self):
-        """The learning brain (nd_brain). Lives in settings so it syncs like everything else."""
-        return BR._migrate(self._settings().setdefault("brain", BR.blank()))
+        """The learning brain (nd_brain). Lives in settings so it syncs like everything else. Seeded once with
+        the built-in networking curriculum so it recognises common problems from the first day, then learns."""
+        kb = BR._migrate(self._settings().setdefault("brain", BR.blank()))
+        if BR.seed(kb):
+            self._save_settings()
+        return kb
 
     def _auto_fix(self, e):
         """The same problem repeats several times: apply its safe fix by itself (setting in Alerts; on by

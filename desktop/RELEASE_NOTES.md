@@ -1,3 +1,15 @@
+## Network Doctor 3.55.0
+
+### The fixer brain now ships knowing networking
+The brain starts with a built-in curriculum, so a fresh install already recognises the common office-network problems instead of only learning them over time. It knows, and names, issues across:
+- **Loop & switch health** - broadcast storm, MAC flapping, switching loop, PoE overload.
+- **Internet & bandwidth** - a bandwidth hog, QoS/priority, naming app & website traffic.
+- **CCTV** - dead stream, camera tampering, correlated camera outage, a camera that needs a reboot.
+- **Employee tracking & data-leak** - map an IP to a user, outbound-data leak, after-hours exfiltration, quarantining a leaking device.
+- **Self-healing & reporting** - root-cause summary, recommended MikroTik fix.
+
+It recognises these from plain wording (and look-alikes), then keeps learning the exact wording of your network from there. Safety unchanged: the kinds that block, reboot, shape or quarantine a device are deliberately kept out of auto-apply - the brain names them, but the action stays a reviewed one-click.
+
 ## Network Doctor 3.54.0
 
 ### Quieter alerts - mute for days, only serious things get through
