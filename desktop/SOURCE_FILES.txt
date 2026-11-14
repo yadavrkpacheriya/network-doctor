@@ -46,3 +46,5 @@ nd_pcengine.py
 nd_endpoint.py
 nd_brain.py
 nd_report.py
+nd_poe.py
+nd_livecheck.py

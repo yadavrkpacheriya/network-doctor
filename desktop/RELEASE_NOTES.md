@@ -1,3 +1,16 @@
+## Network Doctor 3.58.0
+
+### The report now closes its own learning loop
+When you paste my `TEACH` lines into Teach-the-brain, the next daily report shows those once-unknown problems under **"Recently taught - now recognised"** and drops them from the unknown list - so you can see the brain actually got smarter from what you shared, and you are not asked to teach the same thing twice.
+
+### PoE power watch (new)
+Network Doctor now watches the router's PoE-out load and warns **before** it browns-out the cameras - including the evening spike when every camera turns night-vision on at once. Set your PoE switch/injector watt budget in **Setup > Cameras & PoE power**. (A hEX and other non-PoE routers have no PoE ports to read, so it simply stays quiet there - those cameras are powered by separate injectors with no API.)
+
+### Camera picture check (new)
+**Setup > Cameras & PoE power > Check camera pictures** grabs two snapshots from each camera a few seconds apart and flags any that is **frozen** (identical frames) or **blacked-out / covered** (picture suddenly far smaller than normal) - the failures a ping cannot see. It is manual on purpose, so it never adds steady load to the office network, and it learns each camera's normal snapshot size as it goes.
+
+Safety unchanged: PoE and camera findings are named and alerted, never auto-acted. 15 new tests; full suite green.
+
 ## Network Doctor 3.57.0
 
 ### Audit fixes

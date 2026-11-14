@@ -9,10 +9,34 @@ def _fmt_count(n, one, many=None):
     return f"{n} {one}" if n == 1 else f"{n} {many or one + 's'}"
 
 
-def build_daily(day, problems, fixes, missing, brain=None, net_summary=""):
+def recently_learned(brain, unknowns, margin=1.0):
+    """Of the problems a past report could NOT name, which can the brain now name (because it was taught since)?
+    unknowns: [{text, day}]. A problem counts as recognised only when its wording shares learned words with one
+    kind AND that kind clearly out-scores the rest (Naive-Bayes margin) - so a real teaching shows up but random
+    gibberish does not. Returns [{text, kind, day}]. This closes the loop: an unknown you shared and I sent TEACH
+    lines for shows up as 'now handled' and drops off the unknown list. Pure read; the caller prunes the list."""
+    import nd_brain as BR
+    kb = BR._migrate(brain)
+    nb = kb.get("nb") or {}
+    out = []
+    for u in unknowns or []:
+        t = u.get("text", "")
+        if not t or not any(tok in nb for tok in BR.tokens(t)):
+            continue  # no learned word in common -> still genuinely unknown
+        sc = BR.nb_scores(kb, t)
+        if not sc:
+            continue
+        order = sorted(sc.values(), reverse=True)
+        if len(order) < 2 or (order[0] - order[1]) >= margin:
+            out.append({"text": t, "kind": max(sc, key=sc.get), "day": u.get("day", "")})
+    return out
+
+
+def build_daily(day, problems, fixes, missing, brain=None, net_summary="", learned=None):
     """day: 'YYYY-MM-DD'. problems: [{text, sev, kind, count, source}]. fixes: [{title, kind, status, note}]
     (status: 'ok' / 'undone' / 'applied'). missing: [str] setup gaps. brain: the nd_brain dict (for per-kind
-    confidence). Returns a Markdown string."""
+    confidence). learned: [{text, kind, day}] problems once unknown that the brain can now name. Returns a
+    Markdown string."""
     import nd_brain as BR
     out = [f"# Network Doctor - daily report, {day}"]
     if net_summary:
@@ -55,6 +79,13 @@ def build_daily(day, problems, fixes, missing, brain=None, net_summary=""):
             out.append(f"- {tag}{p.get('text', '?')}{cnt}")
     else:
         out.append("- None - everything was handled.")
+
+    # ---- recently taught -> now recognised (the loop closing)
+    if learned:
+        out.append("\n## Recently taught - now recognised")
+        out.append("Problems earlier reports could not name, that the brain now handles after being taught:")
+        for l in learned:
+            out.append(f"- {l.get('text', '?')}  ->  now named **{l.get('kind', '?')}**")
 
     # ---- unknown / needs teaching
     unknown = [p for p in problems if not p.get("kind")]

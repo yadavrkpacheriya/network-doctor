@@ -39,3 +39,17 @@ def test_teach_round_trip_makes_brain_recognise_lookalikes():
     # now a LOOK-ALIKE wording is classified as gw_flap by the learned model
     d = B.decide(kb, "the gateway keeps disappearing for some seconds, arp poisoning", recipe_kind=None)
     assert d["kind"] == "gw_flap"
+
+
+def test_recently_learned_and_section():
+    import nd_brain as BR
+    kb = BR.blank()
+    BR.seed(kb)  # brain now knows "broadcast_storm" etc.
+    unknowns = [{"text": "switch flooding broadcast packets slowing everything", "day": "2026-11-10"},
+                {"text": "something totally unrecognisable zzzqqq", "day": "2026-11-10"}]
+    learned = R.recently_learned(kb, unknowns)
+    kinds = {l["kind"] for l in learned}
+    assert "broadcast_storm" in kinds
+    assert all("zzzqqq" not in l["text"] for l in learned)  # the gibberish stays unknown
+    md = R.build_daily("2026-11-11", [], [], [], brain=kb, learned=learned)
+    assert "Recently taught" in md and "broadcast_storm" in md
