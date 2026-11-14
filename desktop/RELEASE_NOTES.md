@@ -1,3 +1,20 @@
+## Network Doctor 3.36.0
+
+### New page: This PC & Wi-Fi > PC Care (repair and clean-up for this Windows PC)
+- FastClean is now part of Network Doctor, so there is one app and it updates through the built-in updater.
+- One button per job: Scan and report (read-only), Blue screen and crash repair, Slow PC and hang fix,
+  C: drive clean-up, Apps and drivers, This PC's network repair, Printer and sharing repair, RAM check,
+  Security check, Files by category - and RUN ALL.
+- It works on THIS PC only. It never logs in to, or changes, the router or any other device.
+- Actions start at once and ask no questions. Two tick-boxes replace the old questions: switch off common
+  non-essential startup apps (on) and update all apps with winget (off - leave it off on ERP PCs).
+- Every repair makes a Windows restore point first and logs each setting it changes in
+  <drive>:\PCCare_Backup, with UNDO_SETTINGS.bat inside. Reports go to Desktop\PCCare_Reports.
+- Needs Administrator (the page offers "Restart as Administrator"). Windows only.
+- Not included yet: remove user accounts, duplicate finder, folder organizer and the small tools
+  (bulk rename, resize pictures...) - they need answers typed in, which this page does not do yet.
+- Tested by the automatic checks on a clean Windows machine (script syntax + a full read-only scan).
+  The repair actions themselves have run on one real PC so far - tell me what you see on others.
 ## Network Doctor 3.35.1
 
 ### All devices: cameras the Login sweep has never read are shown in blue
