@@ -1,3 +1,13 @@
+## Network Doctor 3.45.0
+
+### New page: Login attempts (brute force) - with logs, history and inside-vs-outside
+- Network Tools > "Login attempts": shows failed logins from every PC running the agent - the account tried,
+  how many times, the logon kind, and the time - over the last 7 days.
+- Each source is checked against your whole network and marked clearly: [inside network] (with the device name),
+  [OUTSIDE/internet] (a public IP), or [this PC]. Outside-IP attempts are listed first and in red.
+- An attempt from an outside IP still raises its own alert (critical), so you are told even without opening the
+  page. Uses Windows' built-in failed-logon log (Event ID 4625) - no third-party tool.
+
 ## Network Doctor 3.44.0
 
 ### Brute-force / password-guessing alert (Windows Event ID 4625)

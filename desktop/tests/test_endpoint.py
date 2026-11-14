@@ -148,3 +148,19 @@ def test_is_external():
     assert E._is_external("203.0.113.45") and not E._is_external("192.168.0.5")
     assert not E._is_external("10.0.0.1") and not E._is_external("DESKTOP-ABC") and not E._is_external("")
     assert not E._is_external("this PC / console")
+
+
+def test_auth_history_internal_external_order_and_naming():
+    ev = [{"time": "2026-11-14 20:55:00", "pc": "ACC1", "account": "Administrator", "source": "203.0.113.45",
+           "logon": "RDP", "fails": 12},
+          {"time": "2026-11-14 20:50:00", "pc": "ACC1", "account": "Administrator", "source": "203.0.113.45",
+           "logon": "RDP", "fails": 18},
+          {"time": "2026-11-14 20:40:00", "pc": "ACC1", "account": "hitesh", "source": "192.168.0.33",
+           "logon": "network", "fails": 6},
+          {"time": "2026-11-14 20:30:00", "pc": "ACC1", "account": "admin", "source": "this PC / console",
+           "logon": "console", "fails": 2}]
+    h = E.auth_history(ev, [{"ip": "192.168.0.33", "ips": ["192.168.0.33"], "name": "SALES-PC"}])
+    assert h[0]["scope"] == "external" and h[0]["fails"] == 30        # external grouped + shown first
+    scopes = {g["account"]: g["scope"] for g in h}
+    assert scopes["hitesh"] == "internal" and scopes["admin"] == "local"
+    assert next(g for g in h if g["account"] == "hitesh")["who"] == "SALES-PC"
