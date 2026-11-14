@@ -27,3 +27,16 @@ default `…\NetworkDoctor\leakwatch`.
 - It needs to be installed on each PC; a PC without it is not watched.
 - A savvy user with local-admin rights can stop any agent. For staff PCs, do not give users admin rights.
 - It does not read file contents and cannot catch a leak by screenshot, printing or typing.
+
+---
+
+## Clean-my-PC (one-click speed-up for users)
+`Clean-my-PC.cmd` is a safe one-click cleaner any staff member can run. It clears only junk — temp files,
+browser/app caches, Windows Update leftovers (if run as admin), the Recycle Bin — flushes DNS and restarts
+Explorer, then shows how much space it freed. **It never touches Documents, Desktop, Downloads or any real
+file.**
+
+- Give users `Clean-my-PC.cmd`, or run `install-cleanup-shortcut.cmd` once to drop a **"Clean my PC"** shortcut
+  on the Desktop.
+- For a deep repair (updates, crash fix, disk check, driver fixes) use the in-app **PC Care** page, which needs
+  IT / administrator rights.
