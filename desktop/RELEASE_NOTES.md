@@ -1,3 +1,12 @@
+## Network Doctor 3.49.0
+
+### Setup page: colour-headed sections, easy to scan
+The Setup page was a wall of same-looking boxes. Every section now has a small coloured title bar, so you can
+spot the one you want at a glance:
+- Quick actions (slate), App updates (teal), Automatic checks 24/7 (green), Phone app link (blue),
+  Website names & filtering (indigo), Router login (purple), Help improve (grey).
+Nothing moved or changed - only the look. The same coloured-section style can be applied to any other page.
+
 ## Network Doctor 3.48.0
 
 ### Simpler pages: one main action, the rest under "Advanced"

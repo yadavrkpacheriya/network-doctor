@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.48.0"
+VERSION = "3.49.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -873,16 +873,14 @@ class App(tk.Tk):
 
     def _tab_setup(self):
         f = self.nav.page("setup")
-        top = ttk.Frame(f, padding=(0, 6))
-        top.pack(fill="x")
+        top = nd_tabs.section_card(f, "Quick actions", "#334155")
         ttk.Button(top, text="Copy router commands", command=self.copy_setup).pack(side="left")
         ttk.Button(top, text="Allow in Windows Firewall", command=self.firewall).pack(side="left", padx=6)
         ttk.Button(top, text="Update threat lists", command=lambda: threading.Thread(
             target=self.reload_threats, args=(True,), daemon=True).start()).pack(side="left")
         self.var_threat = tk.StringVar(value="Threat lists: loading...")
         ttk.Label(top, textvariable=self.var_threat).pack(side="left", padx=10)
-        up = ttk.Frame(f, padding=(0, 0, 0, 6))
-        up.pack(fill="x")
+        up = nd_tabs.section_card(f, "App updates", "#0f766e")
         ttk.Button(up, text="Check for updates", command=lambda: self.check_updates(False)).pack(side="left")
         ttk.Label(up, text="   New versions:").pack(side="left")
         self.var_updmode = tk.StringVar(value=self._update_mode())
@@ -898,9 +896,8 @@ class App(tk.Tk):
         self.var_upd = tk.StringVar(value=f"Version {VERSION}")
         ttk.Label(up, textvariable=self.var_upd).pack(side="left", padx=10)
         ttk.Button(up, text="Release page", command=lambda: webbrowser.open(U.RELEASES_PAGE)).pack(side="right")
-        au = ttk.LabelFrame(f, text="Automatic checks (24/7)", padding=(8, 4))
-        au.pack(fill="x", pady=(0, 6))
         st = self._settings()
+        au = nd_tabs.section_card(f, "Automatic checks (24/7)", "#047857")
         ttk.Label(au, text="Full scan every").pack(side="left")
         self.var_full_min = tk.StringVar(value=str(st.get("auto_full_min", 30)))
         cb1 = ttk.Combobox(au, textvariable=self.var_full_min, values=["off", "15", "30", "60", "120"], width=5,
@@ -925,8 +922,7 @@ class App(tk.Tk):
                         variable=self.var_autostart, command=self.toggle_autostart).pack(side="left", padx=4)
         ttk.Button(au, text="Health log", command=self.open_health_log).pack(side="right")
         ttk.Button(au, text="Run check now", command=lambda: self.start_quick(manual=True)).pack(side="right", padx=6)
-        ph = ttk.LabelFrame(f, text="Phone app link (office LAN only)", padding=(8, 4))
-        ph.pack(fill="x", pady=(0, 6))
+        ph = nd_tabs.section_card(f, "Phone app link (office LAN only)", "#1d4ed8")
         self.var_share = tk.BooleanVar(value=self._settings().get("share_enabled", False))
         ttk.Checkbutton(ph, text="Allow the Network Doctor phone app to connect", variable=self.var_share,
                         command=self.toggle_share).pack(side="left")
@@ -934,8 +930,7 @@ class App(tk.Tk):
         ttk.Label(ph, textvariable=self.var_share_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
         ttk.Button(ph, text="Remove paired phones", command=self.forget_phones).pack(side="right")
         ttk.Button(ph, text="New pairing code", command=self.new_share_code).pack(side="right", padx=6)
-        tel = ttk.LabelFrame(f, text="Help improve Network Doctor (optional)", padding=(8, 4))
-        tel.pack(fill="x", pady=(0, 6))
+        tel = nd_tabs.section_card(f, "Help improve Network Doctor (optional)", "#64748b")
         self.var_telemetry = tk.BooleanVar(value=self.telemetry.enabled)
         self.chk_telemetry = ttk.Checkbutton(tel, text="Send anonymous usage & crash reports",
                                              variable=self.var_telemetry, command=self._telemetry_toggle)
@@ -958,8 +953,7 @@ class App(tk.Tk):
                           "it on from this console - only someone sitting at this PC can unlock it - but never "
                           "hides it; this page keeps showing it is on.", foreground="#667085", wraplength=1100,
                   justify="left").pack(anchor="w", padx=8, pady=(0, 6))
-        dnsf = ttk.LabelFrame(f, text="Website names & filtering", padding=(8, 4))
-        dnsf.pack(fill="x", pady=(0, 6))
+        dnsf = nd_tabs.section_card(f, "Website names & filtering", "#4338ca")
         self.var_dnsfilter = tk.BooleanVar(value=bool(st.get("dnsfilter_always_on")))
         ttk.Checkbutton(dnsf, text="Always learn website names / filter sites (keeps running across restarts)",
                         variable=self.var_dnsfilter, command=self._dnsfilter_toggle).pack(side="left")
@@ -975,9 +969,8 @@ class App(tk.Tk):
                           f"to filter sites): turn this on, AND set the router's DHCP DNS server to {ip} (Tools "
                           f"tab has the exact place). Needs this PC kept on and administrator rights (port 53).",
                   foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(0, 6))
-        ro = ttk.LabelFrame(f, text="Router login (optional) - lets Network Doctor apply its own changes on a MikroTik "
-                                    "and run router commands", padding=(8, 4))
-        ro.pack(fill="x", pady=(0, 6))
+        ro = nd_tabs.section_card(f, "Router login (optional) - apply changes on a MikroTik and run router commands",
+                                  "#7c3aed")
         r = st.get("router_api") or {}
         self.var_ro_host = tk.StringVar(value=RO.clean_host(r.get("host")) or self.gw or "")
         self.var_ro_user = tk.StringVar(value=r.get("user", ""))
