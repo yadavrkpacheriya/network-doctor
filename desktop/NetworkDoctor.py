@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.57.0"
+VERSION = "3.58.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -903,6 +903,15 @@ class App(tk.Tk):
         ttk.Button(rep, text="Teach the brain", command=self._teach_brain).pack(side="left", padx=6)
         ttk.Label(rep, text="   A report of today's issues & fixes is saved to your Reports folder each day.",
                   ).pack(side="left")
+        cam = nd_tabs.section_card(f, "Cameras & PoE power", "#b45309")
+        ttk.Button(cam, text="Check camera pictures", command=self._camera_picture_check).pack(side="left")
+        ttk.Label(cam, text="   Catches a frozen / covered camera that still pings.    PoE budget (W):").pack(
+            side="left")
+        self.var_poe_budget = tk.StringVar(value=str(self._settings().get("poe_budget_w", 0) or ""))
+        ep = ttk.Entry(cam, textvariable=self.var_poe_budget, width=6)
+        ep.pack(side="left")
+        ep.bind("<FocusOut>", lambda _e: self._save_poe_budget())
+        ttk.Label(cam, text="(your PoE switch/injector watts - 0 = off)").pack(side="left", padx=6)
         up = nd_tabs.section_card(f, "App updates", "#0f766e")
         ttk.Button(up, text="Check for updates", command=lambda: self.check_updates(False)).pack(side="left")
         ttk.Label(up, text="   New versions:").pack(side="left")
@@ -1255,6 +1264,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_endpoint_t", 0) > 300:   # USB copies seen by the LeakWatch agent
                 self._endpoint_t = time.time()
                 self._endpoint_check()
+            if time.time() - getattr(self, "_poe_t", 0) > 300:        # router PoE load (quiet on non-PoE routers)
+                self._poe_t = time.time()
+                threading.Thread(target=self._poe_poll, daemon=True).start()
             if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
@@ -2919,7 +2931,20 @@ class App(tk.Tk):
                   "status": smap.get(f.get("status"), "applied"), "note": f.get("note", "")}
                  for f in self._fix_history() if start <= f.get("at", 0) < end]
         net = f"**Network:** {sum(1 for d in self.devices if d.get('online'))} devices online, router {self.gw}."
-        md = RP.build_daily(day, problems, fixes, self._setup_gaps(), brain=self._brain(), net_summary=net)
+        # close the learning loop: of the problems earlier reports could NOT name, which can the brain name now
+        # (because it was taught since)? Show them, then stop tracking them. New unknowns from today get added.
+        brain = self._brain()
+        st = self._settings()
+        prev_unknown = st.get("brain_unknowns") or []
+        learned = RP.recently_learned(brain, prev_unknown)
+        learned_texts = {l["text"] for l in learned}
+        today_unknown = [{"text": p["text"], "day": day} for p in problems if not p.get("kind") and p.get("text")]
+        seen = {u["text"] for u in prev_unknown}
+        merged = [u for u in prev_unknown if u.get("text") not in learned_texts]
+        merged += [u for u in today_unknown if u["text"] not in seen and u["text"] not in learned_texts]
+        st["brain_unknowns"] = merged[-200:]
+        self._save_settings()
+        md = RP.build_daily(day, problems, fixes, self._setup_gaps(), brain=brain, net_summary=net, learned=learned)
         path = None
         if save:
             try:
@@ -2932,6 +2957,89 @@ class App(tk.Tk):
         if open_after and path:
             self.open_folder(os.path.dirname(path))
         return path, md
+
+    def _save_poe_budget(self):
+        try:
+            w = float(self.var_poe_budget.get() or 0)
+        except ValueError:
+            w = 0
+        self._settings()["poe_budget_w"] = max(0.0, w)
+        self._save_settings()
+
+    def _poe_poll(self):
+        """Background: read the router's PoE-out load and warn before it browns-out the cameras (quiet on a
+        router with no PoE ports, like a hEX). Budget/IR-headroom come from Setup; 0 budget = capability present
+        but no judgement (no false alarms) until the user enters the injector/switch watt budget."""
+        try:
+            import nd_poe as POE
+            c = RO.from_settings(self._settings(), self.gw)
+            if not c:
+                return
+            st = self._settings()
+            budget = float(st.get("poe_budget_w", 0) or 0)
+            ir = float(st.get("poe_ir_headroom_w", 0) or 0)
+            with c:
+                summary, alert = POE.read(c, budget_w=budget, ir_headroom_w=ir)
+            self.poe_summary = summary
+            if alert:
+                key = "poe_overload"
+                if time.time() - self.alert_cool.get(key, 0) >= 1800:   # once / 30 min
+                    self.alert_cool[key] = time.time()
+                    self.q.put(("call", lambda: self._raise_alert(alert["sev"], alert["text"], [], "PoE watch")))
+        except RO.RosError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _camera_picture_check(self):
+        """Manual: for every online camera, grab two snapshots a few seconds apart and flag any that is frozen,
+        black or covered even though it still pings (nd_livecheck). Runs on a background thread; never automatic,
+        so it adds no steady load to the office network. Learns each camera's normal snapshot size as it goes."""
+        self.var_status.set("Checking camera pictures... (this takes a moment)")
+        threading.Thread(target=self._camera_picture_worker, daemon=True).start()
+
+    def _camera_picture_worker(self):
+        import nd_livecheck as LC
+        import nd_sweep as SW
+        st = self._settings()
+        base = st.setdefault("cam_live", {})      # mac -> {"base": bytes, "url": working snapshot url}
+        with core.DB_LOCK:
+            store = dict(self.db.get("sweep_status") or {})
+        cams = [d for d in self.devices if d.get("online") and d.get("category") == core.CAT_CAM and d.get("ip")]
+        checked = frozen = dark = 0
+        for d in cams:
+            mac, ip = d.get("mac", ""), d["ip"]
+            auth = SW.saved_get(store, mac)
+            mem = base.get(mac) or {}
+            urls = [mem["url"]] if mem.get("url") else [f"http://{ip}{p}" for p in LC.SNAPSHOT_PATHS]
+            a = b = b""
+            used = ""
+            for u in urls:
+                a = LC.fetch(u, auth=auth)
+                if len(a) >= 800:
+                    used = u
+                    break
+            if not used:
+                continue                           # this camera has no reachable HTTP snapshot - skip quietly
+            time.sleep(3)
+            b = LC.fetch(used, auth=auth)
+            r = LC.compare(a, b, baseline_bytes=mem.get("base", 0))
+            checked += 1
+            name = d.get("name") or d.get("hostname") or ip
+            if r["status"] == "ok":
+                base[mac] = {"url": used, "base": LC.update_baseline(mem.get("base", 0), r["size"])}
+            else:
+                base[mac] = {"url": used, "base": mem.get("base", 0) or r["size"]}
+                if r["status"] == "frozen":
+                    frozen += 1
+                elif r["status"] == "dark":
+                    dark += 1
+                self.q.put(("call", lambda rr=r, nm=name, p=ip:
+                            self._raise_alert(rr["sev"], f"Camera {nm} ({p}): {rr['detail']}", [], "Camera picture")))
+        self._save_settings()
+        self.q.put(("call", lambda: self.var_status.set(
+            f"Camera pictures: checked {checked}, {frozen} frozen, {dark} possibly covered."
+            + ("" if checked else " (no camera exposed an HTTP snapshot - set a snapshot URL to use this.)"))))
 
     def _daily_report_now(self):
         path, _ = self._make_daily_report(open_after=True)
