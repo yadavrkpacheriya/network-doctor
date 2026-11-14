@@ -1,3 +1,15 @@
+## Network Doctor 3.42.0
+
+### Detects the real cause of the gateway flap: fake / duplicate camera MACs
+On a flat network (cameras on the same switch as the PCs), the router "dropping for a few seconds" is usually
+caused by cheap CCTV cameras shipped with cloned, non-real MAC addresses (A0:00:00:xx and the like). Several
+near-identical addresses confuse the ARP tables and flap the gateway.
+- New problems, found on every scan: "Devices with a fake / cloned MAC address" and "The same MAC address on two
+  or more devices", each listing the cameras and IPs.
+- The fixer brain explains the fix: give every camera a unique fixed IP (line-up), optionally set a real MAC in
+  the camera's web page, and ideally move cameras to their own switch. It also explains why IP-MAC binding kept
+  cutting devices off - the router cannot tell duplicated MACs apart - so it tells you NOT to bind these.
+
 ## Network Doctor 3.41.0
 
 ### Powered-off / disconnected devices drop off the active device list

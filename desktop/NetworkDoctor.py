@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.41.0"
+VERSION = "3.42.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1716,7 +1716,7 @@ class App(tk.Tk):
         self._feed_monitor()
         T.apply_tags(self.devices, self.db, self.mon.neighbors_copy() if self.mon else {})
         self._usage_devices()
-        self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db)
+        self.issues = self.issues + T.binding_issues(self.devices, self.db) + T.report_issues(self.db) + T.mac_health_issues(self.devices, T.tags_of(self.db))
         self._new_devices(self.raw["meta"].get("new_macs") or [])
         self._missing_devices(self.raw["meta"].get("missing_macs") or [])
         try:

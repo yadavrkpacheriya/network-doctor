@@ -291,6 +291,23 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "WinBox > System > Users: change the admin password; remove unused users.",
                      "If the attempts come from outside: make sure no port forward points to the router itself."])
 
+    if "fake / cloned mac" in low or "cloned mac" in low or "fake mac" in low or "same mac address on" in low:
+        return _fix(1, "bogus_mac", "Cameras with a fake or duplicate MAC address",
+                    "Cheap CCTV cameras are sold with cloned, non-real MAC addresses (A0:00:00:xx and the like). "
+                    "When several are on the same switch as the PCs, their near-identical addresses confuse the ARP "
+                    "tables and the router drops for a few seconds at a time. This is also why IP-MAC binding kept "
+                    "knocking devices offline - the router cannot tell duplicated MACs apart.",
+                    "Give every camera a unique fixed IP so no two ever clash; ideally move cameras to their own "
+                    "switch.",
+                    ["1) Devices > 'Line up cameras' / give each a fixed IP (e.g. 192.168.0.71-150), so no two "
+                     "cameras ever hold the same address. This removes the clash that flaps the gateway.",
+                     "2) Where a camera's own web page allows it, set a unique MAC address there too.",
+                     "3) Do NOT IP-MAC bind these cameras while their MACs are duplicated - that is what cut devices "
+                     "off before. The PC router-MAC shield (the agent) already protects the PCs meanwhile.",
+                     "4) Best permanent fix on a flat network: put all CCTV on a separate switch (or a small managed "
+                     "switch with a camera VLAN), so camera ARP noise never reaches the office PCs or the router."],
+                    app=("Line up cameras / fixed IP", "binding"))
+
     if "keeps dropping" in low or ("router" in low and "few seconds" in low) or "gw_flap" in low:
         return _fix(1, "gw_flap", "Router keeps dropping for a few seconds",
                     "The router is not fully down - it vanishes for 5-10 seconds again and again. That is an ARP "

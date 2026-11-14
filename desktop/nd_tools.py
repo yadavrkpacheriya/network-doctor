@@ -1082,6 +1082,51 @@ def report_issues(db):
     return out
 
 
+BOGUS_OUI = ("a00000", "000000", "020000")   # not real vendor blocks: cheap cameras ship MACs like A0:00:00:01:xx
+
+
+def mac_health_issues(devices, tags=None):
+    """MAC problems that quietly flap the gateway on a flat (one-switch) network: the SAME MAC on two devices,
+    and cameras shipped with a fake / cloned MAC (A0:00:00:01:xx and the like). Both confuse the router's and
+    the PCs' ARP tables. Returns issue dicts like the other builders."""
+    tags = tags or {}
+    online = [d for d in devices if d.get("online") and d.get("mac")]
+    out = []
+    by_mac = {}
+    for d in online:
+        by_mac.setdefault((d.get("mac") or "").upper(), []).append(d)
+    dup = []
+    for mac, ds in sorted(by_mac.items()):
+        ips = sorted({d.get("ip") for d in ds if d.get("ip")}, key=core.ip_key)
+        if len(ips) > 1:
+            dup.append(f"{mac}: {', '.join(ips)}")
+    if dup:
+        out.append({"sev": "warning", "title": f"The same MAC address on two or more devices ({len(dup)})",
+                    "items": dup,
+                    "detail": "Two devices answer to one hardware address. The router and the PCs cannot tell them "
+                              "apart, so the ARP table flips between them - which makes the router 'drop for a few "
+                              "seconds'. Cheap CCTV cameras are the usual cause (they are sold with cloned MACs).",
+                    "fix": "Give each device a unique fixed IP (Devices > line up cameras / fixed IP). If a camera's "
+                           "web page allows it, set a unique MAC there too. IP-MAC binding will not work while the "
+                           "MACs are duplicated."})
+    bogus = []
+    for d in online:
+        oui = (d.get("mac") or "").replace(":", "").replace("-", "").lower()[:6]
+        if oui and oui in BOGUS_OUI:
+            nm = tags.get(d.get("mac"), {}).get("name") or d.get("name") or ""
+            bogus.append(f"{nm or d.get('category', 'device')} {d.get('ip', '')} ({d.get('mac')})")
+    if bogus:
+        out.append({"sev": "warning", "title": f"Devices with a fake / cloned MAC address ({len(bogus)})",
+                    "items": bogus,
+                    "detail": "These addresses (A0:00:00:xx and similar) are not real manufacturer MACs - typical of "
+                              "no-name CCTV cameras. Several such devices share almost the same address, so the "
+                              "network's ARP tables clash and the gateway flaps for a few seconds at a time.",
+                    "fix": "Give every one a unique fixed IP (Devices > line up cameras) so no two ever clash. Where "
+                           "the camera's web page allows, set a proper unique MAC. Best of all, move the cameras onto "
+                           "their own switch so their ARP noise never reaches the PCs and the router."})
+    return out
+
+
 def binding_issues(devices, db):
     """Problems with devices that were bound: on another IP, or their reserved IP used by somebody else."""
     with core.DB_LOCK:
