@@ -155,6 +155,20 @@ class ToolsTab:
         if key == "watch":
             self.refresh_watch()
 
+    def _adv(self, toggle_row, container, after=None):
+        """A right-aligned 'Advanced' tick box on toggle_row that shows/hides an (empty) frame in container.
+        Returns the frame - pack the secondary buttons into it. Keeps the normal view to just the main action."""
+        var = tk.BooleanVar(value=False)
+        adv = ttk.Frame(container)
+
+        def tog():
+            if var.get():
+                adv.pack(fill="x", after=after) if after else adv.pack(fill="x")
+            else:
+                adv.pack_forget()
+        ttk.Checkbutton(toggle_row, text="Advanced", variable=var, command=tog).pack(side="right")
+        return adv
+
     def _out_box(self, f, key):
         bar = ttk.Frame(f)
         bar.pack(fill="x", pady=(4, 2))
@@ -1458,13 +1472,15 @@ class ToolsTab:
         self.g_rows, self.g_tick = {}, set()
         bar = ttk.Frame(f)
         bar.pack(fill="x", pady=4)
-        ttk.Button(bar, text="Make commands", style="Big.TButton", command=self._guard_make).pack(side="left")
-        ttk.Button(bar, text="Apply on router", command=lambda: self._guard_apply(False)).pack(side="left", padx=4)
-        ttk.Button(bar, text="UNDO on router", command=lambda: self._guard_apply(True)).pack(side="left")
-        ttk.Button(bar, text="Copy commands", command=lambda: self._guard_copy(False)).pack(side="left", padx=4)
-        ttk.Button(bar, text="Copy UNDO", command=lambda: self._guard_copy(True)).pack(side="left")
-        ttk.Button(bar, text="Save .rsc", command=self._guard_save).pack(side="left", padx=4)
-        ttk.Button(bar, text="Refresh list", command=self._guard_refresh).pack(side="right")
+        ttk.Button(bar, text="Turn on protection (apply on router)", style="Big.TButton",
+                   command=lambda: self._guard_apply(False)).pack(side="left")
+        ttk.Button(bar, text="Refresh list", command=self._guard_refresh).pack(side="left", padx=6)
+        adv = self._adv(bar, f, after=bar)
+        ttk.Button(adv, text="UNDO on router", command=lambda: self._guard_apply(True)).pack(side="left")
+        ttk.Button(adv, text="Make commands", command=self._guard_make).pack(side="left", padx=4)
+        ttk.Button(adv, text="Copy commands", command=lambda: self._guard_copy(False)).pack(side="left")
+        ttk.Button(adv, text="Copy UNDO", command=lambda: self._guard_copy(True)).pack(side="left", padx=4)
+        ttk.Button(adv, text="Save .rsc", command=self._guard_save).pack(side="left")
         self.g_apply = self.g_undo = ""
         self._out_box(f, "guard")
         self._guard_refresh()
@@ -1558,13 +1574,15 @@ class ToolsTab:
                                   "Not tagged", "Randomized MAC"] + list(T.INV_FILTERS))
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda ev: self._inv_fill())
-        ttk.Button(row, text="Refresh (+ router host names)", command=self._inv_refresh).pack(side="left", padx=4)
-        ttk.Button(row, text="Tag selected...", command=self._inv_tag).pack(side="left", padx=4)
-        ttk.Button(row, text="Get PC details (script)...", command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(
-            side="left", padx=4)
-        ttk.Button(row, text="Collect from all PCs (admin login)...", command=self._inv_collect).pack(side="left", padx=4)
-        ttk.Button(row, text="Export to Excel", style="Big.TButton", command=self._inv_export).pack(side="right")
-        ttk.Button(row, text="Import edited Excel sheet", command=self._inv_import).pack(side="right", padx=6)
+        ttk.Button(row, text="Export to Excel", style="Big.TButton", command=self._inv_export).pack(side="left", padx=4)
+        ttk.Button(row, text="Refresh", command=self._inv_refresh).pack(side="left")
+        adv = self._adv(row, f, after=row)
+        ttk.Button(adv, text="Tag selected...", command=self._inv_tag).pack(side="left")
+        ttk.Button(adv, text="Import edited Excel sheet", command=self._inv_import).pack(side="left", padx=4)
+        ttk.Button(adv, text="Get PC details (script)...",
+                   command=lambda: nd_tabs.FixScriptDialog(self.app)).pack(side="left")
+        ttk.Button(adv, text="Collect from all PCs (admin login)...",
+                   command=self._inv_collect).pack(side="left", padx=4)
         self.var_inv_sum = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.var_inv_sum, foreground="#5b21b6").pack(anchor="w", pady=(4, 2))
         pw = ttk.PanedWindow(f, orient="vertical")
