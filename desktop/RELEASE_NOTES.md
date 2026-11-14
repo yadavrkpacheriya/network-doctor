@@ -1,3 +1,12 @@
+## Network Doctor 3.39.1
+
+### Fix: the app now actually reads the PC agent's data
+- The agent writes to C:\ProgramData\NetworkDoctor\agent; Network Doctor was looking in a different folder, so
+  nothing showed up. It now reads that folder (and the shared folder set in Settings, and the old one) together.
+- The agent's CSV files carry a UTF-8 BOM (Windows PowerShell): the reader skipped every row because of it.
+  Fixed - connections and USB events are read correctly now.
+- Verified on a real PC: details, resource use and 136 live connections read in; AnyDesk named from its process.
+
 ## Network Doctor 3.39.0
 
 ### One PC agent: users get a single "Fix my PC" button; Network Doctor gets everything

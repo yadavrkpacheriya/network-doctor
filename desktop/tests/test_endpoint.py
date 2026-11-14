@@ -78,3 +78,46 @@ def test_proc_name_map_newest_wins(tmp_path):
         fh.write("2026-11-14 10:05:00,ACC1,h,AnyDesk.exe,192.168.0.57,5.5.5.5,443\n")       # newer: wins
     m = E.proc_name_map(E.read_conns(str(tmp_path), since_days=1, now=now))
     assert m == {("192.168.0.57", "5.5.5.5"): "AnyDesk"}
+
+
+def test_readers_accept_a_list_of_folders(tmp_path):
+    import time as _t
+    a = tmp_path / "share"; b = tmp_path / "local"; a.mkdir(); b.mkdir()
+    now = _t.mktime(_t.strptime("2026-11-14 16:00:00", "%Y-%m-%d %H:%M:%S"))
+    (a / "leak-PC1-202611.csv").write_text(
+        "time,pc,user,event,detail,drive,size_kb\n2026-11-14 10:00:00,PC1,u,USB_IN,x,E:,0\n", encoding="utf-8")
+    (b / "leak-PC2-202611.csv").write_text(
+        "time,pc,user,event,detail,drive,size_kb\n2026-11-14 11:00:00,PC2,u,USB_IN,x,F:,0\n", encoding="utf-8")
+    ev = E.read_events([str(a), str(b)], since_days=7, now=now)
+    assert {e["pc"] for e in ev} == {"PC1", "PC2"}
+
+
+def test_reports_dedup_newest_per_pc(tmp_path):
+    import json
+    import os as _os
+    import time as _t
+    a = tmp_path / "share"; b = tmp_path / "local"; a.mkdir(); b.mkdir()
+    (a / "pc-PC1.json").write_text(json.dumps({"hostname": "PC1", "os": "old",
+                                   "adapters": [{"ip": "192.168.0.5"}]}), encoding="utf-8")
+    (b / "pc-PC1.json").write_text(json.dumps({"hostname": "PC1", "os": "new",
+                                   "adapters": [{"ip": "192.168.0.5"}]}), encoding="utf-8")
+    _os.utime(str(b / "pc-PC1.json"), (_t.time() + 10, _t.time() + 10))     # newer
+    reps = E.read_reports([str(a), str(b)])
+    assert len(reps) == 1 and reps[0]["os"] == "new"
+
+
+def test_bom_csv_from_powershell(tmp_path):
+    import time as _t
+    now = _t.mktime(_t.strptime("2026-11-14 16:00:00", "%Y-%m-%d %H:%M:%S"))
+    # Windows PowerShell 5.1 Out-File utf8 writes a BOM and CRLF line ends - the readers must still parse it
+    for name, body in (("leak-PC1-202611.csv",
+                        "time,pc,user,event,detail,drive,size_kb\r\n2026-11-14 10:00:00,PC1,u,USB_IN,x,E:,0\r\n"),
+                       ("conn-PC1-202611.csv",
+                        "time,pc,user,process,local_ip,remote_ip,remote_port\r\n"
+                        "2026-11-14 10:00:00,PC1,u,AnyDesk.exe,192.168.0.9,5.5.5.5,443\r\n")):
+        with open(tmp_path / name, "wb") as fh:
+            fh.write(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    assert len(E.read_events(str(tmp_path), now=now)) == 1
+    conns = E.read_conns(str(tmp_path), since_days=7, now=now)
+    assert len(conns) == 1 and conns[0]["process"] == "AnyDesk.exe"
+    assert E.proc_name_map(conns) == {("192.168.0.9", "5.5.5.5"): "AnyDesk"}

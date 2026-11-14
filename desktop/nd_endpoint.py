@@ -17,10 +17,36 @@ EVENTS = {"USB_IN": "USB drive connected", "USB_OUT": "USB drive removed",
 COPY = "COPY_TO_USB"
 
 
-def default_dir():
-    """Where the agent's logs are collected (set in Settings; this is the fall-back next to the app's data)."""
+def agent_local_dir():
+    """Where the PC agent writes on THIS PC (so the Network Doctor PC reads its own agent with no share set up)."""
+    base = os.environ.get("ProgramData") or r"C:\ProgramData"
     import nd_core as core
-    return os.path.join(core.DATA_DIR, "leakwatch")
+    return os.path.join(base, "NetworkDoctor", "agent") if core.IS_WIN else os.path.join(core.DATA_DIR, "agent")
+
+
+def default_dirs(configured=""):
+    """Every folder to read agent logs from: the shared folder set in Settings (configured), this PC's own
+    agent folder, and the old leakwatch folder. De-duplicated, existing or not (a reader skips a missing one)."""
+    import nd_core as core
+    out, seen = [], set()
+    for d in (configured, agent_local_dir(), os.path.join(core.DATA_DIR, "leakwatch"),
+              os.path.join(core.DATA_DIR, "agent")):
+        key = os.path.normcase(os.path.abspath(d)) if d else ""
+        if d and key not in seen:
+            seen.add(key)
+            out.append(d)
+    return out
+
+
+def default_dir():
+    return agent_local_dir()
+
+
+def _dirs(folder):
+    """A reader's `folder` may be one path or a list of paths."""
+    if isinstance(folder, (list, tuple)):
+        return [f for f in folder if f]
+    return [folder] if folder else []
 
 
 def read_events(folder, since_days=7, now=None):
@@ -29,9 +55,9 @@ def read_events(folder, since_days=7, now=None):
     now = now or time.time()
     cut = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now - since_days * 86400))
     out = []
-    for path in glob.glob(os.path.join(folder or "", "leak-*.csv")):
+    for path in [p for d in _dirs(folder) for p in glob.glob(os.path.join(d, "leak-*.csv"))]:
         try:
-            with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+            with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
                 for r in csv.DictReader(fh):
                     t = (r.get("time") or "").strip()
                     if len(t) != 19 or t < cut:
@@ -130,7 +156,7 @@ def read_reports(folder):
     """The pc-<NAME>.json files the agent wrote (one per PC): the report dicts Network Doctor's _apply_report
     takes, each with the PC's first LAN IPv4 added as 'ip'. Newest file first."""
     out = []
-    for path in sorted(glob.glob(os.path.join(folder or "", "pc-*.json")),
+    for path in sorted([p for d in _dirs(folder) for p in glob.glob(os.path.join(d, "pc-*.json"))],
                        key=lambda p: os.path.getmtime(p), reverse=True):
         try:
             with open(path, encoding="utf-8-sig", errors="replace") as fh:
@@ -147,7 +173,14 @@ def read_reports(folder):
                     ip = ip or one
         data["ip"] = ip
         out.append(data)
-    return out
+    seen, uniq = set(), []
+    for d in out:                  # newest first already; keep one report per PC
+        h = (d.get("hostname") or d.get("ip") or "").lower()
+        if h and h in seen:
+            continue
+        seen.add(h)
+        uniq.append(d)
+    return uniq
 
 
 def read_conns(folder, since_days=1, now=None):
@@ -155,9 +188,9 @@ def read_conns(folder, since_days=1, now=None):
     now = now or time.time()
     cut = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now - since_days * 86400))
     out = []
-    for path in glob.glob(os.path.join(folder or "", "conn-*.csv")):
+    for path in [p for d in _dirs(folder) for p in glob.glob(os.path.join(d, "conn-*.csv"))]:
         try:
-            with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+            with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
                 for r in csv.DictReader(fh):
                     t = (r.get("time") or "").strip()
                     if len(t) != 19 or t < cut:
