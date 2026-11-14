@@ -1,0 +1,50 @@
+Network Doctor 3.36.0 self-test, 45 pages
+ok    Home > Overview
+ok    Assistant > Fix Assistant
+ok    Alerts > Alerts
+ok    Alerts > Problems
+ok    Alerts > Root cause
+ok    Alerts > Health checks
+ok    Alerts > History & trends
+ok    Devices > All devices
+ok    Devices > Inventory
+ok    Devices > Network map
+ok    Devices > IP-MAC binding
+ok    Network Tools > Login sweep
+ok    Network Tools > Switches (SNMP)
+ok    Network Tools > Port scanner
+ok    Network Tools > MAC lookup
+ok    Network Tools > Wake-on-LAN
+ok    Internet & Usage > Live monitor
+ok    Internet & Usage > Usage
+ok    Internet & Usage > Bandwidth plan
+ok    Internet & Usage > Slow website?
+ok    Diagnostics > Speed test
+ok    Diagnostics > Website check
+ok    Diagnostics > DNS test
+ok    Diagnostics > Remote access (VPN)
+ok    Security > Network guard
+ok    Security > Website firewall
+ok    Security > Critical devices
+ok    Security > Auto-defense
+ok    Security > Security check
+ok    Security > Internet exposure
+ok    Fix & Commands > Commands
+ok    Fix & Commands > Packet capture
+ok    This PC & Wi-Fi > LAN speed (PC to PC)
+ok    This PC & Wi-Fi > Wi-Fi analyzer
+ok    This PC & Wi-Fi > Network adapters
+ok    This PC & Wi-Fi > MTU finder
+ok    This PC & Wi-Fi > Subnet calculator
+ok    This PC & Wi-Fi > PC Care (repair & clean-up)
+ok    Setup > Setup
+ok    Setup > What is missing
+ok    Setup > Config backup & diff
+ok    Setup > Pro / Activate
+ok    Setup > Users & sign-in
+ok    Setup > Audit log
+ok    Setup > Usage & crash reports
+ok    phone link /api/state: 61 kB, keys 34
+ok    phone link /api/action ping: Ping 127.0.0.1 from the PC started
+
+ERRORS: 0
