@@ -2525,3 +2525,8 @@ if core.IS_PRO:
     }
     for _s in SECTIONS:
         _s[4].extend(_PRO_PAGES.get(_s[0], []))
+
+PAGE_COLOR = {}            # page key -> its section colour, for colour-headed pages
+for _sec in SECTIONS:
+    for _pg, _pt in _sec[4]:
+        PAGE_COLOR[_pg] = _sec[2]
