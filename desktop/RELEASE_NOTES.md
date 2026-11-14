@@ -1,3 +1,17 @@
+## Network Doctor 3.38.1
+
+### Fix: the Windows release build failed on 3.37.1 / 3.38.0
+- A new test file imported pytest, which the Windows "code loads" check (plain unittest) does not have, so the
+  build stopped before publishing. Rewritten with unittest; the whole suite runs under both now. This is why
+  3.37.0, 3.37.1 and 3.38.0 did not reach you - their contents ship in this build.
+
+### One-click "Clean my PC" for users (bundled with LeakWatch, in endpoint/)
+- A safe cleaner any staff member can double-click: clears temp files, browser/app caches, Windows Update
+  leftovers (when run as admin), the Recycle Bin, flushes DNS and restarts Explorer, then shows the space
+  freed. It never touches Documents, Desktop, Downloads or any real file.
+- `install-cleanup-shortcut.cmd` drops a "Clean my PC" shortcut on the Desktop. For a deep repair, the in-app
+  PC Care page (admin) is unchanged.
+
 ## Network Doctor 3.38.0
 
 ### USB / data-leak watch on the PCs (LeakWatch endpoint agent)
