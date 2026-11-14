@@ -96,7 +96,7 @@ FILTER_FIELDS = {"name": "name", "dept": "dept", "department": "dept", "loc": "l
                  "type": "kind", "kind": "kind", "port": "port", "switch": "parent", "vendor": "vendor",
                  "ip": "ip", "mac": "mac", "notes": "notes"}
 SHOW = ["All devices", "Online only", "Not tagged yet", "Watched (alert if down)",
-        "New since last scan", "Stopped answering since last scan"]
+        "New since last scan", "Stopped answering since last scan", "New / changed in the last 7 days"]
 
 
 def _field_text(d, field):
@@ -137,6 +137,8 @@ def filter_devices(devices, query="", dept="", location="", show=SHOW[0]):
         if show == SHOW[4] and "NEW on the network" not in (d.get("notes") or []):
             continue
         if show == SHOW[5] and "STOPPED ANSWERING since last scan" not in (d.get("notes") or []):
+            continue
+        if show == SHOW[6] and not d.get("recent"):
             continue
         everything = None
         ok = True
