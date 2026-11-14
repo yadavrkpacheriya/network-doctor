@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.43.0"
+VERSION = "3.44.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2432,6 +2432,17 @@ class App(tk.Tk):
             dev = next((d for d in self.devices if (d.get("name") or "").lower() == (pc or "").lower()), None)
             dept = (dev.get("dept") if dev else "") or ""
             return f"{user or '?'} on {pc or '?'}" + (f" - {dept}" if dept else "")
+        # password-guessing (brute force): Windows failed logons the agents reported
+        try:
+            for sev, title, text in EP.auth_alerts(EP.read_auth(folder, since_days=1)):
+                key = "bruteforce:" + title
+                if key in self.alerts_active:
+                    continue
+                self.alerts_active[key] = {"title": title, "sev": sev, "first": time.time(),
+                                           "last": time.time(), "source": "LeakWatch (login)"}
+                self._raise_alert(sev, title, [text], "LeakWatch (login)")
+        except Exception:  # noqa: BLE001
+            pass
         for sev, title, text in EP.leak_alerts(events, who=who):
             key = "usb_copy:" + title
             if key in self.alerts_active:

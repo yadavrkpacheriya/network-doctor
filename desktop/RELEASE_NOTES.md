@@ -1,3 +1,14 @@
+## Network Doctor 3.44.0
+
+### Brute-force / password-guessing alert (Windows Event ID 4625)
+- The PC agent now reads the Windows Security log for failed logons (Event ID 4625) and reports the account
+  tried and where it came from. Network Doctor raises an alert when the tries pile up on a PC - "N failed
+  logins on PC: account 'Administrator' from 203.0.113.45", with the source IP.
+- An attempt coming from the internet (a public IP) or over Remote Desktop is marked critical, with the advice
+  to close RDP to the internet and change the password. Inside-the-network attempts are flagged too.
+- Uses only built-in Windows logging - no third-party tool. Reading the Security log needs admin, which the
+  agent already has (it runs as SYSTEM).
+
 ## Network Doctor 3.43.0
 
 ### See how many devices are on each router port (find the camera switch)

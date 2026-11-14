@@ -80,6 +80,35 @@ function Log-Usb($event, $detail, $drive, $kb) {
     Append "leak-$pc-$month.csv" "time,pc,user,event,detail,drive,size_kb" `
         (((Get-Date).ToString("yyyy-MM-dd HH:mm:ss")), $pc, $user, $event, (Csv $detail), $drive, [int]$kb -join ",")
 }
+
+# Is someone guessing this PC's password? Reads the Security log for failed logons (Event ID 4625) in the last
+# few minutes and reports them grouped by account + where they came from (source IP / computer). Network Doctor
+# raises a brute-force alert when the tries pile up. Reading the Security log needs admin - the agent runs as
+# SYSTEM, so it can. $mins is the look-back; the background loop calls it on the same cadence so nothing is missed.
+function Send-Auth($mins = 6) {
+    $since = (Get-Date).AddMinutes(-$mins)
+    $ev = @(Get-WinEvent -FilterHashtable @{LogName = 'Security'; Id = 4625; StartTime = $since} `
+            -MaxEvents 1000 -ErrorAction SilentlyContinue)
+    if (-not $ev) { return }
+    $agg = @{}
+    foreach ($e in $ev) {
+        $d = @{}
+        try { foreach ($n in ([xml]$e.ToXml()).Event.EventData.Data) { $d[$n.Name] = [string]$n.'#text' } } catch { continue }
+        $acct = $d['TargetUserName']; if (-not $acct) { $acct = '?' }
+        $ip = $d['IpAddress']; $host2 = $d['WorkstationName']
+        $from = if ($ip -and $ip -notin @('-', '::1', '127.0.0.1')) { $ip } elseif ($host2) { $host2 } else { 'this PC / console' }
+        $lt = $d['LogonType']   # 10 = RDP (remote desktop), 3 = network share, 2 = at the keyboard
+        $kind = switch ($lt) { '10' { 'RDP' } '3' { 'network' } '2' { 'console' } default { "type $lt" } }
+        $key = "$acct|$from|$kind"
+        if (-not $agg[$key]) { $agg[$key] = 0 }
+        $agg[$key]++
+    }
+    foreach ($k in $agg.Keys) {
+        $p = $k -split '\|'
+        Append "auth-$pc-$month.csv" "time,pc,account,source,logon,fails" `
+            (((Get-Date).ToString("yyyy-MM-dd HH:mm:ss")), $pc, (Csv $p[0]), (Csv $p[1]), $p[2], $agg[$k] -join ",")
+    }
+}
 function Removable { Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2" | ForEach-Object { $_.DeviceID } }
 
 
@@ -176,6 +205,7 @@ if ($Mode -eq "fix") {
 Log-Usb "AGENT_START" "PC agent started" "" 0
 Send-Details
 Lock-Gateway        # shield the router's address at every logon (background runs as SYSTEM, so it has the rights)
+Send-Auth 60        # catch password-guessing that happened in the last hour before the agent started
 $watchers = @{}
 function Watch($drive) {
     if ($watchers.ContainsKey($drive)) { return }
@@ -202,5 +232,6 @@ while ($true) {
     $known = $now
     $tick++
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
+    if ($tick % 100 -eq 0) { Send-Auth 6 }               # every ~5 min: failed-login (brute-force) check
     if ($tick % 600 -eq 0) { Send-Details; Lock-Gateway }  # every ~30 min: refresh details + CPU/RAM, re-pin router
 }
