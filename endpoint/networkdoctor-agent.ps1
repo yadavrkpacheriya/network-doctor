@@ -104,11 +104,11 @@ function Lock-Gateway {
 
 # ================================ FIX (the one button the user clicks) ================================
 if ($Mode -eq "fix") {
-    # The deep clean, Windows repair and router shield need administrator rights. If the user ran this without
-    # them, relaunch once with a UAC prompt so one click does everything (and skip nothing silently).
-    $amAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-               ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-    if (-not $amAdmin) {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $amAdmin = ([Security.Principal.WindowsPrincipal]$me).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+    $asSystem = $me.IsSystem        # launched by the scheduled task: full rights, no password, runs hidden
+    # If a person ran this directly without rights (not through the "Fix my PC" task), lift it once.
+    if (-not $amAdmin -and -not $asSystem) {
         try {
             Start-Process powershell -Verb RunAs -ArgumentList @(
                 "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Mode", "fix")
@@ -127,45 +127,39 @@ if ($Mode -eq "fix") {
             Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt (Get-Date).AddHours(-1) } |
             Remove-Item -Force -ErrorAction SilentlyContinue
     }
-    Purge "$env:TEMP" "Your temporary files"
-    Purge "$env:LOCALAPPDATA\Temp" "App temporary files"
-    Purge "$env:LOCALAPPDATA\Microsoft\Windows\INetCache" "Internet cache"
-    Purge "$env:LOCALAPPDATA\CrashDumps" "Crash dumps"
-    foreach ($b in @("$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache",
-                     "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache")) { Purge $b "Browser cache" }
-    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-             ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-    if ($admin) {
-        Purge "$env:WINDIR\Temp" "Windows temp"
-        Stop-Service wuauserv -Force; Purge "$env:WINDIR\SoftwareDistribution\Download" "Windows Update leftovers"; Start-Service wuauserv
-        Write-Host "   - Prefetch (Windows rebuilds it)"
-        Remove-Item "$env:WINDIR\Prefetch\*" -Force -ErrorAction SilentlyContinue
-        Write-Host "   - Delivery Optimisation cache"
-        Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue | Out-Null
-        Write-Host "   - Windows disk cleanup (old updates, logs)"
-        Dism.exe /Online /Cleanup-Image /StartComponentCleanup /Quiet | Out-Null   # reclaims WinSxS space, safe, ~1-3 min
-        Write-Host "   - Checking Windows health"
-        $check = Dism.exe /Online /Cleanup-Image /CheckHealth                       # fast, a few seconds
-        if ("$check" -match 'repairable') {
-            Write-Host "     Repairable damage found - repairing Windows (this takes several minutes)..." -ForegroundColor Yellow
-            Dism.exe /Online /Cleanup-Image /RestoreHealth /Quiet | Out-Null
-            sfc /scannow | Out-Null
-            Write-Host "     Windows repair done."
-        } else {
-            Write-Host "     Windows is healthy."
-        }
-        Lock-Gateway
-    }
+    # Clean every user's junk (works whether started as SYSTEM by the task, or by an admin). Never real files.
+    Purge "C:\Users\*\AppData\Local\Temp" "Temporary files"
+    Purge "C:\Users\*\AppData\Local\Microsoft\Windows\INetCache" "Internet cache"
+    Purge "C:\Users\*\AppData\Local\CrashDumps" "Crash dumps"
+    Purge "C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Cache" "Chrome cache"
+    Purge "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Cache" "Edge cache"
+    Purge "$env:WINDIR\Temp" "Windows temp"
+    Stop-Service wuauserv -Force; Purge "$env:WINDIR\SoftwareDistribution\Download" "Windows Update leftovers"; Start-Service wuauserv
+    Write-Host "   - Prefetch (Windows rebuilds it)"
+    Remove-Item "$env:WINDIR\Prefetch\*" -Force -ErrorAction SilentlyContinue
+    Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue | Out-Null
+    Write-Host "   - Windows disk cleanup (old updates, logs)"
+    Dism.exe /Online /Cleanup-Image /StartComponentCleanup /Quiet | Out-Null       # reclaims WinSxS space, safe
+    Write-Host "   - Checking Windows health"
+    if ("$(Dism.exe /Online /Cleanup-Image /CheckHealth)" -match 'repairable') {
+        Write-Host "     Repairable damage found - repairing Windows (several minutes)..." -ForegroundColor Yellow
+        Dism.exe /Online /Cleanup-Image /RestoreHealth /Quiet | Out-Null
+        sfc /scannow | Out-Null
+        Write-Host "     Windows repair done."
+    } else { Write-Host "     Windows is healthy." }
+    Lock-Gateway                                                                    # router-drop shield (needs rights)
     Write-Host "   - Recycle Bin";  Clear-RecycleBin -Force -ErrorAction SilentlyContinue
     Write-Host "   - Flushing DNS"; ipconfig /flushdns | Out-Null
-    Write-Host "   - Optimising"
-    Send-Details; Send-Connections
-    Write-Host "   - Restarting Explorer"
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 2
-    if (-not (Get-Process explorer)) { Start-Process explorer }
+    Write-Host "   - Updating details"; Send-Details; Send-Connections
+    if (-not $asSystem) {                                                           # restarting Explorer only makes
+        Write-Host "   - Restarting Explorer"                                       # sense in the user's own session
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 2
+        if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer }
+    }
     $freed = [math]::Round(((Get-PSDrive C).Free - $before)/1MB); if ($freed -lt 0) { $freed = 0 }
-    Write-Host "`n  Done. Freed about $freed MB. Your PC should feel faster." -ForegroundColor Green
-    Write-Host "  If it is still slow, tell IT.`n" -ForegroundColor Green
+    $msg = "PC cleaned and optimised. Freed about $freed MB. If it is still slow, tell IT."
+    Write-Host "`n  $msg`n" -ForegroundColor Green
+    if ($asSystem) { try { & msg.exe * /TIME:30 $msg } catch {} }                  # pop a note in the user's session
     Start-Sleep 6
     return
 }
