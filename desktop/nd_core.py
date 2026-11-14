@@ -1419,12 +1419,42 @@ def scan(subnet, opts, progress, stop):
     return raw
 
 
+RECENT_DAYS = 7
+
+
+def _when(text):
+    try:
+        return dt.datetime.strptime(text, "%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return None
+
+
+def recent_mark(first_seen, cat_changed, baseline, now, days=RECENT_DAYS):
+    """Why a device counts as new / changed this week, or "" - shown beside its name for a week (the old
+    "(new)" mark only compared with the scan just before, so it was gone after the next hourly scan).
+    baseline: the oldest first-seen time in the history - devices found by the very first scans of this
+    install are not "new", they were simply all found at once."""
+    now_t, base_t, first_t = _when(now), _when(baseline), _when(first_seen)
+    if not now_t:
+        return ""
+    if first_t and base_t and first_t - base_t > dt.timedelta(hours=1) \
+            and now_t - first_t <= dt.timedelta(days=days):
+        return "new since " + first_t.strftime("%d-%b %H:%M")
+    ch = cat_changed if isinstance(cat_changed, dict) else {}
+    ch_t = _when(ch.get("time"))
+    if ch_t and ch.get("from") and now_t - ch_t <= dt.timedelta(days=days):
+        return f"was under '{ch['from']}' until {ch_t.strftime('%d-%b %H:%M')}"
+    return ""
+
+
 # ==========================================================================
 # analysis
 # ==========================================================================
 def build_devices(raw, oui, db):
     m = raw["meta"]
     gw, lip = m["gateway"], m["local_ip"]
+    baseline = min((h.get("first_seen") or "9999" for h in (db.get("devices") or {}).values()),
+                   default=m["started"])
     devs = {}
 
     def dev(mac, ip):
@@ -1518,6 +1548,10 @@ def build_devices(raw, oui, db):
         if not d["name"]:
             d["name"], d["auto_name"] = auto_name(d), True
         d["status"] = "Online"
+        ch = (h or {}).get("cat_changed")
+        if h and h.get("category") and h["category"] not in (d["category"], CAT_OFF):
+            ch = {"from": h["category"], "time": m["started"]}      # the type changed in THIS scan
+        d["recent"] = recent_mark(d["first_seen"], ch, baseline, m["started"])
         out.append(d)
 
     online_macs = {d["mac"] for d in out if d["mac"]}
@@ -1865,6 +1899,8 @@ def _update_db(db, raw, devices):
         h = db["devices"].setdefault(d["mac"], {"first_seen": ts, "names": [], "ips": []})
         h["last_seen"] = ts
         h["ip"] = d["ip"]
+        if h.get("category") and h["category"] != d["category"]:
+            h["cat_changed"] = {"from": h["category"], "time": ts}   # kept, so the list can say so for a week
         h["category"] = d["category"]
         h["vendor"] = d["vendor"]
         n = (d["names"].get("netbios") or d["names"].get("smb") or (d.get("upnp") or {}).get("friendlyName") or

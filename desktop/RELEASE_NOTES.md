@@ -1,3 +1,16 @@
+## Network Doctor 3.35.0
+
+### All devices: what is new or changed stays visible for a week
+- The "(new)" mark only compared with the scan just before, so it was gone after the next hourly scan - a
+  count going from 40 to 42 cameras could not be traced to the two devices behind it.
+- A device first seen in the last 7 days now shows "(new since 13-Nov 22:49)" beside its name, in green.
+- A device that moved to another group (for example out of "Unknown devices" when the app learned what it
+  is) shows "(was under 'Unknown devices' until 13-Nov 23:10)" - a higher count is often this, not a new
+  device.
+- The group header says how many: "CCTV cameras / DVR / NVR (42) - 2 new / changed this week", and those
+  rows are listed first. "Show: New / changed in the last 7 days" lists only them.
+- The marks start from this version on: a change that happened before the update cannot be shown.
+
 ## Network Doctor 3.34.1
 
 ### The router log is no longer filled with "logged in / logged out via api"

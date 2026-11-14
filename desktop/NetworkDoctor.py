@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.34.1"
+VERSION = "3.35.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1734,7 +1734,11 @@ class App(tk.Tk):
                 ds.sort(key=lambda d: -sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps")))
             if not ds:
                 continue
-            parent = tv.insert("", "end", text=f"{c}  ({len(ds)})", open=True, tags=("cat",))
+            n_recent = sum(1 for d in ds if d.get("recent") and d["online"])
+            parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
+                f"   -   {n_recent} new / changed this week (green, listed first)" if n_recent else ""))
+            if n_recent and not self.var_sort_bw.get():
+                ds.sort(key=lambda d: not (d.get("recent") and d["online"]))   # stable: the rest keeps its order
             for d in ds:
                 svc = ", ".join(core.PORTS.get(p, str(p)) for p in d["ports"])
                 up = d.get("upnp") or {}
@@ -1752,9 +1756,10 @@ class App(tk.Tk):
                         if time.time() - getattr(self, "_snmp_bw_cache_t", 0) < 90 else None
                     bw = (f"\u2193 {M.fmt_rate(sr['down_bps'])}  \u2191 {M.fmt_rate(sr['up_bps'])}  (switch)"
                           if sr else "")
+                recent = d.get("recent") if d["online"] else ""
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
-                       or ("new" if d.get("mac") in new_macs else ""))
-                name = (d["name"] or "-") + ("  (new)" if tag == "new" else "")
+                       or ("new" if (d.get("mac") in new_macs or recent) else ""))
+                name = (d["name"] or "-") + (f"  ({recent})" if recent else "  (new)" if tag == "new" else "")
                 iid = tv.insert(parent, "end", text=name, tags=(tag,) if tag else (),
                                 values=(d["status"], d.get("dept", ""), ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
                                         d["mac"] or "-",
