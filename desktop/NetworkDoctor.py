@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.36.0"
+VERSION = "3.36.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1384,6 +1384,12 @@ class App(tk.Tk):
         mon = self.mon
         if not mon:
             return
+        page = getattr(self, "sweep_tab", None)
+        if self.scanning or self.quick_running or getattr(self, "_auto_sweep_busy", False) \
+                or (page is not None and page.running):
+            # this app's own scan / check / login sweep is running: its burst of ARP and probes is not a
+            # storm and a late ping is not a dead router (nd_monitor: quiet_until). 25 s past the end.
+            mon.quiet_until = time.time() + 25
         if core.IS_PRO and getattr(self, "defense", None):
             self.defense.gw_ip = self.gw
             self.defense.own_ip = getattr(self, "lip", "")

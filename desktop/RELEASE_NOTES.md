@@ -1,3 +1,17 @@
+## Network Doctor 3.36.1
+
+### No more "Broadcast storm" / "Router not answering" alerts caused by the app's own scan
+- While Network Doctor scans, runs the quick check or the login sweep (and for 25 s after), the live monitor
+  no longer raises a storm or a "router not answering" alert: the burst of ARP questions and probes is the
+  app's own work. A real storm or a router that is really down is still there afterwards and is reported
+  then.
+- A burst where most broadcasts come from this PC is never reported, and this PC is never listed as a
+  "top sender".
+- When the rate is mostly multicast (the counter is far above the broadcasts actually seen) the alert now
+  says "Multicast flood" - a camera / recorder / TV box streaming to every port - with the IGMP-snooping
+  fix, instead of "Broadcast storm: find the looped cable".
+- The sweep of empty addresses is a little gentler again (128 at a time instead of 192 / 256).
+
 ## Network Doctor 3.36.0
 
 ### New page: This PC & Wi-Fi > PC Care (repair and clean-up for this Windows PC)
