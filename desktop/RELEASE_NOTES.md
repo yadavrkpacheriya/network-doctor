@@ -1,3 +1,11 @@
+## Network Doctor 3.51.0
+
+### Colour headers on the rest of the pages
+The remaining core pages now have the same coloured title bar as the tool pages: All devices, Network map,
+Usage, IP-MAC binding, Commands, Alerts, Problems, Root cause, Health checks, History, Live monitor and Fix
+Assistant. Every page in the app now shows a coloured header in its section's colour, so the whole app is
+consistent, compact and easy to find your way around.
+
 ## Network Doctor 3.50.0
 
 ### Colour headers on every tool page
