@@ -105,6 +105,22 @@ if ($Mode -eq "fix") {
     if ($admin) {
         Purge "$env:WINDIR\Temp" "Windows temp"
         Stop-Service wuauserv -Force; Purge "$env:WINDIR\SoftwareDistribution\Download" "Windows Update leftovers"; Start-Service wuauserv
+        Write-Host "   - Prefetch (Windows rebuilds it)"
+        Remove-Item "$env:WINDIR\Prefetch\*" -Force -ErrorAction SilentlyContinue
+        Write-Host "   - Delivery Optimisation cache"
+        Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue | Out-Null
+        Write-Host "   - Windows disk cleanup (old updates, logs)"
+        Dism.exe /Online /Cleanup-Image /StartComponentCleanup /Quiet | Out-Null   # reclaims WinSxS space, safe, ~1-3 min
+        Write-Host "   - Checking Windows health"
+        $check = Dism.exe /Online /Cleanup-Image /CheckHealth                       # fast, a few seconds
+        if ("$check" -match 'repairable') {
+            Write-Host "     Repairable damage found - repairing Windows (this takes several minutes)..." -ForegroundColor Yellow
+            Dism.exe /Online /Cleanup-Image /RestoreHealth /Quiet | Out-Null
+            sfc /scannow | Out-Null
+            Write-Host "     Windows repair done."
+        } else {
+            Write-Host "     Windows is healthy."
+        }
     }
     Write-Host "   - Recycle Bin";  Clear-RecycleBin -Force -ErrorAction SilentlyContinue
     Write-Host "   - Flushing DNS"; ipconfig /flushdns | Out-Null
