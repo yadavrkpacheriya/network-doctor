@@ -1828,6 +1828,7 @@ class ToolsTab:
         ttk.Button(row, text="Look up", style="Big.TButton", command=self._mac).pack(side="left", padx=4)
         ttk.Button(row, text="Find it on the network (asks the router)", command=self._mac_find).pack(
             side="left", padx=4)
+        ttk.Button(row, text="Router ports (devices on each)", command=self._ports).pack(side="left", padx=4)
         ttk.Label(row, text="  any format: 00-11-22-33-44-55, 0011.2233.4455, 001122334455 (first 6 digits are enough "
                             "for the vendor)", foreground="#667085").pack(side="left")
         self._out_box(f, "mac")
@@ -1860,6 +1861,53 @@ class ToolsTab:
         except ValueError as e:
             t.insert("end", str(e), "crit")
         t.configure(state="disabled")
+
+    def _ports(self):
+        """How many devices sit on each router port - asks the router's bridge host table (read-only). A port
+        with many devices has a switch on it; a port full of fake-MAC devices is the camera segment."""
+        t = self.texts["mac"]
+
+        def show(lines):
+            if not t.winfo_exists():
+                return
+            t.configure(state="normal")
+            t.delete("1.0", "end")
+            for text, kind in lines:
+                t.insert("end", "  " + text + "\n", {"ok": "ok", "warn": "warn"}.get(kind, "mute"))
+            t.configure(state="disabled")
+
+        show([("Asking the router which devices are on each port ...", "mute")])
+        app = self.app
+        devices = list(app.devices)
+        with core.DB_LOCK:
+            tags = T.tags_of(app.db)
+        import nd_routeros as RO
+        c = RO.from_settings(app._settings(), app.gw)
+        if not c:
+            show([("No router login saved. Setup > Router to add it.", "warn")])
+            return
+
+        def work():
+            try:
+                with c:
+                    hosts = c.cmd("/interface/bridge/host/print")
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                app.q.put(("call", lambda: show([(f"The router could not be asked: {msg}", "warn")])))
+                return
+            rows = T.router_port_summary(hosts, devices, tags)
+            lines = [("Devices on each router port (a port with many devices has a switch on it):", "mute"), ("", "mute")]
+            for port, info in rows:
+                tag = "warn" if info["bogus"] else "ok"
+                extra = f" - {info['bogus']} with a fake / cloned MAC (cameras)" if info["bogus"] else ""
+                lines.append((f"{port}: {info['count']} device(s){extra}", tag))
+                if info["named"]:
+                    lines.append(("     " + ", ".join(info["named"][:12])
+                                  + (" ..." if len(info["named"]) > 12 else ""), "mute"))
+            if not rows:
+                lines.append(("The router returned no bridge host entries (hardware offload may hide them).", "warn"))
+            app.q.put(("call", lambda: show(lines)))
+        threading.Thread(target=work, daemon=True).start()
 
     def _mac_find(self):
         """Where is this MAC? The device list, the history, and - read-only - the router's ARP table, DHCP

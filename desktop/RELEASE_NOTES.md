@@ -1,3 +1,11 @@
+## Network Doctor 3.43.0
+
+### See how many devices are on each router port (find the camera switch)
+- Network Tools > MAC lookup > new "Router ports (devices on each)" button: asks the router (read-only) and
+  lists every router port with how many devices sit on it, which known devices they are, and how many carry a
+  fake / cloned MAC. A port with many devices has a switch on it; a port full of fake-MAC devices is the
+  camera segment - so you can find the one cable to fix or isolate.
+
 ## Network Doctor 3.42.0
 
 ### Detects the real cause of the gateway flap: fake / duplicate camera MACs
