@@ -150,6 +150,34 @@ def decide(kb, text, recipe_kind=None, cat="", src="", sev="warning", now=None):
             "auto_ok": conf >= 0.8 and kind in AUTO_SAFE and src != "external"}
 
 
+def teach(kb, examples):
+    """Teach the brain from reviewed examples: [(text, kind, ok)] - ok True means 'this wording IS this kind and
+    the fix works', ok False means 'this fix did NOT work here'. This is how guidance shared back (from the daily
+    report) makes the brain handle look-alike issues next time. Returns how many it learned."""
+    n = 0
+    for ex in examples or []:
+        text, kind = ex[0], ex[1]
+        ok = ex[2] if len(ex) > 2 else True
+        if text and kind:
+            learn_outcome(kb, text, kind, ok=ok)
+            n += 1
+    return n
+
+
+_TEACH = re.compile(r"teach\s+kind\s*=\s*([a-z_][a-z0-9_]*)\s*:\s*(.+?)\s*$", re.I)
+
+
+def parse_teach(text):
+    """Pull 'TEACH kind=<kind>: <example words>' lines out of pasted guidance -> [(words, kind, True)].
+    Anyone (or Claude, in a reply to the shared report) can write these; the brain then recognises look-alikes."""
+    out = []
+    for line in (text or "").splitlines():
+        m = _TEACH.search(line)
+        if m:
+            out.append((m.group(2).strip(), m.group(1).lower(), True))
+    return out
+
+
 # the kinds safe to apply automatically at high confidence - never ones that block or expose a device, touch
 # DNS, or face the internet (those always stay a reviewed, one-click action)
 AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "config_changed"})

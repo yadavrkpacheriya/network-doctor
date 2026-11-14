@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.53.0"
+VERSION = "3.54.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -898,6 +898,11 @@ class App(tk.Tk):
             target=self.reload_threats, args=(True,), daemon=True).start()).pack(side="left")
         self.var_threat = tk.StringVar(value="Threat lists: loading...")
         ttk.Label(top, textvariable=self.var_threat).pack(side="left", padx=10)
+        rep = nd_tabs.section_card(f, "Daily report & learning", "#7c3aed")
+        ttk.Button(rep, text="Daily report", command=self._daily_report_now).pack(side="left")
+        ttk.Button(rep, text="Teach the brain", command=self._teach_brain).pack(side="left", padx=6)
+        ttk.Label(rep, text="   A report of today's issues & fixes is saved to your Reports folder each day.",
+                  ).pack(side="left")
         up = nd_tabs.section_card(f, "App updates", "#0f766e")
         ttk.Button(up, text="Check for updates", command=lambda: self.check_updates(False)).pack(side="left")
         ttk.Label(up, text="   New versions:").pack(side="left")
@@ -1241,6 +1246,9 @@ class App(tk.Tk):
                 self._daily_update()
             if time.time() - getattr(self, "_self_inv_t", 0) > 86400:
                 self._self_inventory()
+            if time.time() - getattr(self, "_report_t", 0) > 3600:  # once/hour is enough; it self-guards per day
+                self._report_t = time.time()
+                self._auto_daily_report()
             if time.time() - getattr(self, "_usage_insight_t", 0) > 86400:
                 self._usage_insight_t = time.time()
                 self._usage_spike_check()
@@ -2208,7 +2216,8 @@ class App(tk.Tk):
         self.last_dhcp_probe = 0
         self.alerts_active = {}   # problem key -> {"title","sev","first","last","source"}
         self.alert_cool = {}      # monitor-event key -> time of last pop-up
-        self.alert_mute_until = 0
+        self.alert_mute_until = self._settings().get("mute_until", 0) or 0
+        self.alert_mute_level = self._settings().get("mute_level")   # None = full mute; "critical" = serious only
         self.alert_win = None
         self.alert_lines = []
         self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
@@ -2389,14 +2398,51 @@ class App(tk.Tk):
             return
         self.alert_cool[key] = now
         self._health_log("Live monitor", e["sev"], f"{e['src']}: {e['text']}")
-        if self.var_alerts.get() and now >= self.alert_mute_until:
+        if self._may_popup(e["sev"]):
             self._popup(e["sev"], e["text"])
+
+    _SEV_RANK = {"critical": 3, "warning": 2, "info": 1, "note": 0}
+
+    def _may_popup(self, sev):
+        """Should this pop up now? Off if alerts are disabled. While muted, only alerts at or above the mute
+        level get through (serious-only mode); a full mute lets nothing through."""
+        if not self.var_alerts.get():
+            return False
+        if time.time() < self.alert_mute_until:
+            lvl = self.alert_mute_level
+            return bool(lvl) and self._SEV_RANK.get(sev, 1) >= self._SEV_RANK.get(lvl, 3)
+        return True
+
+    def _set_mute(self, hours, level=None):
+        """Mute pop-ups for `hours`. level=None silences everything; level="critical" still lets serious
+        issues through. Saved so a multi-day mute survives a restart. Alerts keep going to the health log."""
+        self.alert_mute_until = time.time() + hours * 3600
+        self.alert_mute_level = level
+        self._settings()["mute_until"] = self.alert_mute_until
+        self._settings()["mute_level"] = level
+        self._save_settings()
+        if hours >= 24:
+            days = round(hours / 24)
+            self.var_status.set(f"Alerts muted for {days} day(s)"
+                                + (" - only serious issues will still alert you." if level
+                                   else " - nothing will pop up.") + " (all still in the health log.)")
+        else:
+            self.var_status.set(f"Alerts muted for {round(hours)} hour(s)"
+                                + (" (serious still shown)." if level else ".") + " (still in the health log.)")
+
+    def _unmute(self):
+        self.alert_mute_until = 0
+        self.alert_mute_level = None
+        self._settings()["mute_until"] = 0
+        self._settings()["mute_level"] = None
+        self._save_settings()
+        self.var_status.set("Alerts on.")
 
     def _raise_alert(self, sev, title, items, source):
         text = title + (" - " + "; ".join(items) if items else "")
         self._log_event(sev, text, source)
         self._record_alert(sev, text, source)
-        if self.var_alerts.get() and time.time() >= self.alert_mute_until:
+        if self._may_popup(sev):
             self._popup(sev, text)
 
     def _usage_spike_check(self):
@@ -2821,6 +2867,110 @@ class App(tk.Tk):
             self.mon.event(sev, "Auto check", text, "auto")
         self._health_log(source, sev, text)
 
+    def _setup_gaps(self):
+        """What would let Network Doctor do more - the 'what is missing' part of the daily report."""
+        g = []
+        st = self._settings()
+        if not (st.get("router_api") or {}).get("host"):
+            g.append("No router login saved - Setup > Router login. Without it, fixes can only be copied, not "
+                     "applied, and the phone's router tools cannot work.")
+        if not st.get("dnsfilter_always_on"):
+            g.append("Website-name learning is off - Setup > Website names & filtering. Usage then shows real "
+                     "apps/sites instead of 'CDN' / 'unknown'.")
+        try:
+            bogus = T.mac_health_issues(self.devices, T.tags_of(self.db))
+            for i in bogus:
+                g.append(i["title"] + " - Devices > line up / fixed IP.")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from collections import Counter
+            miss = Counter()
+            with core.DB_LOCK:
+                sw = dict(self.db.get("sweep_status") or {})
+            login_cats = (core.CAT_CAM, core.CAT_BIO, core.CAT_NET)
+            for d in self.devices:
+                if (d.get("online") and d.get("mac") and d["mac"] not in sw
+                        and d.get("category") in login_cats):
+                    miss[d.get("category", "device")] += 1
+            for cat, n in miss.items():
+                g.append(f"{n} {cat} have no saved login yet - run the Login sweep so passwords are checked and "
+                         "the brute-force watch can tell a real failure from a never-tried device.")
+        except Exception:  # noqa: BLE001
+            pass
+        return g
+
+    def _make_daily_report(self, day=None, save=True, open_after=False):
+        import nd_report as RP
+        day = day or time.strftime("%Y-%m-%d")
+        start = time.mktime(time.strptime(day, "%Y-%m-%d"))
+        end = start + 86400
+        problems = [{"text": a.get("title") or a.get("text", ""), "sev": a.get("sev", "warning"),
+                     "kind": a.get("kind", ""), "count": a.get("count", 1), "source": a.get("source", "")}
+                    for a in self.alert_log.items if start <= a.get("t", 0) < end]
+        smap = {"ok": "ok", "undone": "undone", "auto_undone": "undone"}
+        fixes = [{"title": f.get("title", ""), "kind": f.get("kind", ""),
+                  "status": smap.get(f.get("status"), "applied"), "note": f.get("note", "")}
+                 for f in self._fix_history() if start <= f.get("at", 0) < end]
+        net = f"**Network:** {sum(1 for d in self.devices if d.get('online'))} devices online, router {self.gw}."
+        md = RP.build_daily(day, problems, fixes, self._setup_gaps(), brain=self._brain(), net_summary=net)
+        path = None
+        if save:
+            try:
+                os.makedirs(core.REPORT_DIR, exist_ok=True)
+                path = os.path.join(core.REPORT_DIR, RP.default_name(day))
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(md)
+            except OSError:
+                path = None
+        if open_after and path:
+            self.open_folder(os.path.dirname(path))
+        return path, md
+
+    def _daily_report_now(self):
+        path, _ = self._make_daily_report(open_after=True)
+        self.var_status.set(f"Daily report saved: {path}" if path else "Could not save the report.")
+
+    def _auto_daily_report(self):
+        """Once per day, write yesterday's report automatically (nothing pops up; it just lands in the folder)."""
+        today = time.strftime("%Y-%m-%d")
+        if self._settings().get("last_report_day") == today:
+            return
+        self._settings()["last_report_day"] = today
+        self._save_settings()
+        y = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+        try:
+            self._make_daily_report(day=y, save=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _teach_brain(self):
+        """Paste guidance (lines like 'TEACH kind=gw_flap: router keeps dropping arp') and the brain learns to
+        recognise those - and look-alike - problems next time."""
+        w = tk.Toplevel(self)
+        w.title("Teach the brain")
+        w.geometry("640x420")
+        ttk.Label(w, text="Paste what Claude replied to your daily report. Lines like\n"
+                          "   TEACH kind=gw_flap: router keeps dropping for seconds, arp conflict\n"
+                          "teach the brain to recognise that problem (and ones worded like it) next time.",
+                  justify="left").pack(anchor="w", padx=10, pady=8)
+        txt = text_box(w)
+        txt.configure(height=14)
+        import nd_brain as BR
+
+        def learn():
+            exs = BR.parse_teach(txt.get("1.0", "end"))
+            n = BR.teach(self._brain(), exs)
+            self._save_settings()
+            messagebox.showinfo("Teach the brain", f"Learned {n} example(s)." if n else
+                                "No 'TEACH kind=...: ...' lines found. Check the format.")
+            if n:
+                w.destroy()
+        bar = ttk.Frame(w)
+        bar.pack(fill="x", padx=10, pady=6)
+        ttk.Button(bar, text="Learn these", style="Big.TButton", command=learn).pack(side="left")
+        ttk.Button(bar, text="Close", command=w.destroy).pack(side="right")
+
     def _health_log(self, source, level, text):
         """One line per check / problem in Documents/NetworkDoctor Reports/health-log-YYYY-MM.csv (opens in Excel)."""
         try:
@@ -2871,9 +3021,8 @@ class App(tk.Tk):
                     self.run_rca()
                 w.destroy()
 
-            def mute():
-                self.alert_mute_until = time.time() + 3600
-                self.var_status.set("Alerts muted for 1 hour (they are still written to the health log).")
+            def mute_and_close(hours, level=None):
+                self._set_mute(hours, level)
                 w.destroy()
             def trouble():
                 show("alerts")
@@ -2891,7 +3040,20 @@ class App(tk.Tk):
                     self.tools._guard_make()
                 ttk.Button(bar, text="Block torrents...", style="Big.TButton", command=torrent).pack(side="left",
                                                                                                     padx=6)
-            ttk.Button(bar, text="Mute 1 hour", command=mute).pack(side="right")
+            mb = ttk.Menubutton(bar, text="Mute...")
+            mm = tk.Menu(mb, tearoff=0)
+            mm.add_command(label="1 hour (everything)", command=lambda: mute_and_close(1))
+            mm.add_separator()
+            mm.add_command(label="1 day - only serious issues alert",
+                           command=lambda: mute_and_close(24, "critical"))
+            mm.add_command(label="3 days - only serious issues alert",
+                           command=lambda: mute_and_close(72, "critical"))
+            mm.add_command(label="7 days - only serious issues alert",
+                           command=lambda: mute_and_close(168, "critical"))
+            mm.add_separator()
+            mm.add_command(label="Turn mute off", command=lambda: (self._unmute(), w.destroy()))
+            mb["menu"] = mm
+            mb.pack(side="right")
             ttk.Button(bar, text="Close", command=w.destroy).pack(side="right", padx=6)
             self.alert_txt = text_box(w)
         t = self.alert_txt
@@ -3129,7 +3291,7 @@ class App(tk.Tk):
         self._record_alert("warning", txt, "Full scan")
         if self.mon:
             self.mon.event("info", "Auto check", txt, "auto")
-        if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
+        if self._settings().get("alert_new", True) and self._may_popup("warning"):
             self._popup("warning", txt)
 
     def _auto_sweep(self):
@@ -3214,7 +3376,7 @@ class App(tk.Tk):
         self._record_alert("warning", txt, "Full scan")
         if self.mon:
             self.mon.event("info", "Auto check", txt, "auto")
-        if self._settings().get("alert_new", True) and self.var_alerts.get() and time.time() >= self.alert_mute_until:
+        if self._settings().get("alert_new", True) and self._may_popup("warning"):
             self._popup("warning", txt)
 
     # ---------------------------------------------------------------- phone link

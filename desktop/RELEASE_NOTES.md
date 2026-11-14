@@ -1,3 +1,21 @@
+## Network Doctor 3.54.0
+
+### Quieter alerts - mute for days, only serious things get through
+Alerts were interrupting work. The pop-up now has a **Mute...** menu:
+- **1 hour (everything)** - full quiet for a short break.
+- **1 / 3 / 7 days - only serious issues alert** - routine warnings stay silent and just pile up in the health log; only critical problems (a device down, a gateway drop, a brute-force attempt) still pop up.
+- **Turn mute off** any time.
+The choice is remembered, so it survives a restart.
+
+### A daily report you can share back - and teach the brain from
+Network Doctor now writes a plain **daily report** to your Reports folder every day: what went wrong, what it fixed on its own, what it rolled back, what is still open, and what it could not work out by itself.
+- Setup > Daily report & learning > **Daily report** makes today's now and opens the folder.
+- Paste the "could not work these out" section to Claude. Claude replies with `TEACH kind=...: ...` lines; paste them into **Teach the brain** and it learns to recognise those - and look-alike - problems next time.
+- The report also lists what is *missing* (no router login, name-learning off, devices with no saved login) so you can close the gaps that stop it doing more.
+
+### Brain keeps getting better
+The learning brain now also feeds on the taught examples, so shared guidance carries over between days and the fixer gets steadily smarter about your network.
+
 ## Network Doctor 3.53.0
 
 ### A smarter learning brain (no heavy ML library - stays tiny and offline)
