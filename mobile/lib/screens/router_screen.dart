@@ -32,6 +32,7 @@ class _RouterScreenState extends State<RouterScreen> {
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _host.text = p.getString('ros_host') ?? '192.168.0.1';
       _user.text = p.getString('ros_user') ?? '';
@@ -52,81 +53,123 @@ class _RouterScreenState extends State<RouterScreen> {
     return r;
   }
 
-  Future<void> _connect() async {
-    setState(() {
+  void _set(VoidCallback fn) {
+    if (mounted) setState(fn);
+  }
+
+  /// Open the router, run [body], and ALWAYS close the socket and clear the busy flag - even on an error or if
+  /// the user leaves the screen. Every setState is guarded so it never fires after the widget is disposed.
+  Future<void> _task(String busy, Future<void> Function(RouterOs r) body) async {
+    _set(() {
       _busy = true;
-      _status = 'Connecting...';
-      _info = '';
+      _status = busy;
     });
-    await _save();
+    RouterOs? r;
     try {
-      final r = await _open();
-      final (name, ver) = await r.identity();
-      final res = await r.cmd('/system/resource/print');
-      final up = res.isNotEmpty ? res[0]['uptime'] ?? '' : '';
-      await r.close();
-      setState(() {
-        _status = 'Connected';
-        _info = "$name  -  RouterOS $ver" + (up.isNotEmpty ? '  -  up $up' : '');
-      });
+      r = await _open();
+      await body(r);
     } on RosError catch (e) {
-      setState(() => _status = e.message);
+      _set(() => _status = e.message);
     } catch (e) {
-      setState(() => _status = '$e');
+      _set(() => _status = '$e');
     } finally {
-      setState(() => _busy = false);
+      await r?.close();
+      _set(() => _busy = false);
     }
   }
 
-  Future<void> _show(String path, String title) async {
-    setState(() {
-      _busy = true;
-      _status = 'Reading $title...';
-      _rows = [];
-    });
-    try {
-      final r = await _open();
-      final rows = await r.cmd(path);
-      await r.close();
-      setState(() {
-        _rows = rows;
-        _status = '${rows.length} $title';
+  Future<void> _connect() async {
+    await _save();
+    _set(() => _info = '');
+    await _task('Connecting...', (r) async {
+      final (name, ver) = await r.identity();
+      final res = await r.cmd('/system/resource/print');
+      final up = res.isNotEmpty ? res[0]['uptime'] ?? '' : '';
+      _set(() {
+        _status = 'Connected';
+        _info = '$name  -  RouterOS $ver${up.isNotEmpty ? '  -  up $up' : ''}';
       });
-    } on RosError catch (e) {
-      setState(() => _status = e.message);
-    } catch (e) {
-      setState(() => _status = '$e');
-    } finally {
-      setState(() => _busy = false);
-    }
+    });
+  }
+
+  Future<void> _show(String path, String title) async {
+    _set(() => _rows = []);
+    await _task('Reading $title...', (r) async {
+      final rows = await r.cmd(path);
+      _set(() {
+        _rows = rows;
+        _status = '$title: ${rows.length}';
+      });
+    });
+  }
+
+  Future<void> _bindAll() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Bind all devices to their current IP?'),
+        content: const Text('Turns every current DHCP lease into a fixed reservation, so each device always '
+            'gets the same IP. Nothing on the devices changes. You can remove a reservation later.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Bind all')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _task('Binding...', (r) async {
+      final leases = await r.cmd('/ip/dhcp-server/lease/print');
+      var n = 0;
+      for (final l in leases) {
+        if ((l['dynamic'] ?? '') == 'true' && (l['.id'] ?? '').isNotEmpty) {
+          await r.talk(['/ip/dhcp-server/lease/make-static', '=.id=${l['.id']}'], check: false);
+          n++;
+        }
+      }
+      _set(() => _status = n == 0 ? 'All leases are already fixed.' : 'Bound $n device(s) to their IP.');
+    });
+  }
+
+  Future<void> _backup() async {
+    _set(() => _cmdOut = '');
+    await _task('Reading the router config...', (r) async {
+      final sb = StringBuffer();
+      for (final (path, title) in const [
+        ('/ip/address/print', 'IP addresses'),
+        ('/ip/dhcp-server/print', 'DHCP servers'),
+        ('/ip/dhcp-server/network/print', 'DHCP networks'),
+        ('/ip/dns/print', 'DNS'),
+        ('/ip/firewall/filter/print', 'Firewall filter'),
+        ('/ip/firewall/nat/print', 'NAT'),
+        ('/interface/print', 'Interfaces'),
+      ]) {
+        final rows = await r.cmd(path);
+        sb.writeln('### $title (${rows.length})');
+        for (final m in rows) {
+          sb.writeln(m.entries.where((e) => !e.key.startsWith('.')).map((e) => '${e.key}=${e.value}').join('  '));
+        }
+        sb.writeln();
+      }
+      _set(() {
+        _cmdOut = sb.toString();
+        _status = 'Config read - copy it to keep a backup.';
+      });
+    });
   }
 
   Future<void> _run() async {
     final line = _cmd.text.trim();
     if (line.isEmpty) return;
-    setState(() {
-      _busy = true;
-      _status = 'Running...';
-      _cmdOut = '';
-    });
-    try {
-      final r = await _open();
-      final rows = await r.cmd(line.split(RegExp(r'\s+')).first,
-          params: _paramsFrom(line));
-      await r.close();
-      setState(() {
+    _set(() => _cmdOut = '');
+    await _task('Running...', (r) async {
+      final rows = await r.cmd(line.split(RegExp(r'\s+')).first, params: _paramsFrom(line));
+      _set(() {
         _cmdOut = rows.isEmpty
             ? '(no rows returned)'
             : rows.map((m) => m.entries.map((e) => '${e.key}=${e.value}').join('  ')).join('\n\n');
         _status = '${rows.length} row(s)';
       });
-    } on RosError catch (e) {
-      setState(() => _status = e.message);
-    } catch (e) {
-      setState(() => _status = '$e');
-    } finally {
-      setState(() => _busy = false);
-    }
+    });
   }
 
   // "path k=v k2=v2" -> {k:v,...}
@@ -139,6 +182,26 @@ class _RouterScreenState extends State<RouterScreen> {
       if (i > 0) m[p.substring(0, i)] = p.substring(i + 1);
     }
     return m.isEmpty ? null : m;
+  }
+
+  Widget _rowCard(Map<String, String> m) {
+    // one row from any print command: pick a sensible headline, then show the rest
+    const titleKeys = ['address', 'name', 'mac-address', 'host-name', 'message', 'interface'];
+    String title = '?';
+    for (final k in titleKeys) {
+      if ((m[k] ?? '').isNotEmpty) {
+        title = m[k]!;
+        break;
+      }
+    }
+    final rest = m.entries
+        .where((e) => !e.key.startsWith('.') && e.value.isNotEmpty && e.value != title)
+        .map((e) => '${e.key}=${e.value}')
+        .join('  ·  ');
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      child: ListTile(dense: true, title: Text(title), subtitle: rest.isEmpty ? null : Text(rest)),
+    );
   }
 
   @override
@@ -181,21 +244,24 @@ class _RouterScreenState extends State<RouterScreen> {
               onPressed: _busy ? null : () => _show('/ip/dhcp-server/lease/print', 'DHCP leases'),
               icon: const Icon(Icons.dns),
               label: const Text('DHCP leases')),
+          OutlinedButton.icon(
+              onPressed: _busy ? null : () => _show('/interface/print', 'interfaces'),
+              icon: const Icon(Icons.settings_ethernet),
+              label: const Text('Interfaces')),
+          OutlinedButton.icon(
+              onPressed: _busy ? null : () => _show('/log/print', 'log lines'),
+              icon: const Icon(Icons.article),
+              label: const Text('Router log')),
+          FilledButton.tonalIcon(
+              onPressed: _busy ? null : _bindAll,
+              icon: const Icon(Icons.push_pin),
+              label: const Text('Bind all to IP')),
+          FilledButton.tonalIcon(
+              onPressed: _busy ? null : _backup,
+              icon: const Icon(Icons.save),
+              label: const Text('Backup config')),
         ]),
-        for (final m in _rows)
-          Card(
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            child: ListTile(
-              dense: true,
-              title: Text(m['address'] ?? m['mac-address'] ?? m['host-name'] ?? '?'),
-              subtitle: Text([
-                if (m['mac-address'] != null) 'MAC ${m['mac-address']}',
-                if (m['host-name'] != null && (m['host-name'] ?? '').isNotEmpty) m['host-name']!,
-                if (m['interface'] != null) 'on ${m['interface']}',
-                if (m['status'] != null) m['status']!,
-              ].join('  ·  ')),
-            ),
-          ),
+        for (final m in _rows) _rowCard(m),
         const Divider(),
         TextField(
             controller: _cmd,
