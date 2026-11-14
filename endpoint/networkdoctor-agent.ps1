@@ -82,6 +82,26 @@ function Log-Usb($event, $detail, $drive, $kb) {
 }
 function Removable { Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2" | ForEach-Object { $_.DeviceID } }
 
+
+# Shield against the "router drops for a few seconds" problem (ARP spoofing / a faked gateway): pin the router's
+# real MAC on THIS PC so it ignores fake ARP for the gateway. No router change, no IP/MAC binding, affects no one
+# else. Guarded: it pins ONLY when the internet is working right now, so it can never pin a spoofed MAC. A reboot
+# or "netsh interface ip delete neighbors" clears it. Needs admin.
+function Lock-Gateway {
+    $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+           Sort-Object RouteMetric | Select-Object -First 1).NextHop
+    if (-not $gw -or $gw -eq '0.0.0.0') { return }
+    $okNet = (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue $gw) -and
+             (Test-Connection -Count 1 -Quiet -ErrorAction SilentlyContinue 8.8.8.8)
+    if (-not $okNet) { Write-Host "   - Router shield skipped (internet not stable right now)" -ForegroundColor DarkGray; return }
+    $n = Get-NetNeighbor -IPAddress $gw -ErrorAction SilentlyContinue |
+         Where-Object { $_.LinkLayerAddress -and $_.State -ne 'Unreachable' } | Select-Object -First 1
+    if ($n -and $n.LinkLayerAddress) {
+        netsh interface ipv4 set neighbors $n.InterfaceIndex $gw $n.LinkLayerAddress store=active 2>$null | Out-Null
+        Write-Host "   - Router address locked ($gw = $($n.LinkLayerAddress)) - ignores fake ARP"
+    }
+}
+
 # ================================ FIX (the one button the user clicks) ================================
 if ($Mode -eq "fix") {
     $host.UI.RawUI.WindowTitle = "Fix my PC"
@@ -121,6 +141,7 @@ if ($Mode -eq "fix") {
         } else {
             Write-Host "     Windows is healthy."
         }
+        Lock-Gateway
     }
     Write-Host "   - Recycle Bin";  Clear-RecycleBin -Force -ErrorAction SilentlyContinue
     Write-Host "   - Flushing DNS"; ipconfig /flushdns | Out-Null

@@ -10,6 +10,9 @@ quietly in the background and feeds Network Doctor.
   **It never touches Documents, Desktop, Downloads or any real file.**
 - Runs a quick Windows health check (DISM CheckHealth, a few seconds). Only **if** it finds repairable damage
   does it run the full repair (DISM RestoreHealth + sfc /scannow, several minutes) - healthy PCs stay fast.
+- **Router shield**: pins the router's real MAC on this PC so it ignores fake ARP (the cause of the router
+  "dropping for a few seconds"). No router change, no IP/MAC binding, affects no one else. It pins only when the
+  internet is working at that moment, so it can never pin a spoofed address; a reboot clears it.
 - Sends this PC's fresh **details** (maker, model, serial, Windows, CPU, RAM, disk, logged-in user, printers,
   antivirus) and **resource use** (CPU %, memory %, top memory apps) to Network Doctor.
 - Sends the current **network connections** — which app (process) is talking to which internet address — so
