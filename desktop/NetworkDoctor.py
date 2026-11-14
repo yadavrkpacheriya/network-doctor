@@ -44,6 +44,7 @@ import nd_usage as US
 import nd_home
 import nd_bwtab
 import nd_sweeptab
+import nd_pccare
 import nd_telemetry as TL
 
 import tkinter as tk
@@ -66,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.35.1"
+VERSION = "3.36.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -606,6 +607,7 @@ class App(tk.Tk):
         self._tab_slow()
         self._tab_bandwidth()
         self._tab_sweep()
+        self._tab_pccare()
         self._tab_rca()
         self._tab_problems()
         self._tab_checks()
@@ -692,6 +694,10 @@ class App(tk.Tk):
         f = self.nav.page("sweep")
         self.sweep_tab = nd_sweeptab.SweepPage(self, f)
 
+    def _tab_pccare(self):
+        f = self.nav.page("pccare")
+        self.pccare = nd_pccare.PCCarePage(self, f)
+
     def _tab_usage(self):
         f = self.nav.page("usage")
         self.usage_tab = nd_tabs.UsageTab(self, f)
@@ -741,6 +747,8 @@ class App(tk.Tk):
                 self.bwplan.refresh()
             elif cur == "sweep":
                 pass
+            elif cur == "pccare":
+                self.pccare.refresh()
             elif cur == "commands":
                 self.commands.refresh()
             elif cur == "alerts":
