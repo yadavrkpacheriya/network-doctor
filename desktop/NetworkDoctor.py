@@ -67,7 +67,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.36.1"
+VERSION = "3.37.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -92,14 +92,27 @@ def tree_sort(tv, col, heads):
     filtered-out row stays filtered out), and shows a small arrow on the active column so sorted-by is never
     a guess."""
     rev = not tv._sort["rev"] if tv._sort["col"] == col else False
-    cell = (lambda iid: tv.item(iid, "text")) if col == "#0" else (lambda iid: tv.set(iid, col))
-    kids = list(tv.get_children(""))
-    order = T.sorted_order([(iid, cell(iid)) for iid in kids], reverse=rev)
-    for i, iid in enumerate(order):
-        tv.move(iid, "", i)
     tv._sort["col"], tv._sort["rev"] = col, rev
+    tree_resort(tv)
     for c, base in heads.items():
         tv.heading(c, text=base + ((" ▼" if rev else " ▲") if c == col else ""))
+
+
+def tree_resort(tv):
+    """Put the rows back in the order of the column last clicked (nothing when no column was). A grouped list
+    (All devices: a heading row per category with the devices under it) keeps its groups and sorts the rows
+    INSIDE each group - sorting only the headings left the devices where they were. Called again after a
+    list is redrawn, so a chosen order survives the next scan / refresh."""
+    col, rev = tv._sort["col"], tv._sort["rev"]
+    if col is None:
+        return
+    cell = (lambda iid: tv.item(iid, "text")) if col == "#0" else (lambda iid: tv.set(iid, col))
+    top = list(tv.get_children(""))
+    grouped = any(tv.get_children(i) for i in top)
+    for parent in (top if grouped else [""]):
+        kids = list(tv.get_children(parent))
+        for i, iid in enumerate(T.sorted_order([(iid, cell(iid)) for iid in kids], reverse=rev)):
+            tv.move(iid, parent, i)
 
 
 def tree_filter(tv, query):
@@ -648,6 +661,9 @@ class App(tk.Tk):
         self.var_sort_bw = tk.BooleanVar(value=False)
         ttk.Checkbutton(sf, text="Sort by bandwidth", variable=self.var_sort_bw,
                         command=self.fill_devices).pack(side="left", padx=8)
+        self.var_flat = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sf, text="One list by IP (no groups)", variable=self.var_flat,
+                        command=self.fill_devices).pack(side="left", padx=4)
         act = ttk.Frame(f, padding=(0, 6, 0, 0))
         act.pack(fill="x", side="bottom")
         self.var_sel = tk.StringVar(value="Select a device:")
@@ -1744,21 +1760,30 @@ class App(tk.Tk):
         with core.DB_LOCK:
             sweep_status = dict(self.db.get("sweep_status") or {})
         unchecked = T.unchecked_macs(self.devices, sweep_status, core.CAT_CAM)
-        for c in core.CAT_ORDER:
-            ds = T.filter_devices([d for d in self.devices if d["category"] == c], qy,
-                                  "" if self.var_fdept.get() == "All" else self.var_fdept.get(),
-                                  "" if self.var_floc.get() == "All" else self.var_floc.get(), self.var_fshow.get())
+        flat = self.var_flat.get()
+        fargs = (qy, "" if self.var_fdept.get() == "All" else self.var_fdept.get(),
+                 "" if self.var_floc.get() == "All" else self.var_floc.get(), self.var_fshow.get())
+        if flat:      # every device in one list, in IP order (click any column title for another order)
+            groups = [(None, sorted(T.filter_devices(list(self.devices), *fargs),
+                                    key=lambda d: core.ip_key(d.get("ip") or "0.0.0.0")))]
+        else:
+            groups = [(c, T.filter_devices([d for d in self.devices if d["category"] == c], *fargs))
+                      for c in core.CAT_ORDER]
+        for c, ds in groups:
             if self.var_sort_bw.get():
                 ds.sort(key=lambda d: -sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps")))
             if not ds:
                 continue
             n_recent = sum(1 for d in ds if d.get("recent") and d["online"])
             n_unchk = sum(1 for d in ds if d.get("mac") in unchecked and not d.get("recent"))
-            parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
-                f"   -   {n_recent} new / changed this week (green)" if n_recent else "") + (
-                f"   -   {n_unchk} not read by the Login sweep yet (blue)" if n_unchk else "")
-                + ("   - listed first" if n_recent or n_unchk else ""))
-            if (n_recent or n_unchk) and not self.var_sort_bw.get():
+            if flat:
+                parent = ""
+            else:
+                parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
+                    f"   -   {n_recent} new / changed this week (green)" if n_recent else "") + (
+                    f"   -   {n_unchk} not read by the Login sweep yet (blue)" if n_unchk else "")
+                    + ("   - listed first" if n_recent or n_unchk else ""))
+            if (n_recent or n_unchk) and not self.var_sort_bw.get() and not flat:
                 # stable: the rest keeps its order
                 ds.sort(key=lambda d: not ((d.get("recent") and d["online"]) or d.get("mac") in unchecked))
             for d in ds:
@@ -1789,6 +1814,7 @@ class App(tk.Tk):
                                         d["mac"] or "-",
                                         d["vendor"], bw, svc, d["reason"], "; ".join(d["notes"])))
                 self.row_dev[iid] = d
+        tree_resort(tv)        # a column the user sorted by (IP, name...) stays sorted after every redraw
 
     def fill_problems(self):
         tv = self.tp

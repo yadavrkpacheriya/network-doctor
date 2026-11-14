@@ -1,3 +1,30 @@
+## Network Doctor 3.37.0
+
+### Usage: clear app names instead of company / whois texts (old days are renamed too)
+- **Acronis Cloud Backup is one line.** It was split over "acronis.com", "Acronis Asia Pte Ltd administrator",
+  "CDN (various)" and "Microsoft (other)" because backups travel through Akamai / Azure addresses.
+- A real site name always wins over a company bucket (CDN, Amazon cloud, Microsoft other...).
+- Server host names and whois texts are no longer shown as apps: Meta servers go to Facebook / Instagram /
+  WhatsApp, rented servers (Linode, Vultr, Alibaba...) to one line, Indian ISP addresses to one line, and what
+  has only an owner ("netutils-mnt", a person's name) to "Unnamed servers" with the owner kept as the site.
+- New apps: Certificate checks, Website analytics / trackers, DNS look-ups (Google DNS).
+- The stored history is renamed once at start, so the dashboard of past days is clear as well.
+- New warning in Usage insights: "N% of the traffic has no website name", with the reason (router DNS log not
+  arriving / devices asking Google DNS directly) and the two settings that fix it. Nothing on the router is
+  changed automatically.
+
+### All devices: sorting works, and a device can be found by its MAC alone
+- Clicking a column title (IP, name, MAC...) now sorts the devices inside every group, ascending then
+  descending, and the order stays after a rescan. Before, only the group headings were sorted.
+- New tick box "One list by IP (no groups)": every device in one list in IP order.
+- The search box takes a MAC in any form (00-22-46-53-F7-89, 0022.4653.f789, 00224653F789).
+- Network Tools > MAC lookup > "Find it on the network (asks the router)": for a MAC no scan has found
+  (a "top sender" in an alert): the router's ARP table, DHCP lease and port, the history, and whether it is
+  this PC. Read-only.
+
+### Usage alerts tell two people with the same name apart
+- "Hitesh - Accounts (192.168.0.57) used 1.5 GB ..." : department (when set) and IP are always shown.
+
 ## Network Doctor 3.36.1
 
 ### No more "Broadcast storm" / "Router not answering" alerts caused by the app's own scan

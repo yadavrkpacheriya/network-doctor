@@ -118,6 +118,75 @@ def tag_values(devices, field):
     return sorted((v for v in vals if v), key=str.lower)
 
 
+def mac_query(text):
+    """"00-22-46-53-f7-89", "0022.4653.f789", "002246 53F789" -> "00:22:46:53:F7:89"; anything that is not
+    a whole MAC address -> ""."""
+    t = (text or "").strip()
+    if not t or not re.fullmatch(r"[0-9A-Fa-f:.\- ]+", t):
+        return ""
+    hexs = re.sub(r"[^0-9A-Fa-f]", "", t)
+    return ":".join(hexs[i:i + 2] for i in range(0, 12, 2)).upper() if len(hexs) == 12 else ""
+
+
+def locate_mac(mac, devices, history, router=None, self_mac="", switch_ports=None):
+    """Everything known about where a MAC address is, as [(text, kind)] lines (kind: ok / warn / mute).
+    router: {"arp": [...], "leases": [...], "hosts": [...]} rows as the RouterOS API gives them (or None when
+    the router was not asked). switch_ports: {mac: "switch name port N"} from saved SNMP switches."""
+    mac = (mac or "").upper()
+    out = []
+    if self_mac and mac == self_mac.upper():
+        out.append(("This is THIS PC (the one Network Doctor runs on). Broadcasts from it during a scan are "
+                    "the scan itself.", "ok"))
+    d = next((x for x in devices or [] if (x.get("mac") or "").upper() == mac), None)
+    h = (history or {}).get(mac)
+    if d:
+        out.append((f"In the device list: {d.get('name') or '-'}  {d.get('ip', '')}  ({d.get('category', '')})"
+                    + ("" if d.get("online", True) else "  - not answering now"), "ok"))
+    elif h:
+        out.append((f"Seen by an earlier scan: last {h.get('last_seen', '?')} at {h.get('ip', '?')}", "warn"))
+    else:
+        out.append(("Not in the device list: no scan has found a device with this MAC on the scanned range.",
+                    "warn"))
+    if router is None:
+        out.append(("The router was not asked (no router login saved in Setup > Router).", "mute"))
+        return out
+
+    def same(row):
+        return core.norm_mac(row.get("mac-address", "")) == mac
+
+    arp = [r for r in router.get("arp") or [] if same(r)]
+    for r in arp:
+        out.append((f"Router ARP table: uses IP {r.get('address', '?')} on {r.get('interface', '?')}", "ok"))
+    for r in [r for r in router.get("leases") or [] if same(r)]:
+        nm = r.get("host-name") or r.get("comment") or ""
+        out.append((f"Router DHCP: got {r.get('address', '?')}" + (f", calls itself '{nm}'" if nm else "")
+                    + f" ({r.get('status', 'lease')})", "ok"))
+    hosts = [r for r in router.get("hosts") or [] if same(r)]
+    for r in hosts:
+        port = r.get("on-interface") or r.get("interface") or "?"
+        out.append((f"Router port: reached through {port}" + (" (this is the router itself)"
+                                                               if str(r.get("local", "")).lower() == "true" else ""),
+                    "ok"))
+    if (switch_ports or {}).get(mac):
+        out.append((f"Switch: {switch_ports[mac]}", "ok"))
+    if not arp and not hosts:
+        out.append(("The router does not know this MAC either: the device is not connected right now, or it "
+                    "sits behind another router.", "warn"))
+    elif hosts and not arp and not d:
+        out.append(("The router sees its frames but no IP address for it: the device has no IP on this network "
+                    "(wrong range, for example a camera still on its factory address 192.168.1.x) or it is a "
+                    "switch / bridge. Follow the router port above to the cable.", "warn"))
+    elif arp and not d and not any(_same_net(r.get("address", ""), devices) for r in arp):
+        out.append(("Its IP is outside the range the scan covers - that is why it is not in the device list. "
+                    "Tick 'All IP ranges' and scan, or give the device an address of this network.", "warn"))
+    return out
+
+
+def _same_net(ip, devices):
+    pre = ip.rsplit(".", 1)[0] if ip.count(".") == 3 else None
+    return bool(pre) and any((x.get("ip") or "").rsplit(".", 1)[0] == pre for x in devices or [])
+
+
 def unchecked_macs(devices, sweep_status, cam_category):
     """Cameras / recorders that are online but that the Login sweep has never read, while others have been:
     a device that joined the camera group after the last sweep (new, or one the app only now recognised).
@@ -132,9 +201,14 @@ def unchecked_macs(devices, sweep_status, cam_category):
 def filter_devices(devices, query="", dept="", location="", show=SHOW[0]):
     """Devices that match every search word (or field:value word), the department, location and show choice."""
     words = re.findall(r'(\w+):"([^"]*)"|(\w+):(\S+)|"([^"]*)"|(\S+)', (query or "").lower())
+    whole_mac = mac_query(query)       # a MAC typed in any form (dashes, dots, no separators) is one device
+    if whole_mac:
+        words = []
     out = []
     for d in devices:
         t = d.get("tag") or {}
+        if whole_mac and (d.get("mac") or "").upper() != whole_mac:
+            continue
         if dept and t.get("dept", "") != dept:
             continue
         if location and t.get("location", "") != location:
@@ -1851,8 +1925,8 @@ def tree_sort_key(text):
     s = (text or "").strip()
     if not s:
         return (1, "")
-    try:
-        return (0, int(ipaddress.ip_address(s)))
+    try:      # "192.168.0.9, 192.168.0.80" (a device with two addresses) sorts by its first one
+        return (0, int(ipaddress.ip_address(s.split(",")[0].strip())))
     except ValueError:
         pass
     m = _NUM_CELL_RE.match(s)

@@ -1826,6 +1826,8 @@ class ToolsTab:
         e.pack(side="left", padx=4)
         e.bind("<Return>", lambda ev: self._mac())
         ttk.Button(row, text="Look up", style="Big.TButton", command=self._mac).pack(side="left", padx=4)
+        ttk.Button(row, text="Find it on the network (asks the router)", command=self._mac_find).pack(
+            side="left", padx=4)
         ttk.Label(row, text="  any format: 00-11-22-33-44-55, 0011.2233.4455, 001122334455 (first 6 digits are enough "
                             "for the vendor)", foreground="#667085").pack(side="left")
         self._out_box(f, "mac")
@@ -1858,6 +1860,54 @@ class ToolsTab:
         except ValueError as e:
             t.insert("end", str(e), "crit")
         t.configure(state="disabled")
+
+    def _mac_find(self):
+        """Where is this MAC? The device list, the history, and - read-only - the router's ARP table, DHCP
+        leases and bridge table (which port). For a "top sender" in an alert that no scan has found."""
+        mac = T.mac_query(self.var_mac.get())
+        t = self.texts["mac"]
+
+        def show(lines):
+            if not t.winfo_exists():
+                return
+            t.configure(state="normal")
+            t.delete("1.0", "end")
+            for text, kind in lines:
+                t.insert("end", "  " + text + "\n", {"ok": "ok", "warn": "warn"}.get(kind, "mute"))
+            t.configure(state="disabled")
+
+        if not mac:
+            show([("Type the whole MAC address (12 hex digits, any format).", "warn")])
+            return
+        show([(f"Looking for {mac} ...", "mute")])
+        app = self.app
+        devices, self_mac = list(app.devices), (app.raw or {}).get("self_mac") or ""
+        with core.DB_LOCK:
+            history = dict(app.db.get("devices") or {})
+        import nd_routeros as RO
+        c = RO.from_settings(app._settings(), app.gw)
+
+        def work():
+            router = None
+            if c:
+                router = {}
+                try:
+                    with c:
+                        for key, path in (("arp", "/ip/arp/print"), ("leases", "/ip/dhcp-server/lease/print"),
+                                          ("hosts", "/interface/bridge/host/print")):
+                            try:
+                                router[key] = c.cmd(path)
+                            except RO.RosError:
+                                router[key] = []
+                except Exception as e:  # noqa: BLE001 - shown as a line
+                    router = {"error": str(e)}
+            lines = [(f"MAC {mac}", "mute")]
+            if router and router.get("error"):
+                lines.append((f"The router could not be asked: {router['error']}", "warn"))
+                router = None
+            lines += T.locate_mac(mac, devices, history, router, self_mac)
+            app.q.put(("call", lambda: show(lines)))
+        threading.Thread(target=work, daemon=True).start()
 
     # ------------------------------------------------------------------ setup check
     def _build_ready(self, f):
