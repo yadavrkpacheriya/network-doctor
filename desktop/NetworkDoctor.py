@@ -66,7 +66,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.35.0"
+VERSION = "3.35.1"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -77,6 +77,7 @@ def setup_tags(tv):
     tv.tag_configure("info", foreground="#0b5cad")
     tv.tag_configure("off", foreground="#98a2b3")
     tv.tag_configure("new", foreground="#1f7a3d", background="#e9f9ef")
+    tv.tag_configure("unchecked", foreground="#0b5cad", background="#e6f0fb")
     tv.tag_configure("pass", foreground="#1f7a3d")
     tv.tag_configure("fail", foreground="#b42318", background="#fdecea")
     tv.tag_configure("warn", foreground="#8a4b00")
@@ -1726,6 +1727,9 @@ class App(tk.Tk):
         rates = self.mon.traffic.rates(120) if self.mon and self.mon.last_flow else {}
         new_macs = set((self.raw or {}).get("meta", {}).get("new_macs") or [])
         self.row_dev = {}
+        with core.DB_LOCK:
+            sweep_status = dict(self.db.get("sweep_status") or {})
+        unchecked = T.unchecked_macs(self.devices, sweep_status, core.CAT_CAM)
         for c in core.CAT_ORDER:
             ds = T.filter_devices([d for d in self.devices if d["category"] == c], qy,
                                   "" if self.var_fdept.get() == "All" else self.var_fdept.get(),
@@ -1735,10 +1739,14 @@ class App(tk.Tk):
             if not ds:
                 continue
             n_recent = sum(1 for d in ds if d.get("recent") and d["online"])
+            n_unchk = sum(1 for d in ds if d.get("mac") in unchecked and not d.get("recent"))
             parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
-                f"   -   {n_recent} new / changed this week (green, listed first)" if n_recent else ""))
-            if n_recent and not self.var_sort_bw.get():
-                ds.sort(key=lambda d: not (d.get("recent") and d["online"]))   # stable: the rest keeps its order
+                f"   -   {n_recent} new / changed this week (green)" if n_recent else "") + (
+                f"   -   {n_unchk} not read by the Login sweep yet (blue)" if n_unchk else "")
+                + ("   - listed first" if n_recent or n_unchk else ""))
+            if (n_recent or n_unchk) and not self.var_sort_bw.get():
+                # stable: the rest keeps its order
+                ds.sort(key=lambda d: not ((d.get("recent") and d["online"]) or d.get("mac") in unchecked))
             for d in ds:
                 svc = ", ".join(core.PORTS.get(p, str(p)) for p in d["ports"])
                 up = d.get("upnp") or {}
@@ -1760,6 +1768,8 @@ class App(tk.Tk):
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
                        or ("new" if (d.get("mac") in new_macs or recent) else ""))
                 name = (d["name"] or "-") + (f"  ({recent})" if recent else "  (new)" if tag == "new" else "")
+                if not tag and d.get("mac") in unchecked:
+                    tag, name = "unchecked", name + "  (not read by the Login sweep yet)"
                 iid = tv.insert(parent, "end", text=name, tags=(tag,) if tag else (),
                                 values=(d["status"], d.get("dept", ""), ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
                                         d["mac"] or "-",

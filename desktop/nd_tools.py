@@ -118,6 +118,17 @@ def tag_values(devices, field):
     return sorted((v for v in vals if v), key=str.lower)
 
 
+def unchecked_macs(devices, sweep_status, cam_category):
+    """Cameras / recorders that are online but that the Login sweep has never read, while others have been:
+    a device that joined the camera group after the last sweep (new, or one the app only now recognised).
+    Empty when no sweep has run at all - then nothing stands out."""
+    st = sweep_status or {}
+    if not any(d.get("mac") in st for d in devices if d.get("category") == cam_category):
+        return set()
+    return {d["mac"] for d in devices if d.get("category") == cam_category and d.get("online") and d.get("mac")
+            and d["mac"] not in st}
+
+
 def filter_devices(devices, query="", dept="", location="", show=SHOW[0]):
     """Devices that match every search word (or field:value word), the department, location and show choice."""
     words = re.findall(r'(\w+):"([^"]*)"|(\w+):(\S+)|"([^"]*)"|(\S+)', (query or "").lower())

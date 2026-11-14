@@ -1,3 +1,11 @@
+## Network Doctor 3.35.1
+
+### All devices: cameras the Login sweep has never read are shown in blue
+- A camera / recorder that is online but has no login check yet (while others have one) is listed first in
+  blue with "(not read by the Login sweep yet)", and the group header counts them. This is how a device
+  that joined the camera group before 3.35.0 - too early for the "new / changed" mark - still stands out.
+- Run the Login sweep once and they turn normal (or show under "Needs attention" there).
+
 ## Network Doctor 3.35.0
 
 ### All devices: what is new or changed stays visible for a week

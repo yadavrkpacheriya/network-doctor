@@ -49,5 +49,21 @@ class HistoryAndFilter(unittest.TestCase):
         self.assertEqual(len(T.filter_devices(devs)), 2)
 
 
+class Unchecked(unittest.TestCase):
+    def devs(self):
+        return [{"mac": f"AA:00:00:00:00:{i:02d}", "category": core.CAT_CAM, "online": True} for i in range(1, 5)] + [
+            {"mac": "AA:00:00:00:00:99", "category": core.CAT_PC, "online": True},
+            {"mac": "AA:00:00:00:00:98", "category": core.CAT_CAM, "online": False}]
+
+    def test_cameras_the_sweep_never_read_stand_out_once_others_were_read(self):
+        st = {"AA:00:00:00:00:01": {"status": "OK"}, "AA:00:00:00:00:02": {"status": "LOGIN REFUSED"}}
+        self.assertEqual(T.unchecked_macs(self.devs(), st, core.CAT_CAM),
+                         {"AA:00:00:00:00:03", "AA:00:00:00:00:04"})
+
+    def test_nothing_stands_out_before_any_sweep(self):
+        self.assertEqual(T.unchecked_macs(self.devs(), {}, core.CAT_CAM), set())
+        self.assertEqual(T.unchecked_macs(self.devs(), {"AA:00:00:00:00:99": {"status": "OK"}}, core.CAT_CAM), set())
+
+
 if __name__ == "__main__":
     unittest.main()
