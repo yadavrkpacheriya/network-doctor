@@ -181,3 +181,69 @@ def parse_teach(text):
 # the kinds safe to apply automatically at high confidence - never ones that block or expose a device, touch
 # DNS, or face the internet (those always stay a reviewed, one-click action)
 AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "config_changed"})
+
+
+# -- built-in networking curriculum ------------------------------------------------------------------------
+# What the brain already knows before it sees anything on THIS network: the problem kinds it should recognise
+# and how people (and Claude) tend to word them. Seeding this once gives the Naive-Bayes model a sensible prior,
+# so a brand-new install already names "broadcast storm" or "camera tampering" correctly, then keeps learning
+# the real wording of this office from there. Phrases are plain language on purpose - that is what alerts and
+# pasted guidance look like. NOTE: several kinds here block, reboot, shape or quarantine a device; those are
+# deliberately NOT in AUTO_SAFE above, so the brain names them but the action stays a reviewed one-click.
+SEED_VERSION = 1
+KNOWLEDGE = {
+    # Loop & switch health
+    "broadcast_storm": ["broadcast storm flooding the network", "too many broadcast packets per second",
+                        "network slow from a flood of broadcasts", "broadcast traffic spiking"],
+    "mac_flapping": ["mac flapping between ports", "same mac address seen on two switch ports",
+                     "mac address keeps moving ports", "duplicate mac bouncing"],
+    "loop": ["network switching loop", "a port is looped back on itself", "loop between two switch ports",
+             "cable plugged into two ports making a loop"],
+    "poe_overload": ["poe power budget exceeded on the switch", "too many cameras drawing poe power",
+                     "switch running out of poe watts", "powered devices overloading the switch"],
+    # Internet & bandwidth
+    "bandwidth_hog": ["one device using most of the internet", "a pc is hogging all the bandwidth",
+                      "heavy download eating the whole line", "single ip saturating the internet"],
+    "qos": ["prioritise important traffic with qos", "shape bandwidth per device", "limit a heavy user's speed",
+            "apply dynamic qos so nobody starves the line"],
+    "app_traffic": ["classify which application is using the network", "identify app and website traffic",
+                    "name the apps and sites behind the usage", "unknown traffic needs identifying"],
+    # CCTV
+    "camera_down": ["camera stream is dead no video", "cctv feed not live", "camera offline and not streaming",
+                    "nvr shows the camera disconnected"],
+    "camera_tamper": ["camera tampering lens covered or moved", "cctv view blocked or spray-painted",
+                      "someone turned the camera away", "camera image went black from tampering"],
+    "camera_outage": ["several cameras went down together", "camera outage lines up with a switch or power loss",
+                      "group of cameras offline at the same time", "whole cctv branch dropped at once"],
+    "camera_reboot": ["reboot the frozen camera to recover it", "power cycle the cctv to bring the stream back",
+                      "restart the hung camera", "bounce the camera that stopped responding"],
+    # Employee tracking & data-leak
+    "user_identity": ["map this ip to the employee using it", "which user is behind this device",
+                      "identify the person on this pc", "put a name to the device on the network"],
+    "data_leak": ["large outbound upload leaving the network", "scan outbound data for a leak",
+                  "possible data exfiltration out to the internet", "sensitive files being uploaded out"],
+    "after_hours_exfil": ["big data transfer after office hours", "upload at night when nobody is working",
+                          "exfiltration outside working hours", "data leaving late at night"],
+    "quarantine": ["quarantine the device that is leaking data", "isolate the leaking pc from the network",
+                   "cut off the machine that is exfiltrating", "block the offending device until checked"],
+    # Self-healing & reporting
+    "root_cause": ["summarise the root cause of this problem", "explain why this keeps happening",
+                   "give the real reason behind the issue", "root cause of the repeated fault"],
+    "mikrotik_fix": ["recommend the mikrotik router fix for this", "which router config change fixes this",
+                     "the routeros command that solves this", "fix this on the mikrotik"],
+}
+
+
+def seed(kb, force=False):
+    """Load the built-in networking curriculum into the brain, once (idempotent, versioned). Returns how many
+    phrases were taught (0 when it was already seeded at this version). Called from the app at start-up."""
+    kb = _migrate(kb)
+    if not force and kb.get("seeded") == SEED_VERSION:
+        return 0
+    n = 0
+    for kind, phrases in KNOWLEDGE.items():
+        for p in phrases:
+            learn_text(kb, p, kind)
+            n += 1
+    kb["seeded"] = SEED_VERSION
+    return n
