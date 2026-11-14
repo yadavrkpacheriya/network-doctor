@@ -84,7 +84,7 @@ function Removable { Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2" | F
 
 # ================================ FIX (the one button the user clicks) ================================
 if ($Mode -eq "fix") {
-    $host.UI.RawUI.WindowTitle = "Network Doctor - Fix my PC"
+    $host.UI.RawUI.WindowTitle = "Fix my PC"
     $before = (Get-PSDrive C).Free
     Write-Host "`n  Fixing and cleaning this PC... please wait (about a minute).`n" -ForegroundColor Cyan
     function Purge($path, $label) {
@@ -108,14 +108,14 @@ if ($Mode -eq "fix") {
     }
     Write-Host "   - Recycle Bin";  Clear-RecycleBin -Force -ErrorAction SilentlyContinue
     Write-Host "   - Flushing DNS"; ipconfig /flushdns | Out-Null
-    Write-Host "   - Sending fresh details to Network Doctor"
+    Write-Host "   - Optimising"
     Send-Details; Send-Connections
     Write-Host "   - Restarting Explorer"
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 2
     if (-not (Get-Process explorer)) { Start-Process explorer }
     $freed = [math]::Round(((Get-PSDrive C).Free - $before)/1MB); if ($freed -lt 0) { $freed = 0 }
     Write-Host "`n  Done. Freed about $freed MB. Your PC should feel faster." -ForegroundColor Green
-    Write-Host "  Network Doctor has your latest details. If it is still slow, tell IT.`n" -ForegroundColor Green
+    Write-Host "  If it is still slow, tell IT.`n" -ForegroundColor Green
     Start-Sleep 6
     return
 }
