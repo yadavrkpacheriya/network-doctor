@@ -1,3 +1,11 @@
+## Network Doctor 3.50.0
+
+### Colour headers on every tool page
+Every page now opens with a coloured title bar in its section's colour (blue for Scan & Devices, purple for
+Security, red for Firewall, and so on), so you always know where you are and pages are quicker to tell apart -
+compact and colourful instead of a plain bold line. Applied across all Advanced Network, This PC & Wi-Fi,
+Security, Firewall tool pages and Inventory; Setup already has its coloured sections.
+
 ## Network Doctor 3.49.0
 
 ### Setup page: colour-headed sections, easy to scan

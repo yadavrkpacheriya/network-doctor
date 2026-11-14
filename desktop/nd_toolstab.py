@@ -148,8 +148,10 @@ class ToolsTab:
             f.pack(fill="both", expand=True)
             self.frames[key] = f
             name, desc = next((n, d) for k, n, d in TOOLS if k == key)
-            ttk.Label(f, text=name, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-            ttk.Label(f, text=desc, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(0, 6))
+            col = nd_tabs.PAGE_COLOR.get("t_" + key, "#334155")
+            tk.Label(f, text=name, bg=col, fg="white", font=("Segoe UI", 12, "bold"),
+                     anchor="w", padx=10, pady=5).pack(fill="x")
+            ttk.Label(f, text=desc, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(3, 6))
             getattr(self, "_build_" + key)(f)
         self.current = key
         if key == "watch":
@@ -1554,8 +1556,8 @@ class ToolsTab:
     # ------------------------------------------------------------------ inventory
     def _build_inventory(self, f):
         """The Inventory tab: every device and PC, hardware, peripherals, antivirus, drivers."""
-        ttk.Label(f, text="Inventory - every device and PC on the network", font=("Segoe UI", 13, "bold")).pack(
-            anchor="w")
+        tk.Label(f, text="Inventory - every device and PC on the network", bg=nd_tabs.PAGE_COLOR.get("inventory",
+                 "#4338ca"), fg="white", font=("Segoe UI", 12, "bold"), anchor="w", padx=10, pady=5).pack(fill="x")
         ttk.Label(f, text="Devices come from the scan, the history and the router. PCs add RAM, SSD / HDD, CPU, "
                           "graphics, monitors, keyboard, mouse, printers, antivirus, firewall, driver problems, "
                           "Windows update and installed programs when the PC details script runs on them once "
