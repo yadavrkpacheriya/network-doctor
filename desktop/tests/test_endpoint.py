@@ -121,3 +121,30 @@ def test_bom_csv_from_powershell(tmp_path):
     conns = E.read_conns(str(tmp_path), since_days=7, now=now)
     assert len(conns) == 1 and conns[0]["process"] == "AnyDesk.exe"
     assert E.proc_name_map(conns) == {("192.168.0.9", "5.5.5.5"): "AnyDesk"}
+
+
+def test_read_auth_and_bruteforce_alerts(tmp_path):
+    import time as _t
+    now = _t.mktime(_t.strptime("2026-11-14 21:00:00", "%Y-%m-%d %H:%M:%S"))
+    with open(tmp_path / "auth-ACC1-202611.csv", "w", encoding="utf-8", newline="") as fh:
+        fh.write("time,pc,account,source,logon,fails\n")
+        fh.write("2026-11-14 20:50:00,ACC1,Administrator,203.0.113.45,RDP,18\n")   # from internet, RDP
+        fh.write("2026-11-14 20:55:00,ACC1,Administrator,203.0.113.45,RDP,12\n")   # same -> 30 total
+        fh.write("2026-11-14 20:40:00,ACC1,hitesh,192.168.0.33,network,14\n")       # inside, 14
+        fh.write("2026-11-14 20:40:00,ACC1,guest,192.168.0.9,console,3\n")          # too few -> ignored
+    ev = E.read_auth(str(tmp_path), since_days=1, now=now)
+    assert len(ev) == 4
+    al = E.auth_alerts(ev)
+    titles = [t for _s, t, _x in al]
+    top = al[0]
+    assert top[0] == "critical" and "30 failed logins on ACC1" in top[1] and "203.0.113.45" in top[1]
+    assert "from the internet" in top[1].lower() or "internet" in top[2].lower()
+    inside = [a for a in al if "hitesh" in a[1]][0]
+    assert inside[0] == "warning"
+    assert not any("guest" in t for t in titles)          # below threshold
+
+
+def test_is_external():
+    assert E._is_external("203.0.113.45") and not E._is_external("192.168.0.5")
+    assert not E._is_external("10.0.0.1") and not E._is_external("DESKTOP-ABC") and not E._is_external("")
+    assert not E._is_external("this PC / console")

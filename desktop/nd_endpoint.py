@@ -215,3 +215,65 @@ def proc_name_map(conns):
         if app and c["local_ip"] and c["remote_ip"]:
             out[(c["local_ip"], c["remote_ip"])] = app
     return out
+
+
+def read_auth(folder, since_days=1, now=None):
+    """Failed Windows logons (Event ID 4625) the agent reported, from the last `since_days`. Newest first.
+    Each row: a PC, the account someone tried, where it came from (IP / computer), the logon kind, and how
+    many tries in that agent window."""
+    now = now or time.time()
+    cut = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now - since_days * 86400))
+    out = []
+    for path in [p for d in _dirs(folder) for p in glob.glob(os.path.join(d, "auth-*.csv"))]:
+        try:
+            with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
+                for r in csv.DictReader(fh):
+                    t = (r.get("time") or "").strip()
+                    if len(t) != 19 or t < cut:
+                        continue
+                    try:
+                        fails = int(r.get("fails") or 0)
+                    except ValueError:
+                        fails = 0
+                    out.append({"time": t, "pc": (r.get("pc") or "").strip(),
+                                "account": (r.get("account") or "").strip(),
+                                "source": (r.get("source") or "").strip(),
+                                "logon": (r.get("logon") or "").strip(), "fails": fails})
+        except OSError:
+            continue
+    out.sort(key=lambda e: e["time"], reverse=True)
+    return out
+
+
+def _is_external(src):
+    s = (src or "").strip()
+    if not s or s[0].isalpha():          # a computer name, not an IP
+        return False
+    return not (s.startswith(("192.168.", "10.", "127.", "169.254.")) or s.startswith("172.")
+                or s in ("this PC / console", "::1"))
+
+
+def auth_alerts(events, warn=10, crit=30):
+    """Brute-force alerts from failed-logon rows, grouped by PC + account + source over the window:
+    [(sev, title, text)]. A login coming from the internet (a real IP, not a LAN address) or RDP is treated
+    as worse. Returns most-tries first."""
+    groups = {}
+    for e in events:
+        g = groups.setdefault((e["pc"], e["account"], e["source"]),
+                              {"fails": 0, "logon": e["logon"], "last": ""})
+        g["fails"] += e["fails"]
+        g["last"] = max(g["last"], e["time"])
+    out = []
+    for (pc, acct, src), g in sorted(groups.items(), key=lambda kv: -kv[1]["fails"]):
+        ext = _is_external(src)
+        rdp = g["logon"] == "RDP"
+        if g["fails"] < warn and not (ext and g["fails"] >= 5):
+            continue
+        sev = "critical" if (g["fails"] >= crit or ext or rdp) else "warning"
+        where = f"from {src}" + (" (from the internet!)" if ext else "") + (" over Remote Desktop" if rdp else "")
+        out.append((sev, f"{g['fails']} failed logins on {pc}: account '{acct}' {where}",
+                    f"Last at {g['last']}. Someone is trying to guess the '{acct}' password. "
+                    + ("This is coming from OUTSIDE your network - close Remote Desktop to the internet and change "
+                       "the password now. " if ext or rdp else "It is from inside the network - find that device. ")
+                    + "Seen by the agent reading Windows Event ID 4625."))
+    return out

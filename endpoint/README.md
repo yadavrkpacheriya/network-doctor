@@ -21,6 +21,9 @@ quietly in the background and feeds Network Doctor.
 **Quietly in the background (starts at logon):**
 - Watches USB drives: plugged in / removed, and any file copied to one (name, size, user) — never contents.
 - Every minute writes which app is using the network; every 30 minutes refreshes details + CPU/RAM.
+- **Brute-force watch**: reads the Windows Security log for failed logons (Event ID 4625) and reports who was
+  tried and from which IP, so Network Doctor warns when someone is guessing a PC's password (worse when the
+  attempt comes from the internet or over Remote Desktop).
 
 It writes only to a shared folder on the IT PC. It never uses the internet.
 
