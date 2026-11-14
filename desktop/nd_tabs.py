@@ -458,29 +458,52 @@ class BindingTab:
         self.app = app
         self.checked = set()
         self.rows = {}
-        info = ("Bind = the router always gives each device the same IP (DHCP reservation). Devices stay on "
-                "'automatic' - no static IPs on PCs, which is what causes conflicts. Tick devices; double-click an IP "
-                "to choose the IP you want for that device; then press 'Bind on the router now' - Network Doctor sends it to "
-                "the router itself (router login in Setup). No WinBox or copy / paste needed.")
-        ttk.Label(parent, text=info, wraplength=1100, foreground="#344054", padding=(0, 6)).pack(anchor="w")
-        top = ttk.Frame(parent)
-        top.pack(fill="x")
-        ttk.Button(top, text="Tick all that can be bound", command=self.tick_all).pack(side="left")
-        ttk.Button(top, text="Untick all", command=self.untick_all).pack(side="left", padx=6)
+        # all the settings the old page showed - kept, but tucked into "Advanced" so the normal view is one button
         self.var_strict = tk.BooleanVar(value=False)
         self.var_block = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Strict mode: devices with a hand-typed IP cannot use the network",
-                        variable=self.var_strict).pack(side="left", padx=10)
-        ttk.Checkbutton(top, text="Block randomized MACs", variable=self.var_block).pack(side="left")
         self.var_rebind = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Moved devices: bind their NEW IP", variable=self.var_rebind).pack(side="left",
-                                                                                                  padx=(10, 0))
-        ttk.Label(top, text="Bridge name:").pack(side="left", padx=(10, 2))
         self.var_bridge = tk.StringVar(value="bridge")
-        ttk.Entry(top, textvariable=self.var_bridge, width=10).pack(side="left")
-        ttk.Button(top, text="Bind on the router now", style="Big.TButton", command=self.bind_now).pack(side="right")
-        ttk.Button(top, text="Only show commands", command=self.make).pack(side="right", padx=6)
-        ttk.Button(top, text="PC fix script...", command=lambda: FixScriptDialog(app)).pack(side="right", padx=6)
+        self.want = {}  # mac -> IP chosen by the user for the reservation
+        self.apply = self.undo = ""
+
+        ttk.Label(parent, text="Give every device the same IP for good (a DHCP reservation on the router). "
+                  "Devices stay on 'automatic', so nothing on them changes - this is what stops IP clashes.",
+                  wraplength=1100, foreground="#344054", padding=(0, 6)).pack(anchor="w")
+
+        # --- the one simple action ---
+        top = self.top_row = ttk.Frame(parent)
+        top.pack(fill="x")
+        ttk.Button(top, text="Bind all devices to their current IP", style="Big.TButton",
+                   command=self.bind_all_current).pack(side="left")
+        self.var_sum = tk.StringVar(value="")
+        ttk.Label(top, textvariable=self.var_sum, foreground="#667085").pack(side="left", padx=12)
+        self.adv_on = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text="Advanced", variable=self.adv_on, command=self._toggle_adv).pack(side="right")
+
+        # --- advanced (hidden by default) ---
+        self.adv = ttk.Frame(parent)
+        a1 = ttk.Frame(self.adv)
+        a1.pack(fill="x", pady=(4, 0))
+        ttk.Button(a1, text="Tick all", command=self.tick_all).pack(side="left")
+        ttk.Button(a1, text="Untick all", command=self.untick_all).pack(side="left", padx=6)
+        ttk.Checkbutton(a1, text="Strict: a hand-typed IP cannot use the network", variable=self.var_strict).pack(
+            side="left", padx=10)
+        ttk.Checkbutton(a1, text="Block randomized MACs", variable=self.var_block).pack(side="left")
+        ttk.Checkbutton(a1, text="Moved devices: bind NEW IP", variable=self.var_rebind).pack(side="left", padx=(10, 0))
+        ttk.Label(a1, text="Bridge:").pack(side="left", padx=(10, 2))
+        ttk.Entry(a1, textvariable=self.var_bridge, width=9).pack(side="left")
+        a2 = ttk.Frame(self.adv)
+        a2.pack(fill="x", pady=2)
+        ttk.Button(a2, text="Bind ticked devices on the router", style="Big.TButton",
+                   command=self.bind_now).pack(side="left")
+        ttk.Button(a2, text="Set IP of selected...", command=self.edit_ip).pack(side="left", padx=6)
+        ttk.Button(a2, text="Forget binding of selected", command=self.forget).pack(side="left")
+        ttk.Button(a2, text="Only show commands", command=self.make).pack(side="left", padx=6)
+        ttk.Button(a2, text="Copy", command=lambda: self.copy(self.apply)).pack(side="left")
+        ttk.Button(a2, text="Copy UNDO", command=lambda: self.copy(self.undo)).pack(side="left", padx=4)
+        ttk.Button(a2, text="Save .rsc", command=self.save).pack(side="left")
+        ttk.Button(a2, text="PC fix script...", command=lambda: FixScriptDialog(app)).pack(side="left", padx=6)
+
         pw = ttk.PanedWindow(parent, orient="vertical")
         pw.pack(fill="both", expand=True, pady=(6, 0))
         a, b = ttk.Frame(pw), ttk.Frame(pw)
@@ -491,21 +514,22 @@ class BindingTab:
                                   (50, 200, 130, 115, 140, 110, 420), first=None, search=True)
         self.tv.bind("<Button-1>", self.toggle)
         self.tv.bind("<Double-1>", self.edit_ip)
-        self.want = {}  # mac -> IP chosen by the user for the reservation
-        bar = ttk.Frame(b, padding=(0, 4))
-        bar.pack(fill="x")
-        ttk.Button(bar, text="Copy commands", command=lambda: self.copy(self.apply)).pack(side="left")
-        ttk.Button(bar, text="Copy UNDO commands", command=lambda: self.copy(self.undo)).pack(side="left", padx=6)
-        ttk.Button(bar, text="Apply on router", style="Big.TButton", command=self.apply_router).pack(side="left",
-                                                                                                    padx=6)
-        ttk.Button(bar, text="Save as .rsc file", command=self.save).pack(side="left")
-        ttk.Button(bar, text="Set IP of selected...", command=self.edit_ip).pack(side="left", padx=6)
-        ttk.Button(bar, text="Forget binding of selected", command=self.forget).pack(side="left")
-        self.var_sum = tk.StringVar(value="")
-        ttk.Label(bar, textvariable=self.var_sum, foreground="#667085").pack(side="left", padx=10)
         self.txt = UI["text_box"](b)
         self.txt.configure(font=("Consolas", 9))
-        self.apply = self.undo = ""
+
+    def _toggle_adv(self):
+        if self.adv_on.get():
+            self.adv.pack(fill="x", after=self.top_row)
+        else:
+            self.adv.pack_forget()
+
+    def bind_all_current(self):
+        """The one simple action: tick every bindable device, keep each on its current IP, and reserve them all
+        on the router in one go - no strict mode, no manual IPs, nothing that can cut a device off."""
+        self.want = {}
+        self.var_strict.set(False)
+        self.tick_all()
+        self.bind_now()
 
     def refresh(self):
         app = self.app
