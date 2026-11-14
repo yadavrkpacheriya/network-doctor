@@ -5,8 +5,11 @@ quietly in the background and feeds Network Doctor.
 
 ## What it does
 **When a user clicks "Fix my PC":**
-- Cleans junk (temp, caches, Windows Update leftovers when admin, Recycle Bin), flushes DNS, restarts Explorer,
-  shows space freed. **It never touches Documents, Desktop, Downloads or any real file.**
+- Cleans junk (temp, caches, prefetch, Delivery-Optimisation cache, Windows Update leftovers, old Windows
+  component files via DISM), empties the Recycle Bin, flushes DNS, restarts Explorer, shows space freed.
+  **It never touches Documents, Desktop, Downloads or any real file.**
+- Runs a quick Windows health check (DISM CheckHealth, a few seconds). Only **if** it finds repairable damage
+  does it run the full repair (DISM RestoreHealth + sfc /scannow, several minutes) - healthy PCs stay fast.
 - Sends this PC's fresh **details** (maker, model, serial, Windows, CPU, RAM, disk, logged-in user, printers,
   antivirus) and **resource use** (CPU %, memory %, top memory apps) to Network Doctor.
 - Sends the current **network connections** — which app (process) is talking to which internet address — so
