@@ -112,3 +112,15 @@ def test_leak_insight_names_person_and_place():
         hit = [i for i in s.insights(today=dt.date.today()) if i["title"].startswith("Large uploads")]
         assert len(hit) == 1 and hit[0]["sev"] == "critical"
         assert "Hitesh - Accounts (192.168.0.57) sent" in hit[0]["text"] and "WeTransfer" in hit[0]["text"]
+
+
+def test_proc_app_names_the_flow(tmp_path):
+    import os as _os
+    s = U.UsageStore(_os.path.join(str(tmp_path), "u.db"))
+    s.set_devices([{"mac": "AA:00:00:00:00:01", "ip": "192.168.0.57", "name": "ACC1", "online": True}], {})
+    s.set_proc_app({("192.168.0.57", "5.5.5.5"): "AnyDesk"})
+    s.add_flow("192.168.0.57", "5.5.5.5", 443, 6, 1_000_000, True, org="Some Hosting Ltd")
+    s.flush(force=True)
+    apps = {a["app"] for a in s.summary(1)["apps"]}
+    assert apps == {"AnyDesk"}
+    assert s.app_for("192.168.0.57", "5.5.5.5") == "AnyDesk"

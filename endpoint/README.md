@@ -1,42 +1,43 @@
-# Network Doctor — LeakWatch endpoint agent
+# Network Doctor — PC agent (one button for users)
 
-The office network (and Network Doctor's Usage page) can see which **website or app** each PC used and how much
-it uploaded. It can **never** see a file copied to a **USB pen drive, phone or external disk** — that never
-touches the network. LeakWatch is a tiny agent that runs on each PC and reports exactly that.
+One small agent per office PC. **Users see a single "Fix my PC" button on the Desktop.** Everything else runs
+quietly in the background and feeds Network Doctor.
 
-## What it records
-- A removable drive (USB stick, phone, external disk) **plugged in or removed**, with the PC and the logged-in user.
-- A file **created, copied or renamed on** such a drive — the file's path and size (not its contents).
+## What it does
+**When a user clicks "Fix my PC":**
+- Cleans junk (temp, caches, Windows Update leftovers when admin, Recycle Bin), flushes DNS, restarts Explorer,
+  shows space freed. **It never touches Documents, Desktop, Downloads or any real file.**
+- Sends this PC's fresh **details** (maker, model, serial, Windows, CPU, RAM, disk, logged-in user, printers,
+  antivirus) and **resource use** (CPU %, memory %, top memory apps) to Network Doctor.
+- Sends the current **network connections** — which app (process) is talking to which internet address — so
+  Network Doctor can name site/app usage correctly instead of "unknown".
 
-It reads nothing else, opens no file's contents, and sends nothing to the internet. It only appends CSV lines
-to a shared folder on your IT PC.
+**Quietly in the background (starts at logon):**
+- Watches USB drives: plugged in / removed, and any file copied to one (name, size, user) — never contents.
+- Every minute writes which app is using the network; every 30 minutes refreshes details + CPU/RAM.
+
+It writes only to a shared folder on the IT PC. It never uses the internet.
 
 ## Install (per PC, 2 minutes)
-1. Make a shared folder on your IT PC, e.g. `\\RAKESH-IT\LeakLog`, that staff PCs can write to.
-2. Open `leakwatch-agent.ps1` and set the first line `$Central` to that share (leave `""` for local-only).
-3. Copy the `endpoint` folder to the PC and **right-click `install-leakwatch.cmd` → Run as administrator**.
+1. Make a shared folder on the IT PC, e.g. `\\RAKESH-IT\LeakLog`, that staff PCs can write to.
+2. Open `networkdoctor-agent.ps1`, set the first line `$Central` to that share.
+3. Copy the `endpoint` folder to the PC and **right-click `install-agent.cmd` → Run as administrator**.
 
-It installs a hidden scheduled task that starts at every logon. `uninstall-leakwatch.cmd` removes it.
+`uninstall-agent.cmd` removes it. Network Doctor reads the shared folder automatically (set it in
+**Settings → endpoint_dir** if it is not the default).
 
-## Seeing the data
-Network Doctor reads the collected folder automatically and raises an alert when files are copied to USB
-(name, user, PC, department, size). Point it at the share in **Settings → endpoint_dir** if it is not the
-default `…\NetworkDoctor\leakwatch`.
+## Why this improves Network Doctor
+- **App/site usage**: the network alone sees only IP↔IP (so it guessed "CDN", "Google service not known").
+  The agent maps each connection to the real app on the PC (Chrome, WhatsApp, a backup tool…), so usage names
+  get accurate.
+- **Inventory**: every PC lists itself — you don't run a details script on each PC any more.
+- **Resource monitor**: CPU %, memory % and the heaviest apps per PC.
+- **Data-leak control**: USB copies the network can never see.
 
 ## Honest limits
-- It needs to be installed on each PC; a PC without it is not watched.
-- A savvy user with local-admin rights can stop any agent. For staff PCs, do not give users admin rights.
-- It does not read file contents and cannot catch a leak by screenshot, printing or typing.
-
----
-
-## Clean-my-PC (one-click speed-up for users)
-`Clean-my-PC.cmd` is a safe one-click cleaner any staff member can run. It clears only junk — temp files,
-browser/app caches, Windows Update leftovers (if run as admin), the Recycle Bin — flushes DNS and restarts
-Explorer, then shows how much space it freed. **It never touches Documents, Desktop, Downloads or any real
-file.**
-
-- Give users `Clean-my-PC.cmd`, or run `install-cleanup-shortcut.cmd` once to drop a **"Clean my PC"** shortcut
-  on the Desktop.
-- For a deep repair (updates, crash fix, disk check, driver fixes) use the in-app **PC Care** page, which needs
-  IT / administrator rights.
+- Must be installed on each PC; a PC without it is not covered.
+- A user with local-admin rights can stop any agent — don't give staff admin rights.
+- It reads no file contents and can't catch a leak by screenshot, printing or phone photo.
+- Per-process **byte** totals are not collected (Windows does not expose them without heavier tooling);
+  Network Doctor already has the bytes per address from the router and uses the agent only to put the right
+  **app name** on them.

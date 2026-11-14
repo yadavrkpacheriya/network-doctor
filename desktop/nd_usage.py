@@ -640,6 +640,7 @@ class UsageStore:
         self.slot = None
         self.active = collections.Counter()        # (day, hour, dev, app, cat) -> active minutes
         self.overrides = {}
+        self.proc_app = {}      # (LAN IP, internet IP) -> app from the PC agent (a native app owns its traffic)
         self._load_settings()
         self._init_db()
         self.last_flush = time.time()
@@ -857,8 +858,17 @@ class UsageStore:
             while len(self.dev_ip_name) > 300_000:
                 self.dev_ip_name.popitem(last=False)
 
+    def set_proc_app(self, mapping):
+        """{(LAN IP, internet IP): app} from the PC agents' connection snapshots (nd_endpoint.proc_name_map).
+        A native app that owns its traffic names it exactly, so site/app usage stops guessing for those."""
+        with self.lock:
+            self.proc_app = dict(mapping or {})
+
     def app_for(self, lan, remote):
         """App name for the live monitor, when a DNS name is known for this address; otherwise None."""
+        pa = self.proc_app.get((lan, remote))
+        if pa:
+            return pa
         with self.lock:
             name, shared = self.name_for(lan, remote)
         app = app_of_name(name) if name else None
@@ -942,6 +952,13 @@ class UsageStore:
                 name, from_ptr = ptr, True
         site = pretty_site(name if from_ptr else org) if (from_ptr or not name) else site_of(name)
         app, cat = classify(name, org, port, ov, dept)
+        pa = self.proc_app.get((lan, remote))
+        if pa:          # the PC agent saw which app opened this connection: it wins over the address guess
+            app = pa
+            cat = ((ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app)
+                   or APP_INFO.get(app, (NEUTRAL,))[0])
+            if not site:
+                site = site_of(name) or ""
         if app == name and site:
             app = site
         if shared and app in SHARED_FRONTENDS:

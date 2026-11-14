@@ -68,7 +68,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.38.1"
+VERSION = "3.39.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2401,6 +2401,19 @@ class App(tk.Tk):
         except Exception:  # noqa: BLE001 - a bad share should never stop the tick
             return
         self._endpoint_events = events
+        # PC details the agents wrote -> straight into the inventory (no per-PC script run by hand)
+        try:
+            for data in EP.read_reports(folder):
+                if data.get("ip") or data.get("hostname"):
+                    self._apply_report(data.get("ip") or data.get("hostname"), data, quiet=True)
+        except Exception:  # noqa: BLE001
+            pass
+        # which app opened each connection -> names site/app usage exactly for native apps
+        if self.usage:
+            try:
+                self.usage.set_proc_app(EP.proc_name_map(EP.read_conns(folder, since_days=1)))
+            except Exception:  # noqa: BLE001
+                pass
 
         def who(pc, user):
             dev = next((d for d in self.devices if (d.get("name") or "").lower() == (pc or "").lower()), None)
