@@ -1181,7 +1181,7 @@ def scan(subnet, opts, progress, stop):
             progress(8 + 27 * done[0] / len(hosts), f"Sweeping... {done[0]}/{len(hosts)}")
         return ip, mac, ttl
 
-    with ThreadPoolExecutor(min(192, max(32, len(hosts)))) as ex:
+    with ThreadPoolExecutor(min(128, max(32, len(hosts)))) as ex:
         for ip, mac, ttl in ex.map(probe, hosts):
             if mac:
                 raw["arp"][ip].add(mac)
@@ -1196,7 +1196,7 @@ def scan(subnet, opts, progress, stop):
         resolver = win_sendarp if IS_WIN else (scapy_active_arp if scapy_ok() else None)
         if missed and resolver:
             progress(34, f"Second ARP round for {len(missed)} addresses (sleeping phones / cameras)...")
-            with ThreadPoolExecutor(min(256, max(32, len(missed)))) as ex:
+            with ThreadPoolExecutor(min(128, max(32, len(missed)))) as ex:
                 for ip, mac in zip(missed, ex.map(resolver, missed)):
                     if mac:
                         raw["arp"][ip].add(mac)

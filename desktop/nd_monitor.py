@@ -36,6 +36,32 @@ SYSLOG_PORT = 514 if core.IS_WIN else 5514  # macOS/Linux do not let normal apps
 STORM_PPS = 300
 
 
+def storm_report(pps, mixed, top, seconds, self_mac=None, sniffing=False):
+    """What to say about a high broadcast rate: (kind, severity, text, data), or (None, ...) when it is this
+    PC's own traffic. top: [(mac, frames in the last `seconds`)] from the packet listener (broadcasts only).
+    - most of the broadcasts come from this PC      -> nothing (a scan / sweep of this app)
+    - the counter is far above the broadcasts seen  -> multicast (a camera / recorder / TV streaming to
+      everyone), which needs IGMP snooping - not a cable loop
+    - otherwise                                     -> broadcast storm"""
+    me = (self_mac or "").upper()
+    seen = sum(n for _m, n in top)
+    mine = sum(n for m, n in top if me and m.upper() == me)
+    others = [(m, n) for m, n in top if not (me and m.upper() == me)]
+    if seen and mine > seen * 0.5:
+        return None, "", "", {}
+    tops = ", ".join(f"{m} ({n / seconds:.0f}/s)" for m, n in others[:3])
+    data = {"pps": pps, "top": others, "mixed": mixed}
+    bcast_pps = seen / float(seconds) if seconds else 0
+    if sniffing and mixed and bcast_pps < pps * 0.3:
+        return ("mcast", "warning",
+                f"Multicast flood: {pps:.0f} multicast frames/s reach this PC (only {bcast_pps:.0f}/s are "
+                "broadcasts) - a camera, recorder or TV box is streaming to every port"
+                + (f"; busiest broadcast senders {tops}" if tops else ""), dict(data, multicast=True))
+    what = "broadcasts + multicast/s (Windows cannot split them here)" if mixed else "broadcasts/s"
+    return ("storm", "critical" if pps > 1000 else "warning",
+            f"Broadcast storm: {pps:.0f} {what}" + (f" - top senders {tops}" if tops else ""), data)
+
+
 def fmt_bytes(n):
     n = float(n or 0)
     for u in ("B", "KB", "MB", "GB", "TB"):
@@ -867,6 +893,7 @@ class Monitor:
         self.echo_tokens = {}
         self.lease_time = None
         self.self_mac = None  # this PC: its own DHCP test requests are not reported as problems
+        self.quiet_until = 0.0  # set by the app while it scans / sweeps: its own burst is not a storm
         self.neighbors = {}   # MikroTik switches / APs / routers announcing themselves (MNDP): mac -> info
         self.nu = None                           # broadcast / multicast counter (Windows)
         self.mcast_total = self.mcast_pps = None
@@ -1020,22 +1047,27 @@ class Monitor:
                 if pps is None and self.bcast_windows and now - self.bcast_windows[-1][0] < 5:
                     pps = self.bcast_windows[-1][1] / 2.0
                 self.samples.append((now, pps, ms))
+            # While this app itself scans (ARP sweep, conflict rounds, service probes) it makes a burst of
+            # broadcasts and keeps the PC and the router busy for a moment. That is not a network problem:
+            # nothing is raised then. A real storm or a dead router is still there when the scan is over and
+            # is reported at that moment (the counters keep running).
+            own_work = now < self.quiet_until
             if pps is not None:
                 hi = hi + 1 if pps > STORM_PPS else 0
-                if hi >= 2 and not self._state["storm"]:
-                    self._state["storm"] = True
-                    top = self.top_broadcasters(10)
-                    tops = ", ".join(f"{m} ({n})" for m, n in top[:3])
-                    what = "broadcasts + multicast/s (Windows cannot split them here)" if self.bcast_mixed else "broadcasts/s"
-                    self.event("critical" if pps > 1000 else "warning", "Monitor",
-                               f"Broadcast storm: {pps:.0f} {what}" + (f" - top senders {tops}" if tops else ""),
-                               "storm", {"pps": pps, "top": top, "mixed": self.bcast_mixed})
+                if hi >= 2 and not self._state["storm"] and not own_work:
+                    kind, sev, text, data = storm_report(pps, self.bcast_mixed, self.top_broadcasters(10), 10,
+                                                         self.self_mac, self.sniffer_state == "running")
+                    if kind:
+                        self._state["storm"] = True
+                        self.event(sev, "Monitor", text, kind, data)
+                    else:
+                        hi = 0      # it was this PC's own traffic: start counting again
                 elif hi == 0 and self._state["storm"] and pps < STORM_PPS / 2:
                     self._state["storm"] = False
                     self.event("info", "Monitor", f"Broadcast level back to normal ({pps:.0f}/s)", "storm_end")
             if self.gw:
                 fails = fails + 1 if ms is None else 0
-                if fails >= 3 and not self._state["gw_down"]:
+                if fails >= 3 and not self._state["gw_down"] and not own_work:
                     self._state["gw_down"] = True
                     self.event("critical", "Monitor", f"Router {self.gw} not answering (3 pings lost)", "gw_down")
                 elif ms is not None and self._state["gw_down"]:
