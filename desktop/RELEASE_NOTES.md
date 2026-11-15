@@ -1,3 +1,12 @@
+## Network Doctor 3.71.0
+
+### Restart cameras now works across brands - and without a saved login
+Two fixes to "Restart cameras":
+- It used to only speak XMeye/DVRIP. It now also restarts **Hikvision** (ISAPI) and **Dahua / CP-Plus** cameras over HTTP, so brand no longer matters.
+- If a camera has **no saved login**, it no longer just refuses - it asks you once for a camera username / password to try on those cameras (most share the same login). The Login sweep only saves logins it cracked, so this covers the rest.
+
+It reports clearly: restarted, login refused, or no reboot method answered. (If nothing works, power-cycle the camera or reboot it from the NVR.)
+
 ## Network Doctor 3.70.0
 
 ### Devices no longer show two IPs
