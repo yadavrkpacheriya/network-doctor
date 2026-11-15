@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.67.0"
+VERSION = "3.68.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -901,6 +901,8 @@ class App(tk.Tk):
             ttk.Label(f, text=intro, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w")
         act = ttk.Frame(f, padding=(0, 6))
         act.pack(fill="x")
+        ttk.Button(act, text="Tag (name, dept, owner)...", command=lambda k=key: self._cat_tag(k)).pack(
+            side="left", padx=3)
         for txt, cmd in actions:
             ttk.Button(act, text=txt, command=cmd).pack(side="left", padx=3)
         ttk.Button(act, text="Open selected in browser", command=lambda k=key: self._cat_open_web(k)).pack(
@@ -908,8 +910,8 @@ class App(tk.Tk):
         ttk.Button(act, text="Refresh", command=lambda k=key: self._fill_category(k)).pack(side="left", padx=3)
         tv = make_tree(f, ("ip", "mac", "vendor", "kind", "status", "notes"),
                        ("IP", "MAC address", "Vendor", "Kind", "Status", "Notes"),
-                       (120, 150, 180, 120, 100, 260), first=("Name", 230), selectmode="browse")
-        tv.bind("<Double-1>", lambda e, k=key: self._cat_open_web(k))
+                       (120, 150, 180, 120, 100, 260), first=("Name", 230), selectmode="extended")
+        tv.bind("<Double-1>", lambda e, k=key: self._cat_tag(k))
         self._cat = getattr(self, "_cat", {})
         self._cat[key] = {"tv": tv, "cats": cats, "rows": {}}
 
@@ -940,6 +942,18 @@ class App(tk.Tk):
             return
         import webbrowser
         webbrowser.open(f"http://{d['ip']}")
+
+    def _cat_tag(self, key):
+        """Tag (name / department / where connected / owner) the selected device(s) from the Cameras or Computers
+        page - same tagging as the All-devices tab, so you can say which camera is whose and where it is."""
+        info = getattr(self, "_cat", {}).get(key)
+        if not info:
+            return
+        many = [info["rows"][i] for i in info["tv"].selection() if i in info["rows"] and info["rows"][i].get("mac")]
+        if not many:
+            messagebox.showinfo(APP, "Select a device (with a MAC address) in the list first.")
+            return
+        nd_tabs.TagDialog(self, many)
 
     def _tab_cameras(self):
         self._category_page(
