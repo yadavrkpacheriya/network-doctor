@@ -1,3 +1,16 @@
+## Network Doctor 3.60.0
+
+### Fixes "devices can't connect to WiFi after binding"
+The real cause is the LAN/WiFi interface being set to **ARP 'reply-only'** - once that's on, only devices you've bound can connect, so unbound phones (which rotate their WiFi MAC) are silently blocked. Network Doctor now:
+- **Finds it automatically** and alerts you ("... is set to ARP reply-only ... unbound phones are being blocked") - and the fixer brain now knows this pattern, so it's caught if it ever comes back.
+- **One-click fix** in **Setup > WiFi access & whitelist > "Let blocked devices connect"**: takes a full router backup, sets the interface ARP back to **enabled**, and records an **Undo**. Bound devices keep their fixed IPs. (Reviewed one-click only - it never changes your router on its own.)
+- Also warns when the **DHCP pool is almost full** (the other reason a new device gets no address).
+
+### Device whitelist
+**Setup > WiFi access & whitelist > "Whitelist devices"**: tick the devices that must **always** get internet. Whitelisted devices are never blocked or quarantined by Network Doctor and stay online **whether or not their MAC is randomised** - no binding needed.
+
+Safety: access and whitelist changes are manual and reversible; blocking kinds stay out of auto-apply. +6 tests (781 total green).
+
 ## Network Doctor 3.59.0
 
 ### Top menu no longer gets cut off
