@@ -2446,16 +2446,38 @@ class SectionNav:
         self.pages, self.labels, self.sec_btn, self.sub_btn = {}, {}, {}, {}
         self.sec_of, self.last = {}, {}
         self.cur, self.cur_sec = None, None
+        self._sec_order = [s[0] for s in SECTIONS]
         for key, title, col, light, subs in SECTIONS:
-            b = tk.Label(self.top, text=f"  {title}  ", font=("Segoe UI", 11, "bold"), fg=col, bg="#f8fafc",
-                         padx=10, pady=7, cursor="hand2")
-            b.pack(side="left", padx=(0, 2))
+            b = tk.Label(self.top, text=f" {title} ", font=("Segoe UI", 9, "bold"), fg=col, bg="#f8fafc",
+                         padx=6, pady=5, cursor="hand2")
             b.bind("<Button-1>", lambda e, k=key: self.select_section(k))
             self.sec_btn[key] = b
             for p, t in subs:
                 self.sec_of[p] = key
                 self.labels[p] = t
             self.last[key] = subs[0][0]
+        # lay the section buttons out with grid so they WRAP to another row when the window is too narrow -
+        # otherwise the right-most menus (Setup, Firewall) get clipped with no way to scroll to them.
+        self.top.bind("<Configure>", self._reflow)
+        self.top.after(80, self._reflow)
+
+    def _reflow(self, _event=None):
+        width = self.top.winfo_width()
+        if width <= 1:
+            return
+        if getattr(self, "_reflow_w", -1) == width:
+            return                      # same width - avoid a Configure feedback loop
+        self._reflow_w = width
+        row = col = used = 0
+        for key in self._sec_order:
+            b = self.sec_btn[key]
+            w = b.winfo_reqwidth() + 2
+            if used + w > width and col > 0:
+                row += 1
+                col = used = 0
+            b.grid(row=row, column=col, sticky="w", padx=(0, 2), pady=1)
+            col += 1
+            used += w
 
     def section(self, key):
         return next(s for s in SECTIONS if s[0] == key)

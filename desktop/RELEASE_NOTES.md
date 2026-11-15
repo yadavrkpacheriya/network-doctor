@@ -1,3 +1,8 @@
+## Network Doctor 3.59.0
+
+### Top menu no longer gets cut off
+The row of category tabs (Home, Scan & Devices ... Firewall, Setup) was running past the edge of a smaller window with no way to scroll, so the last menus couldn't be opened. The tab font is now a little smaller and the whole row **wraps onto a second line automatically** when it doesn't fit - so every menu is always visible and clickable, at any window size.
+
 ## Network Doctor 3.58.0
 
 ### The report now closes its own learning loop
