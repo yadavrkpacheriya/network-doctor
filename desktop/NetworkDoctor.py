@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.61.0"
+VERSION = "3.62.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -1772,9 +1772,18 @@ class App(tk.Tk):
         on = sum(1 for d in self.devices if d["online"])
         c = Counter(i["sev"] for i in self.issues)
         cats = Counter(d["category"] for d in self.devices if d["online"])
-        self.var_sum.set(f"{on} devices online   |   {c['critical']} critical   {c['warning']} warnings   {c['info']} notes"
-                         "   |   " + "  ".join(f"{k.split(' (')[0].split(' /')[0]}: {v}" for k, v in
-                                               sorted(cats.items(), key=lambda x: core.CAT_ORDER.index(x[0]))))
+        nvr = sum(1 for d in self.devices if d["online"] and core.cctv_role(d) == "nvr")
+        parts = []
+        for k, v in sorted(cats.items(), key=lambda x: core.CAT_ORDER.index(x[0])):
+            short = k.split(" (")[0].split(" /")[0]
+            if k == core.CAT_CAM and nvr:
+                if v - nvr:
+                    parts.append(f"{short}: {v - nvr}")
+                parts.append(f"DVR / NVR: {nvr}")
+            else:
+                parts.append(f"{short}: {v}")
+        self.var_sum.set(f"{on} devices online   |   {c['critical']} critical   {c['warning']} warnings   "
+                         f"{c['info']} notes   |   " + "  ".join(parts))
         self.fill_devices()
         self.fill_problems()
         self.fill_checks()
