@@ -939,6 +939,11 @@ PHONE_NAMES = (r"(android|iphone|ipad|galaxy|redmi|oppo|vivo|realme|oneplus|poco
                r"\bmi-|\bmi \d|apple-watch|watch)")
 
 
+# device kinds whose locally-administered MAC is FIXED (not privacy-random) - so a camera/recorder/printer/switch
+# is safe to reserve even when its MAC has the locally-administered bit set
+FIXED_MAC_CATS = (CAT_CAM, CAT_NET, CAT_ROUTER, CAT_PRN, CAT_BIO)
+
+
 def resolve_ips(ips, router_arp, ping):
     """A device can show two IPs after a DHCP change: the live one AND an old one the router still holds in its
     ARP / lease table. Returns (live_ips_set, stale_ips_sorted_list). A stale IP is one ONLY the router knows
@@ -1567,6 +1572,14 @@ def build_devices(raw, oui, db):
             elif d["ip"] in (raw.get("router_arp") or {}) and d["ip"] not in raw["ping"]:
                 d["category"], d["reason"] = CAT_PHONE, ("likely a phone / tablet (only the router sees it - "
                                                          "asleep or firewalled)")
+        # A camera / recorder / printer / switch does NOT rotate its MAC the way a phone does: a locally-
+        # administered MAC on one of these (e.g. a camera's 5A:5A:... or A0:00:... MAC) is its own FIXED MAC, not
+        # a privacy-random one - so it is safe to reserve / bind. Only phones, laptops and unknown devices really
+        # randomize. Un-flag the false "randomized" so these can be given a fixed IP.
+        if d["random"] and d["category"] in FIXED_MAC_CATS:
+            d["random"] = False
+            d["notes"] = [n for n in d["notes"] if n != "Randomized MAC"]
+            d["notes"].append("locally-administered MAC (its own fixed MAC) - safe to reserve")
         if not d["name"]:
             d["name"], d["auto_name"] = auto_name(d), True
         d["status"] = "Online"

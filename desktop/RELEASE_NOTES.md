@@ -1,3 +1,8 @@
+## Network Doctor 3.72.0
+
+### Cameras no longer falsely flagged "randomized MAC" - they can be reserved now
+Many cameras use a locally-administered MAC (like 5A:5A:02:8C:... or A0:00:...). The app was treating that the same as a phone's privacy-random MAC and refusing to reserve them ("randomized - cannot be reserved"). But a camera does NOT rotate its MAC - that MAC is fixed. Now a locally-administered MAC on a camera, recorder, printer or switch is recognised as its own fixed MAC, so these devices can be given a fixed IP and bound like any other. Only phones, laptops and unknown devices are still treated as randomizing (because they genuinely do).
+
 ## Network Doctor 3.71.0
 
 ### Restart cameras now works across brands - and without a saved login
