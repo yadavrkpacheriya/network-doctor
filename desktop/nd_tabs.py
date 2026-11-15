@@ -18,7 +18,30 @@ import nd_tools as T
 UI = {}
 
 
-def section_card(parent, title, color="#475569", pady=(0, 8)):
+def scroll_area(parent):
+    """A vertical scrolling column inside parent. Returns the inner frame to pack content into - so a long page of
+    cards (Setup) scrolls instead of cramming everything into one screen. Mouse-wheel works while the pointer is
+    over it."""
+    import tkinter as _tk
+    from tkinter import ttk as _ttk
+    cv = _tk.Canvas(parent, highlightthickness=0)
+    sb = _ttk.Scrollbar(parent, orient="vertical", command=cv.yview)
+    inner = _ttk.Frame(cv, padding=(4, 4))
+    win = cv.create_window((0, 0), window=inner, anchor="nw")
+    inner.bind("<Configure>", lambda _e: cv.configure(scrollregion=cv.bbox("all")))
+    cv.bind("<Configure>", lambda e: cv.itemconfigure(win, width=e.width))
+    cv.configure(yscrollcommand=sb.set)
+    cv.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
+
+    def _wheel(e):
+        cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
+    inner.bind("<Enter>", lambda _e: cv.bind_all("<MouseWheel>", _wheel))
+    inner.bind("<Leave>", lambda _e: cv.unbind_all("<MouseWheel>"))
+    return inner
+
+
+def section_card(parent, title, color="#475569", pady=(0, 10)):
     """A titled section with a small COLOURED header bar, so a page of settings is easy to scan instead of a
     wall of same-looking boxes. Returns the body frame - pack the controls into it."""
     import tkinter as _tk

@@ -1,3 +1,15 @@
+## Network Doctor 3.63.0
+
+### SNMP turns on by itself - safely
+You asked why SNMP wasn't on automatically. Now, as soon as a router login is saved, Network Doctor turns SNMP on **once, safely**, so it can read switch / PoE / interface counters:
+- a **random** community string (never "public", so it can't be guessed),
+- **locked to your LAN only** (addresses=<your subnet>) - unreachable from the internet,
+- **read-only** - nothing can ever be changed over SNMP.
+There's also a **Setup > WiFi access & whitelist > "Turn on SNMP (safe)"** button to (re)apply it, and it's reversible.
+
+### Setup page no longer cramped
+The Setup tab now **scrolls** with more breathing room between the coloured cards, so it isn't a cramped wall of boxes.
+
 ## Network Doctor 3.62.0
 
 ### DVR / NVR told apart from cameras automatically

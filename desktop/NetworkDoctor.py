@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.62.0"
+VERSION = "3.63.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -890,7 +890,7 @@ class App(tk.Tk):
         self.tc = make_tree(f, ("res", "det"), ("Result", "Details"), (100, 800), first=("Check", 300))
 
     def _tab_setup(self):
-        f = self.nav.page("setup")
+        f = nd_tabs.scroll_area(self.nav.page("setup"))   # a long page of cards - let it scroll, not cram
         top = nd_tabs.section_card(f, "Quick actions", "#334155")
         ttk.Button(top, text="Copy router commands", command=self.copy_setup).pack(side="left")
         ttk.Button(top, text="Allow in Windows Firewall", command=self.firewall).pack(side="left", padx=6)
@@ -915,6 +915,7 @@ class App(tk.Tk):
         acc = nd_tabs.section_card(f, "WiFi access & whitelist", "#0369a1")
         ttk.Button(acc, text="Let blocked devices connect", command=self._fix_access).pack(side="left")
         ttk.Button(acc, text="Whitelist devices", command=self._edit_whitelist).pack(side="left", padx=6)
+        ttk.Button(acc, text="Turn on SNMP (safe)", command=self._snmp_button).pack(side="left")
         ttk.Label(acc, text="   Fixes 'reply-only' ARP that blocks unbound phones; whitelisted devices are always "
                             "allowed internet and never blocked.").pack(side="left")
         up = nd_tabs.section_card(f, "App updates", "#0f766e")
@@ -3032,10 +3033,74 @@ class App(tk.Tk):
                     self.alert_cool[key] = time.time()
                     self.q.put(("call", lambda a=alert: self._raise_alert(
                         a["sev"], a["text"] + "   (Setup > WiFi access > fix)", [], "Access guard")))
+            if not self._settings().get("snmp_auto_done"):   # once: turn SNMP on safely so counters can be read
+                self._snmp_apply(auto=True)
         except RO.RosError:
             pass
         except Exception:  # noqa: BLE001
             pass
+
+    def _lan_subnet(self):
+        """This LAN as CIDR (e.g. 192.168.0.0/24) from the router IP - used to lock SNMP to the office network."""
+        try:
+            import ipaddress
+            return str(ipaddress.ip_network((self.gw or "192.168.0.1") + "/24", strict=False))
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _snmp_button(self):
+        """Setup button: turn SNMP on safely, off the Tk thread so the UI never freezes on the router call."""
+        threading.Thread(target=self._snmp_apply, kwargs={"auto": False}, daemon=True).start()
+
+    def _snmp_persist(self, community, undo, subnet, auto, msg_err=""):
+        """Runs on the Tk thread (via the queue): write the SNMP result to settings and tell the user. Keeping the
+        settings write on one thread avoids racing the main thread's own saves."""
+        if msg_err:
+            if not auto:
+                from tkinter import messagebox
+                messagebox.showerror("SNMP", f"Router error: {msg_err}")
+            return
+        s = self._settings()
+        s["snmp_auto_done"] = True
+        if community:
+            s["snmp_community"] = community
+        if undo is not None:
+            s["snmp_undo"] = undo
+        self._save_settings()
+        if auto:
+            self._log_event("info", f"SNMP turned on safely - read-only, locked to {subnet}, private community.",
+                            "SNMP")
+        else:
+            from tkinter import messagebox
+            messagebox.showinfo("SNMP", f"SNMP is on - read-only, locked to {subnet}, with a private community. "
+                                        f"Network Doctor can now read switch / PoE / interface counters. "
+                                        f"Hacker-safe: it cannot be reached from the internet and nothing can be "
+                                        f"changed over SNMP.")
+
+    def _snmp_apply(self, auto=False):
+        """Turn SNMP on the router SAFELY: a random read-only community, locked to the LAN only (never 'public',
+        never the internet). Reversible. auto=True is the one-time enable when a router login already exists. All
+        router I/O here; the settings write + any message is marshalled to the Tk thread via _snmp_persist."""
+        import nd_snmpcfg as SN
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            if not auto:
+                from tkinter import messagebox
+                self.q.put(("call", lambda: messagebox.showinfo(
+                    "SNMP", "Add your router login first (Setup > Router login).")))
+            return
+        subnet = self._lan_subnet()
+        try:
+            with c:
+                st = SN.status(c)
+                if auto and st.get("enabled"):      # already on - just remember and don't touch it
+                    self.q.put(("call", lambda: self._snmp_persist(st.get("community", ""), None, subnet, True)))
+                    return
+                res = SN.enable(c, subnet)
+            self.q.put(("call", lambda: self._snmp_persist(res["community"], res["undo"], subnet, auto)))
+        except RO.RosError as ex:
+            msg = str(ex)
+            self.q.put(("call", lambda: self._snmp_persist("", None, subnet, auto, msg_err=msg)))
 
     def _fix_access(self):
         """Reviewed one-click: set the blocking interface(s) ARP back to 'enabled' so unbound devices can join,
