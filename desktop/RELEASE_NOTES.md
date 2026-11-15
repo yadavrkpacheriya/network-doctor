@@ -1,3 +1,8 @@
+## Network Doctor 3.68.0
+
+### Tagging on the Cameras and Computers menus
+The new Cameras and Computers pages now have a **"Tag (name, dept, owner)..."** button, and you can **double-click** any device to tag it - the same tagging as the All-devices tab. So you can name each camera/PC, set its department, where it is connected, and whose it is, right from its own menu. Select several (Ctrl/Shift+click) to tag them together. Tags show up immediately.
+
 ## Network Doctor 3.67.0
 
 ### Two new menus: Cameras, and Computers
