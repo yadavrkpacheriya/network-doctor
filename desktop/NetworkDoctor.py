@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.59.0"
+VERSION = "3.60.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -912,6 +912,11 @@ class App(tk.Tk):
         ep.pack(side="left")
         ep.bind("<FocusOut>", lambda _e: self._save_poe_budget())
         ttk.Label(cam, text="(your PoE switch/injector watts - 0 = off)").pack(side="left", padx=6)
+        acc = nd_tabs.section_card(f, "WiFi access & whitelist", "#0369a1")
+        ttk.Button(acc, text="Let blocked devices connect", command=self._fix_access).pack(side="left")
+        ttk.Button(acc, text="Whitelist devices", command=self._edit_whitelist).pack(side="left", padx=6)
+        ttk.Label(acc, text="   Fixes 'reply-only' ARP that blocks unbound phones; whitelisted devices are always "
+                            "allowed internet and never blocked.").pack(side="left")
         up = nd_tabs.section_card(f, "App updates", "#0f766e")
         ttk.Button(up, text="Check for updates", command=lambda: self.check_updates(False)).pack(side="left")
         ttk.Label(up, text="   New versions:").pack(side="left")
@@ -1267,6 +1272,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_poe_t", 0) > 300:        # router PoE load (quiet on non-PoE routers)
                 self._poe_t = time.time()
                 threading.Thread(target=self._poe_poll, daemon=True).start()
+            if time.time() - getattr(self, "_access_t", 0) > 600:     # devices blocked from joining (reply-only ARP)
+                self._access_t = time.time()
+                threading.Thread(target=self._access_poll, daemon=True).start()
             if time.time() - getattr(self, "_checklist_t", 0) > 10:  # for the phone app (read on another thread)
                 self._checklist_t = time.time()
                 self._checklist_cache = [{"ok": ok, "title": t, "detail": d}
@@ -2783,6 +2791,11 @@ class App(tk.Tk):
         if why:
             self._log_event("warning", f"Auto-defense did NOT cut {name} ({ip or mac}): {why}.", "Auto-defense")
             return
+        import nd_access as AC
+        if mac and AC.is_whitelisted(self._settings().get("wifi_whitelist"), mac):
+            self._log_event("info", f"Auto-defense left {name} ({ip or mac}) alone - it is on your whitelist.",
+                            "Auto-defense")
+            return
         level = d.planned(threat, ip, mac, category)
         if level == "notify":
             return
@@ -2990,6 +3003,129 @@ class App(tk.Tk):
             pass
         except Exception:  # noqa: BLE001
             pass
+
+    def _access_poll(self):
+        """Background: detect what is stopping devices from joining - a LAN interface set to ARP 'reply-only'
+        (blocks every unbound device, e.g. phones that rotate their MAC) or a near-full DHCP pool. Only WARNS and
+        remembers, with the one-click fix a review away; it never changes the router on its own."""
+        try:
+            import nd_access as AC
+            c = RO.from_settings(self._settings(), self.gw)
+            if not c:
+                return
+            with c:
+                info, alert = AC.read(c)
+            self.access_info = info
+            if alert:
+                BR.recurrence(self._brain(), f"{alert['kind']}|")   # track so a recurring block escalates
+                key = alert["kind"]
+                if time.time() - self.alert_cool.get(key, 0) >= 3600:
+                    self.alert_cool[key] = time.time()
+                    self.q.put(("call", lambda a=alert: self._raise_alert(
+                        a["sev"], a["text"] + "   (Setup > WiFi access > fix)", [], "Access guard")))
+        except RO.RosError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _fix_access(self):
+        """Reviewed one-click: set the blocking interface(s) ARP back to 'enabled' so unbound devices can join,
+        after taking a full router config backup. Recorded in the fix history with an Undo, and the brain learns
+        it. Nothing else on the router is touched; bound devices keep their fixed IPs."""
+        import nd_access as AC
+        import nd_configbak as CB
+        from tkinter import messagebox
+        c = RO.from_settings(self._settings(), self.gw)
+        if not c:
+            messagebox.showinfo("WiFi access", "Add your router login first (Setup > Router login).")
+            return
+        try:
+            with c:
+                info, _ = AC.read(c)
+                blockers = info.get("blockers") or []
+                if not blockers:
+                    pool = info.get("pool") or {}
+                    msg = ("No interface is blocking devices (ARP is fine)." if not pool.get("tight")
+                           else "ARP is fine, but the DHCP pool is almost full - widen the range in the router "
+                                "(IP > Pool) so new devices get an address.")
+                    messagebox.showinfo("WiFi access", msg)
+                    return
+                names = ", ".join(b["name"] for b in blockers)
+                if not messagebox.askyesno("Let blocked devices connect",
+                                           f"{names} is set to ARP 'reply-only', which blocks every device you "
+                                           f"have not bound (phones especially).\n\nSet it back to 'enabled' so "
+                                           f"they can join? Bound devices keep their fixed IPs. A router backup is "
+                                           f"taken first and you can Undo this."):
+                    return
+                try:
+                    CB.run_backup(c, self.config_backup_path())     # fresh backup before any change
+                except Exception:  # noqa: BLE001
+                    pass
+                AC.apply_fix(c, blockers)
+            # undo keyed by interface NAME (stable across sessions) so Fixer > Undo restores it exactly
+            undo_script = "\n".join(
+                f'/interface set [find name="{b["name"]}"] arp={b.get("arp", "reply-only")}' for b in blockers)
+            fh = self._fix_history()
+            e = AF.new_fix(fh, "arp_block", f"Set {names} ARP to 'enabled' so unbound devices can connect",
+                           undo_cmd=undo_script)
+            AF.mark_ok(fh, self._fix_stats(), e["id"])
+            BR.learn_outcome(self._brain(), f"{names} reply-only arp blocked unbound devices", "arp_block", ok=True)
+            self._save_settings()
+            messagebox.showinfo("WiFi access", f"Done - {names} now accepts unbound devices. Ask a blocked phone "
+                                               f"to reconnect. You can Undo this from Fixer > history.")
+        except RO.RosError as ex:
+            messagebox.showerror("WiFi access", f"Router error: {ex}")
+
+    def _edit_whitelist(self):
+        """Pick devices that must always get internet. Whitelisted devices are never blocked or quarantined by the
+        app's own security features, so they stay online whether or not their MAC is randomised - no binding
+        needed. Stored in settings as wifi_whitelist=[{mac,name}]."""
+        import nd_access as AC
+        import tkinter as tk
+        from tkinter import ttk
+        st = self._settings()
+        wl = st.setdefault("wifi_whitelist", [])
+        on = {AC.norm_mac(w.get("mac")) for w in wl}
+        w = tk.Toplevel(self)
+        w.title("Whitelist devices - always allowed internet")
+        w.geometry("560x520")
+        ttk.Label(w, text="Ticked devices always get internet and are never blocked by Network Doctor,\n"
+                          "even if their WiFi MAC changes. Untick to remove.", justify="left").pack(anchor="w",
+                                                                                                    padx=10, pady=8)
+        box = ttk.Frame(w)
+        box.pack(fill="both", expand=True, padx=10)
+        cv = tk.Canvas(box, highlightthickness=0)
+        sb = ttk.Scrollbar(box, orient="vertical", command=cv.yview)
+        inner = ttk.Frame(cv)
+        inner.bind("<Configure>", lambda _e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.create_window((0, 0), window=inner, anchor="nw")
+        cv.configure(yscrollcommand=sb.set)
+        cv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        vars_ = {}
+        devs = sorted([d for d in self.devices if d.get("mac")],
+                      key=lambda d: (not d.get("online"), d.get("name") or d.get("ip") or ""))
+        for d in devs:
+            mac = AC.norm_mac(d.get("mac"))
+            v = tk.BooleanVar(value=mac in on)
+            vars_[mac] = (v, d.get("name") or d.get("hostname") or d.get("ip") or mac)
+            label = f"{'●' if d.get('online') else '○'} {vars_[mac][1]}  -  {d.get('ip', '')}  {mac}"
+            ttk.Checkbutton(inner, text=label, variable=v).pack(anchor="w")
+
+        def save():
+            new = []
+            for mac, (v, name) in vars_.items():
+                if v.get():
+                    new.append({"mac": mac, "name": name})
+            # keep any whitelisted MAC that is not currently a known device (offline/unseen)
+            known = set(vars_)
+            for old in wl:
+                if AC.norm_mac(old.get("mac")) not in known:
+                    new.append(old)
+            st["wifi_whitelist"] = new
+            self._save_settings()
+            w.destroy()
+        ttk.Button(w, text="Save whitelist", command=save).pack(pady=8)
 
     def _camera_picture_check(self):
         """Manual: for every online camera, grab two snapshots a few seconds apart and flag any that is frozen,

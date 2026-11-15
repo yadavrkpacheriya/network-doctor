@@ -190,8 +190,18 @@ AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu
 # the real wording of this office from there. Phrases are plain language on purpose - that is what alerts and
 # pasted guidance look like. NOTE: several kinds here block, reboot, shape or quarantine a device; those are
 # deliberately NOT in AUTO_SAFE above, so the brain names them but the action stays a reviewed one-click.
-SEED_VERSION = 2
+SEED_VERSION = 3
 KNOWLEDGE = {
+    # Access / joining the network
+    "arp_block": ["devices cannot connect to wifi even though the password is right",
+                  "unbound devices blocked after turning on mac binding",
+                  "interface arp set to reply-only so only bound devices work",
+                  "phones and new devices cannot get on the network after binding",
+                  "some devices did not connect to wifi even after mac binding on"],
+    "dhcp_full": ["dhcp pool is full no free address for new devices",
+                  "new device gets no ip address, lease pool exhausted",
+                  "too many static leases left no room in the pool",
+                  "device stuck waiting for a dhcp address"],
     # Loop & switch health
     "broadcast_storm": ["broadcast storm flooding the network", "too many broadcast packets per second",
                         "network slow from a flood of broadcasts", "broadcast traffic spiking",
