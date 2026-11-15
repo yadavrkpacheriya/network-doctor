@@ -8,6 +8,7 @@ import '../net/snmp.dart' as snmp;
 import '../net/tools.dart';
 import 'router_screen.dart';
 import 'device_screen.dart';
+import 'clean_screen.dart';
 
 /// Engineer's tools: ping, port scan, switch details, DNS, speed, Wake-on-LAN, subnet calculator.
 
@@ -50,6 +51,9 @@ class ToolsScreen extends StatelessWidget {
         tool(const Color(0xFF7C3AED), Icons.vpn_key, 'Router (MikroTik) login',
             'Log in to the router directly over Wi-Fi: DHCP leases, ARP (IP-MAC), run commands - no PC',
             const RouterScreen()),
+        _header(context, 'Your phone', const Color(0xFF7C3AED)),
+        tool(const Color(0xFF7C3AED), Icons.cleaning_services, 'Phone clean-up',
+            'Find duplicate, junk and big files, free space and keep the phone fast', const CleanScreen()),
         _header(context, 'This PC & helpers', const Color(0xFFA16207)),
         tool(const Color(0xFFA16207), Icons.power_settings_new, 'Wake-on-LAN', 'Switch on a PC that is off',
             const _WolTool()),
