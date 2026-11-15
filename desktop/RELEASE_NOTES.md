@@ -1,3 +1,10 @@
+## Network Doctor 3.69.0
+
+### Fix: IP-MAC binding now actually applies on the router
+The reservation commands were written in WinBox terminal style (a '/ip dhcp-server lease' line, then a bare 'add'). That works when pasted into WinBox, but when the app sent it over the API it silently did nothing - so "Reserve on the router now" and binding often did not stick. Every command now uses its full path ('/ip dhcp-server lease add ...'), which works both ways. Strict-ARP and block-random-MAC commands were fixed the same way.
+
+**Important:** a reservation only takes effect when the device renews its lease. After reserving, use **Restart cameras** (or on a PC, 'ipconfig /renew', or just reconnect Wi-Fi) so the device picks up its fixed IP.
+
 ## Network Doctor 3.68.0
 
 ### Tagging on the Cameras and Computers menus

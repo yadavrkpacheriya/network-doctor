@@ -508,40 +508,41 @@ def _q(s):
 def binding_commands(rows, tags, strict_arp=False, block_random=False, bridge="bridge", wan="ether1"):
     """rows: list of device dicts to bind. Returns (apply_text, undo_text)."""
     ts = time.strftime("%Y-%m-%d %H:%M")
+    # Every command uses its FULL path (e.g. '/ip dhcp-server lease add'), not the WinBox path-context style
+    # ('/ip dhcp-server lease' then a bare 'add'). Full paths run correctly BOTH when pasted in WinBox AND when the
+    # app applies them over the API (/system/script/run) - the context style silently did nothing over the API,
+    # which is why reservations sometimes did not take.
     a = [f"# Network Doctor - IP / MAC binding ({len(rows)} devices) - generated {ts}",
-         "# Paste in WinBox > New Terminal. Each device keeps 'automatic (DHCP)' and always gets the same IP.",
-         "# A line that prints 'NOT BOUND' means the router already reserves that IP for another device.",
-         "/ip dhcp-server lease"]
-    u = [f"# Network Doctor - UNDO IP / MAC binding generated {ts}", "/ip dhcp-server lease"]
+         "# Applied by the app over the API, or paste in WinBox > New Terminal. Each device keeps 'automatic",
+         "# (DHCP)' and always gets the same IP. A line printing 'NOT BOUND' means the IP is reserved for another."]
+    u = [f"# Network Doctor - UNDO IP / MAC binding generated {ts}"]
     for d in rows:
         t = tags.get(d["mac"], {})
         comment = _q("ND: " + " | ".join(x for x in (t.get("name") or d.get("name") or "", t.get("dept", "")) if x) or "ND")
         mac, ip = d["mac"], d["ip"]
-        a.append(f':do {{remove [find where mac-address="{mac}"]}} on-error={{}}; '
-                 f':do {{add address={ip} mac-address="{mac}" comment={comment}}} '
+        a.append(f':do {{/ip dhcp-server lease remove [find where mac-address="{mac}"]}} on-error={{}}; '
+                 f':do {{/ip dhcp-server lease add address={ip} mac-address="{mac}" comment={comment}}} '
                  f'on-error={{:put "NOT BOUND (IP already reserved for another device): {ip} {mac}"}}')
-        u.append(f':do {{remove [find where mac-address="{mac}" and comment~"^ND"]}} on-error={{}}')
+        u.append(f':do {{/ip dhcp-server lease remove [find where mac-address="{mac}" and comment~"^ND"]}} on-error={{}}')
     if strict_arp:
         a += ["", "# Strict mode: only devices with an IP from the router (or listed below) can talk to it.",
               "# Somebody typing an IP by hand can no longer steal / clash with another device's IP.",
-              "/ip dhcp-server set [find] add-arp=yes", "/ip arp"]
-        u += ["", f"/interface bridge set [find name={bridge}] arp=enabled", "/ip dhcp-server set [find] add-arp=no",
-              "/ip arp"]
+              "/ip dhcp-server set [find] add-arp=yes"]
+        u += ["", f"/interface bridge set [find name={bridge}] arp=enabled", "/ip dhcp-server set [find] add-arp=no"]
         for d in rows:
-            a.append(f':do {{remove [find where address={d["ip"]} and dynamic]}} on-error={{}}; '
-                     f':do {{add address={d["ip"]} mac-address="{d["mac"]}" interface={bridge} comment="ND binding"}} '
-                     f'on-error={{}}')
-        u.append(':do {remove [find where comment="ND binding"]} on-error={}')
+            a.append(f':do {{/ip arp remove [find where address={d["ip"]} and dynamic]}} on-error={{}}; '
+                     f':do {{/ip arp add address={d["ip"]} mac-address="{d["mac"]}" interface={bridge} '
+                     f'comment="ND binding"}} on-error={{}}')
+        u.append(':do {/ip arp remove [find where comment="ND binding"]} on-error={}')
         a += [f"/interface bridge set [find name={bridge}] arp=reply-only"]
     if block_random:
         a += ["", "# Block devices that use a randomized (private) MAC. Phones must use 'device MAC' for this Wi-Fi.",
-              "/interface bridge filter",
-              ':do {remove [find where comment="ND: block random MAC"]} on-error={}',
-              "add chain=input src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 action=drop "
-              'comment="ND: block random MAC"',
-              "add chain=forward src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 action=drop "
-              'comment="ND: block random MAC"']
-        u += ["", "/interface bridge filter", ':do {remove [find where comment="ND: block random MAC"]} on-error={}']
+              ':do {/interface bridge filter remove [find where comment="ND: block random MAC"]} on-error={}',
+              "/interface bridge filter add chain=input "
+              "src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 action=drop comment=\"ND: block random MAC\"",
+              "/interface bridge filter add chain=forward "
+              "src-mac-address=02:00:00:00:00:00/02:00:00:00:00:00 action=drop comment=\"ND: block random MAC\""]
+        u += ["", ':do {/interface bridge filter remove [find where comment="ND: block random MAC"]} on-error={}']
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
