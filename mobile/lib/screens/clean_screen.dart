@@ -16,12 +16,19 @@ class CleanScreen extends StatefulWidget {
   State<CleanScreen> createState() => _CleanScreenState();
 }
 
+const _kindColor = {
+  CleanKind.duplicate: Color(0xFFA78BFA),
+  CleanKind.junk: Color(0xFFF59E0B),
+  CleanKind.installer: Color(0xFFFB7185),
+  CleanKind.emptyFolder: Color(0xFF9CA3AF),
+  CleanKind.big: Color(0xFF38BDF8),
+};
+
 class _Group {
-  _Group(this.title, this.color, this.files, {this.preselect = false});
-  final String title;
-  final Color color;
-  final List<FileMeta> files;
-  final bool preselect;
+  _Group(this.kind, this.items);
+  final CleanKind kind;
+  final List<CleanItem> items;
+  Color get color => _kindColor[kind]!;
 }
 
 class _CleanScreenState extends State<CleanScreen> {
@@ -30,6 +37,7 @@ class _CleanScreenState extends State<CleanScreen> {
   int _scanned = 0;
   final _sel = <String>{}; // selected paths to delete
   List<_Group> _groups = [];
+  int _protected = 0; // files left alone (other apps' private folders)
 
   // Scan the WHOLE internal storage, not just a few folders, so it cleans the full phone (Downloads, WhatsApp,
   // Telegram, screenshots, camera, everything). Only Android/data and Android/obb are skipped - those are other
@@ -58,6 +66,7 @@ class _CleanScreenState extends State<CleanScreen> {
       _groups = [];
       _sel.clear();
       _scanned = 0;
+      _protected = 0;
     });
     if (!await _ensurePermission()) {
       _set(() {
@@ -73,33 +82,23 @@ class _CleanScreenState extends State<CleanScreen> {
     await _walk(Directory(_scanRoot), all, 0);
     _set(() => _status = 'Looking for duplicates in ${all.length} files...');
     await _hashCandidates(all);
-    final dups = duplicateGroups(all, minSize: 1024); // ignore tiny files
-    final free = duplicateFreeable(dups);
-    final junk = junkFiles(all);
-    final installers = installerFiles(all);
-    final large = largeFiles(all);
-    final emptyAsFiles = [for (final d in _emptyDirs) FileMeta(d, 0, 0)];
-    final groups = <_Group>[
-      _Group('Duplicate files', const Color(0xFF7C3AED), free.files, preselect: true),
-      _Group('Junk (temp / log / empty)', const Color(0xFFB45309), junk, preselect: true),
-      _Group('Leftover installers (APK)', const Color(0xFFBE123C), installers),
-      _Group('Empty folders', const Color(0xFF6B7280), emptyAsFiles),
-      _Group('Biggest files', const Color(0xFF0369A1), large),
-    ]..removeWhere((g) => g.files.isEmpty);
+    final plan = buildCleanPlan(all, _emptyDirs);
+    final groups = [for (final e in plan.items.entries) _Group(e.key, e.value)];
     final sel = <String>{};
     for (final g in groups) {
-      if (g.preselect) sel.addAll(g.files.map((f) => f.path));
+      if (g.kind.preselect) sel.addAll(g.items.map((i) => i.file.path));
     }
     _set(() {
       _groups = groups;
+      _protected = plan.protectedCount;
       _sel
         ..clear()
         ..addAll(sel);
       _busy = false;
-      final total = groups.fold<int>(0, (n, g) => n + totalBytes(g.files));
       _status = groups.isEmpty
           ? 'Nothing to clean - your storage looks tidy. $_scanned files checked.'
-          : 'Found ${humanSize(total)} you can review and free, in $_scanned files.';
+          : 'Found ${humanSize(plan.totalBytes)} in ${plan.totalCount} files (of $_scanned checked). '
+              'Tick what you want gone - nothing is deleted until you confirm.';
     });
   }
 
@@ -164,28 +163,60 @@ class _CleanScreenState extends State<CleanScreen> {
     }
   }
 
-  int get _selBytes {
-    var n = 0;
+  Iterable<CleanItem> get _selItems sync* {
     for (final g in _groups) {
-      for (final f in g.files) {
-        if (_sel.contains(f.path)) n += f.size;
+      for (final i in g.items) {
+        if (_sel.contains(i.file.path)) yield i;
       }
     }
-    return n;
   }
 
+  int get _selBytes => _selItems.fold(0, (n, i) => n + i.file.size);
+
   Future<void> _deleteSelected() async {
-    final n = _sel.length;
-    if (n == 0) return;
+    final chosen = _selItems.toList();
+    if (chosen.isEmpty) return;
+    final safe = safeToDelete(chosen);
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: Text('Delete $n file${n == 1 ? '' : 's'}?'),
-        content: Text('This frees ${humanSize(_selBytes)}. Deleted files cannot be recovered from here. '
-            'Duplicates keep one copy of each.'),
+        title: Text('Delete ${safe.toDelete.length} file${safe.toDelete.length == 1 ? '' : 's'} permanently?'),
+        content: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const Text('What will be deleted:', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            for (final k in CleanKind.values)
+              if (safe.toDelete.any((i) => i.kind == k))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${k.tag}: ${safe.toDelete.where((i) => i.kind == k).length} · '
+                    '${humanSize(totalBytes(safe.toDelete.where((i) => i.kind == k).map((i) => i.file)))}',
+                    style: TextStyle(color: _kindColor[k], fontWeight: FontWeight.w600),
+                  ),
+                ),
+            const SizedBox(height: 8),
+            Text('Frees ${humanSize(totalBytes(safe.toDelete.map((i) => i.file)))}.'),
+            if (safe.toDelete.any((i) => i.kind == CleanKind.duplicate))
+              const Text('Duplicates: one original of each is kept.'),
+            if (safe.toDelete.any((i) => i.kind == CleanKind.big))
+              const Text('BIG FILES are your own files, not junk - make sure you do not need them.'),
+            if (safe.heldBack.isNotEmpty)
+              Text('${safe.heldBack.length} duplicate(s) kept because their original is also ticked.'),
+            const SizedBox(height: 10),
+            const Text(
+              'PERMANENT: there is no trash or recycle bin. These files cannot be recovered.',
+              style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700),
+            ),
+          ]),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Delete permanently'),
+          ),
         ],
       ),
     );
@@ -194,33 +225,36 @@ class _CleanScreenState extends State<CleanScreen> {
       _busy = true;
       _status = 'Deleting...';
     });
-    var freed = 0, fail = 0;
+    var freed = 0, fail = 0, kept = 0;
     final gone = <String>{};
-    for (final g in _groups) {
-      final isFolder = g.title == 'Empty folders';
-      for (final f in g.files) {
-        if (!_sel.contains(f.path)) continue;
-        try {
-          if (isFolder) {
-            await Directory(f.path).delete();
-          } else {
-            await File(f.path).delete();
-          }
-          freed += f.size;
-          gone.add(f.path);
-        } catch (_) {
-          fail++;
+    for (final i in safe.toDelete) {
+      try {
+        // last safety check: a duplicate is only removed while its kept original still exists
+        if (i.kind == CleanKind.duplicate && !await File(i.keepPath!).exists()) {
+          kept++;
+          continue;
         }
+        if (i.kind == CleanKind.emptyFolder) {
+          await Directory(i.file.path).delete(); // non-recursive: fails (safely) if something appeared inside
+        } else {
+          await File(i.file.path).delete();
+        }
+        freed += i.file.size;
+        gone.add(i.file.path);
+      } catch (_) {
+        fail++;
       }
     }
     _set(() {
       for (final g in _groups) {
-        g.files.removeWhere((f) => gone.contains(f.path));
+        g.items.removeWhere((i) => gone.contains(i.file.path));
       }
-      _groups.removeWhere((g) => g.files.isEmpty);
+      _groups.removeWhere((g) => g.items.isEmpty);
       _sel.removeAll(gone);
       _busy = false;
-      _status = 'Freed ${humanSize(freed)}.' + (fail > 0 ? ' $fail file(s) could not be deleted.' : '');
+      _status = 'Deleted ${gone.length} file(s), freed ${humanSize(freed)}.' +
+          (fail > 0 ? ' $fail could not be deleted.' : '') +
+          (kept > 0 ? ' $kept duplicate(s) kept (original missing).' : '');
     });
   }
 
@@ -270,40 +304,78 @@ class _CleanScreenState extends State<CleanScreen> {
         if (_status.isNotEmpty)
           Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text(_status)),
         if (_busy) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
+        if (_groups.isNotEmpty) ...[
+          // one chip per type: how many files and how much space - so it is clear what the list is made of
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Wrap(spacing: 6, runSpacing: 0, children: [
+              for (final g in _groups)
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(color: g.color),
+                  label: Text('${g.kind.tag}  ${g.items.length} · ${humanSize(totalBytes(g.items.map((i) => i.file)))}',
+                      style: TextStyle(color: g.color, fontSize: 11, fontWeight: FontWeight.w700)),
+                ),
+            ]),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 4, 12, 0),
+            child: Text('Delete is PERMANENT - there is no trash. Nothing is deleted until you confirm.',
+                style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+          if (_protected > 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
+              child: Text(
+                  '$_protected files in other apps\' private folders (e.g. WhatsApp backups/databases) were left alone.',
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+            ),
+        ],
         Expanded(
           child: ListView(children: [
             for (final g in _groups) ...[
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                 child: Row(children: [
                   Container(width: 4, height: 18, color: g.color),
                   const SizedBox(width: 8),
-                  Text('${g.title}  (${g.files.length}, ${humanSize(totalBytes(g.files))})',
-                      style: TextStyle(color: g.color, fontWeight: FontWeight.w700)),
-                  const Spacer(),
+                  Expanded(
+                    child: Text('${g.kind.title}  (${g.items.length}, ${humanSize(totalBytes(g.items.map((i) => i.file)))})',
+                        style: TextStyle(color: g.color, fontWeight: FontWeight.w700)),
+                  ),
                   TextButton(
                     onPressed: () => _set(() {
-                      final all = g.files.every((f) => _sel.contains(f.path));
-                      for (final f in g.files) {
-                        all ? _sel.remove(f.path) : _sel.add(f.path);
+                      final all = g.items.every((i) => _sel.contains(i.file.path));
+                      for (final i in g.items) {
+                        all ? _sel.remove(i.file.path) : _sel.add(i.file.path);
                       }
                     }),
-                    child: const Text('All'),
+                    child: Text(g.items.every((i) => _sel.contains(i.file.path)) ? 'None' : 'All'),
                   ),
                 ]),
               ),
-              for (final f in g.files.take(200))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(28, 0, 16, 4),
+                child: Text(g.kind.explain, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+              ),
+              for (final i in g.items.take(200))
                 CheckboxListTile(
                   dense: true,
-                  value: _sel.contains(f.path),
-                  onChanged: (v) => _set(() => v == true ? _sel.add(f.path) : _sel.remove(f.path)),
-                  title: Text(f.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('${humanSize(f.size)}  ·  ${f.path}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                  value: _sel.contains(i.file.path),
+                  onChanged: (v) => _set(() => v == true ? _sel.add(i.file.path) : _sel.remove(i.file.path)),
+                  title: Text(i.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${i.kind.tag}  ·  ${i.kind == CleanKind.emptyFolder ? 'no files inside' : humanSize(i.file.size)}',
+                        style: TextStyle(color: g.color, fontSize: 11, fontWeight: FontWeight.w700)),
+                    Text(i.reason, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(i.file.path, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  ]),
                 ),
-              if (g.files.length > 200)
+              if (g.items.length > 200)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text('...and ${g.files.length - 200} more', style: TextStyle(color: cs.onSurfaceVariant)),
+                  child: Text('...and ${g.items.length - 200} more in this group (use "All"/"None" to include them)',
+                      style: TextStyle(color: cs.onSurfaceVariant)),
                 ),
             ],
             const SizedBox(height: 8),
@@ -337,8 +409,8 @@ class _CleanScreenState extends State<CleanScreen> {
               Expanded(
                 child: FilledButton.tonalIcon(
                   onPressed: (_busy || _sel.isEmpty) ? null : _deleteSelected,
-                  icon: const Icon(Icons.delete_outline),
-                  label: Text(_sel.isEmpty ? 'Delete' : 'Free ${humanSize(_selBytes)}'),
+                  icon: const Icon(Icons.delete_forever),
+                  label: Text(_sel.isEmpty ? 'Delete' : 'Delete ${humanSize(_selBytes)}'),
                 ),
               ),
             ]),

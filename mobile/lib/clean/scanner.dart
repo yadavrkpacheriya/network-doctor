@@ -120,3 +120,184 @@ String humanSize(int bytes) {
   final s = b >= 100 || u == 0 ? b.toStringAsFixed(0) : b.toStringAsFixed(1);
   return '$s ${units[u]}';
 }
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Clean-up PLAN: every file lands in exactly ONE group, each with a plain reason, so the screen can say clearly
+// what a file is (duplicate / junk / installer / empty folder / big file) and nothing is counted or deleted twice.
+// ---------------------------------------------------------------------------------------------------------------
+
+enum CleanKind { duplicate, junk, installer, emptyFolder, big }
+
+extension CleanKindInfo on CleanKind {
+  /// Short tag shown on every row.
+  String get tag {
+    switch (this) {
+      case CleanKind.duplicate:
+        return 'DUPLICATE';
+      case CleanKind.junk:
+        return 'JUNK';
+      case CleanKind.installer:
+        return 'INSTALLER';
+      case CleanKind.emptyFolder:
+        return 'EMPTY FOLDER';
+      case CleanKind.big:
+        return 'BIG FILE';
+    }
+  }
+
+  /// Group title.
+  String get title {
+    switch (this) {
+      case CleanKind.duplicate:
+        return 'Duplicate files';
+      case CleanKind.junk:
+        return 'Junk (temp / log / empty)';
+      case CleanKind.installer:
+        return 'Leftover installers (APK)';
+      case CleanKind.emptyFolder:
+        return 'Empty folders';
+      case CleanKind.big:
+        return 'Biggest files';
+    }
+  }
+
+  /// One plain line under the group title: what it is and what happens to it.
+  String get explain {
+    switch (this) {
+      case CleanKind.duplicate:
+        return 'Extra copies of a file you already have. One original of each is KEPT; only the extra copy is deleted.';
+      case CleanKind.junk:
+        return 'Temp, log, empty and cache-folder files. Normally safe to delete.';
+      case CleanKind.installer:
+        return 'Old APK installers. Safe once the app is installed. Not ticked by default.';
+      case CleanKind.emptyFolder:
+        return 'Folders with nothing inside. Deleting frees no space, only tidies up. Not ticked by default.';
+      case CleanKind.big:
+        return 'Your own large files (videos etc.). Check each one - they are NOT junk. Not ticked by default.';
+    }
+  }
+
+  /// Only the clearly-safe groups start ticked.
+  bool get preselect => this == CleanKind.duplicate || this == CleanKind.junk;
+}
+
+class CleanItem {
+  CleanItem(this.file, this.kind, this.reason, {this.keepPath});
+  final FileMeta file;
+  final CleanKind kind;
+
+  /// Plain-language reason shown on the row ("Same content as ...", "Empty file", ...).
+  final String reason;
+
+  /// For duplicates: the copy that is kept.
+  final String? keepPath;
+}
+
+class CleanPlan {
+  CleanPlan(this.items, this.protectedCount);
+
+  /// Items per group, in display order (empty groups omitted).
+  final Map<CleanKind, List<CleanItem>> items;
+
+  /// Files seen but deliberately left alone (other apps' private folders, e.g. WhatsApp chat backups/databases).
+  final int protectedCount;
+
+  int get totalCount => items.values.fold(0, (n, l) => n + l.length);
+  int get totalBytes => items.values.fold(0, (n, l) => n + l.fold(0, (m, i) => m + i.file.size));
+}
+
+/// Other apps' private area inside shared storage: `/Android/media/<app>/...`. Android keeps app internals there
+/// (chat backups, databases, caches). Only that app's own user-media folder (a sub-folder named `Media`, like
+/// WhatsApp's photos/videos/voice notes) is open for duplicate/big-file clean-up; everything else is left alone.
+bool isProtectedPath(String path) {
+  final lower = path.toLowerCase();
+  const marker = '/android/media/';
+  final i = lower.indexOf(marker);
+  if (i < 0) return false;
+  final segs = lower.substring(i + marker.length).split('/');
+  if (segs.length < 2) return true; // the app folder itself
+  return !segs.skip(1).contains('media');
+}
+
+/// Why a file counts as junk, or null if it does not.
+String? junkReason(FileMeta f) {
+  if (f.path.toLowerCase().contains('/android/media/')) return null; // other apps' media: never "junk" by guess
+  if (f.size == 0) return 'Empty file (0 bytes)';
+  if (junkExts.contains(f.ext)) return 'Temporary/log file (.${f.ext})';
+  final p = f.path.toLowerCase();
+  for (final frag in junkDirFrags) {
+    if (p.contains(frag)) return 'Inside a cache/temp folder';
+  }
+  return null;
+}
+
+/// Builds the plan. Each file goes into ONE group (priority: junk, duplicate, installer, big), so sizes are never
+/// double counted and a file is never deleted twice. Needs `hash` filled on same-size candidates.
+CleanPlan buildCleanPlan(List<FileMeta> all, List<String> emptyDirs) {
+  var protectedCount = 0;
+  final safe = <FileMeta>[];
+  for (final f in all) {
+    if (isProtectedPath(f.path)) {
+      protectedCount++;
+    } else {
+      safe.add(f);
+    }
+  }
+  final out = {for (final k in CleanKind.values) k: <CleanItem>[]};
+  final claimed = <String>{};
+
+  for (final f in safe) {
+    final r = junkReason(f);
+    if (r != null) {
+      out[CleanKind.junk]!.add(CleanItem(f, CleanKind.junk, r));
+      claimed.add(f.path);
+    }
+  }
+  final rest = [for (final f in safe) if (!claimed.contains(f.path)) f];
+
+  for (final g in duplicateGroups(rest, minSize: 1024)) {
+    final keep = g.first;
+    for (var i = 1; i < g.length; i++) {
+      out[CleanKind.duplicate]!
+          .add(CleanItem(g[i], CleanKind.duplicate, 'Same content as: ${keep.path}  (that one is kept)', keepPath: keep.path));
+      claimed.add(g[i].path);
+    }
+  }
+
+  for (final f in rest) {
+    if (!claimed.contains(f.path) && installerExts.contains(f.ext)) {
+      out[CleanKind.installer]!.add(CleanItem(f, CleanKind.installer, 'Leftover installer (.${f.ext})'));
+      claimed.add(f.path);
+    }
+  }
+
+  for (final f in largeFiles([for (final f in rest) if (!claimed.contains(f.path)) f])) {
+    out[CleanKind.big]!.add(CleanItem(f, CleanKind.big, 'Large file (${humanSize(f.size)}) - your own file, check before deleting'));
+  }
+
+  for (final d in emptyDirs) {
+    if (!isProtectedPath(d)) {
+      out[CleanKind.emptyFolder]!.add(CleanItem(FileMeta(d, 0, 0), CleanKind.emptyFolder, 'Empty folder'));
+    }
+  }
+
+  out.removeWhere((k, v) => v.isEmpty);
+  return CleanPlan(out, protectedCount);
+}
+
+/// Duplicates are only deleted while their kept original is NOT also being deleted, so one copy always survives.
+/// Returns the items to delete and the duplicates held back for that reason.
+({List<CleanItem> toDelete, List<CleanItem> heldBack}) safeToDelete(Iterable<CleanItem> chosen) {
+  final list = chosen.toList();
+  final del = {for (final c in list) c.file.path};
+  final ok = <CleanItem>[], held = <CleanItem>[];
+  for (final c in list) {
+    if (c.kind == CleanKind.duplicate && del.contains(c.keepPath)) {
+      held.add(c);
+    } else {
+      ok.add(c);
+    }
+  }
+  return (toDelete: ok, heldBack: held);
+}
