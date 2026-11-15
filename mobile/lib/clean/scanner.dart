@@ -301,3 +301,56 @@ CleanPlan buildCleanPlan(List<FileMeta> all, List<String> emptyDirs) {
   }
   return (toDelete: ok, heldBack: held);
 }
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Helpers so the screen can SHOW what a file is and where it lives (thumbnail kind, folder, date).
+// ---------------------------------------------------------------------------------------------------------------
+
+enum FileCategory { image, video, audio, pdf, document, archive, apk, other }
+
+const _imageExts = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'};
+const _videoExts = {'mp4', 'mkv', 'mov', 'avi', '3gp', 'webm', 'flv', 'wmv', 'm4v', 'ts'};
+const _audioExts = {'mp3', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'amr', 'flac', 'wma'};
+const _docExts = {'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf', 'odt', 'ods'};
+const _archiveExts = {'zip', 'rar', '7z', 'tar', 'gz'};
+
+FileCategory categoryOf(String ext) {
+  final e = ext.toLowerCase();
+  if (_imageExts.contains(e)) return FileCategory.image;
+  if (_videoExts.contains(e)) return FileCategory.video;
+  if (_audioExts.contains(e)) return FileCategory.audio;
+  if (e == 'pdf') return FileCategory.pdf;
+  if (_docExts.contains(e)) return FileCategory.document;
+  if (_archiveExts.contains(e)) return FileCategory.archive;
+  if (installerExts.contains(e)) return FileCategory.apk;
+  return FileCategory.other;
+}
+
+/// The folder a file sits in, as a readable trail: "/storage/emulated/0/Download/Invoices/a.pdf" ->
+/// "Download › Invoices". A file in the top level of storage is "Internal storage". For a folder item, pass
+/// `isFolder: true` to describe the folder itself.
+String friendlyFolder(String path, {bool isFolder = false}) {
+  var dir = path;
+  if (!isFolder) {
+    final i = path.lastIndexOf('/');
+    dir = i <= 0 ? '' : path.substring(0, i);
+  }
+  const roots = ['/storage/emulated/0', '/sdcard', '/storage/self/primary'];
+  for (final r in roots) {
+    if (dir == r || dir.startsWith('$r/')) {
+      dir = dir.substring(r.length);
+      break;
+    }
+  }
+  final parts = [for (final s in dir.split('/')) if (s.isNotEmpty) s];
+  return parts.isEmpty ? 'Internal storage' : parts.join(' › ');
+}
+
+/// "05 Mar 2026" - last-modified date, or '' when unknown (0).
+String friendlyDate(int ms) {
+  if (ms <= 0) return '';
+  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  final d = DateTime.fromMillisecondsSinceEpoch(ms);
+  return '${d.day.toString().padLeft(2, '0')} ${m[d.month - 1]} ${d.year}';
+}

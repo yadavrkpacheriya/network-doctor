@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../clean/scanner.dart';
 
@@ -258,6 +261,60 @@ class _CleanScreenState extends State<CleanScreen> {
     });
   }
 
+  // Big look at one file: picture, full location, size/date and why it was listed. Lets you open it too.
+  void _preview(CleanItem i, Color color) {
+    final f = i.file;
+    final isFolder = i.kind == CleanKind.emptyFolder;
+    final isImage = categoryOf(f.ext) == FileCategory.image;
+    showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(f.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+        content: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            if (isImage)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: InteractiveViewer(
+                  child: Image.file(File(f.path),
+                      fit: BoxFit.contain,
+                      cacheWidth: 1200,
+                      errorBuilder: (_, __, ___) => const Text('Cannot show this picture.')),
+                ),
+              )
+            else
+              Center(child: SizedBox(width: 120, height: 120, child: _Thumb(item: i, color: color, size: 120))),
+            const SizedBox(height: 10),
+            Text('${i.kind.tag}', style: TextStyle(color: color, fontWeight: FontWeight.w700)),
+            if (!isFolder) Text('Size: ${humanSize(f.size)}'),
+            if (friendlyDate(f.modifiedMs).isNotEmpty) Text('Date: ${friendlyDate(f.modifiedMs)}'),
+            const SizedBox(height: 6),
+            const Text('Folder:', style: TextStyle(fontWeight: FontWeight.w700)),
+            Text(friendlyFolder(f.path, isFolder: isFolder)),
+            const SizedBox(height: 6),
+            const Text('Full path:', style: TextStyle(fontWeight: FontWeight.w700)),
+            SelectableText(f.path),
+            const SizedBox(height: 6),
+            Text(i.reason),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Close')),
+          if (!isFolder)
+            FilledButton(
+              onPressed: () async {
+                final r = await OpenFilex.open(f.path);
+                if (r.type != ResultType.done && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cannot open: ${r.message}')));
+                }
+              },
+              child: const Text('Open'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _clearAppCache() async {
     _set(() => _status = 'Clearing this app\'s cache...');
     var freed = 0;
@@ -361,14 +418,31 @@ class _CleanScreenState extends State<CleanScreen> {
               for (final i in g.items.take(200))
                 CheckboxListTile(
                   dense: true,
+                  isThreeLine: true,
                   value: _sel.contains(i.file.path),
                   onChanged: (v) => _set(() => v == true ? _sel.add(i.file.path) : _sel.remove(i.file.path)),
+                  // tap the picture to look at / open the file before deciding
+                  secondary: GestureDetector(
+                    onTap: () => _preview(i, g.color),
+                    child: _Thumb(item: i, color: g.color),
+                  ),
                   title: Text(i.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('${i.kind.tag}  ·  ${i.kind == CleanKind.emptyFolder ? 'no files inside' : humanSize(i.file.size)}',
+                    Text(
+                        '${i.kind.tag}  ·  ${i.kind == CleanKind.emptyFolder ? 'no files inside' : humanSize(i.file.size)}'
+                        '${friendlyDate(i.file.modifiedMs).isEmpty ? '' : '  ·  ${friendlyDate(i.file.modifiedMs)}'}',
                         style: TextStyle(color: g.color, fontSize: 11, fontWeight: FontWeight.w700)),
+                    Row(children: [
+                      Icon(Icons.folder_open, size: 14, color: cs.onSurface),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(friendlyFolder(i.file.path, isFolder: i.kind == CleanKind.emptyFolder),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.w600)),
+                      ),
+                    ]),
                     Text(i.reason, maxLines: 2, overflow: TextOverflow.ellipsis),
-                    Text(i.file.path, maxLines: 2, overflow: TextOverflow.ellipsis),
                   ]),
                 ),
               if (g.items.length > 200)
@@ -417,6 +491,109 @@ class _CleanScreenState extends State<CleanScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Picture for a row: the real thumbnail for images and videos, a clear icon (with the file type) for everything else.
+class _Thumb extends StatefulWidget {
+  const _Thumb({required this.item, required this.color, this.size = 56});
+  final CleanItem item;
+  final Color color;
+  final double size;
+  @override
+  State<_Thumb> createState() => _ThumbState();
+}
+
+class _ThumbState extends State<_Thumb> {
+  Future<Uint8List?>? _video;
+
+  @override
+  void initState() {
+    super.initState();
+    final f = widget.item.file;
+    if (widget.item.kind != CleanKind.emptyFolder && categoryOf(f.ext) == FileCategory.video && f.size > 0) {
+      _video = _videoThumb(f.path);
+    }
+  }
+
+  static Future<Uint8List?> _videoThumb(String path) async {
+    try {
+      return await VideoThumbnail.thumbnailData(video: path, imageFormat: ImageFormat.JPEG, maxWidth: 200, quality: 50);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  IconData get _icon {
+    if (widget.item.kind == CleanKind.emptyFolder) return Icons.folder_open;
+    switch (categoryOf(widget.item.file.ext)) {
+      case FileCategory.image:
+        return Icons.image_outlined;
+      case FileCategory.video:
+        return Icons.movie_outlined;
+      case FileCategory.audio:
+        return Icons.audiotrack;
+      case FileCategory.pdf:
+        return Icons.picture_as_pdf;
+      case FileCategory.document:
+        return Icons.description_outlined;
+      case FileCategory.archive:
+        return Icons.folder_zip_outlined;
+      case FileCategory.apk:
+        return Icons.android;
+      case FileCategory.other:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  Widget _iconBox() {
+    final ext = widget.item.file.ext;
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        color: widget.color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(_icon, color: widget.color, size: widget.size * 0.5),
+        if (ext.isNotEmpty && widget.item.kind != CleanKind.emptyFolder)
+          Text(ext.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: TextStyle(color: widget.color, fontSize: widget.size * 0.17, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final f = widget.item.file;
+    final cat = categoryOf(f.ext);
+    final isFile = widget.item.kind != CleanKind.emptyFolder;
+    Widget child;
+    if (isFile && cat == FileCategory.image && f.size > 0) {
+      child = Image.file(File(f.path),
+          width: widget.size, height: widget.size, fit: BoxFit.cover, cacheWidth: 200, errorBuilder: (_, __, ___) => _iconBox());
+    } else if (_video != null) {
+      child = FutureBuilder<Uint8List?>(
+        future: _video,
+        builder: (c, snap) {
+          final d = snap.data;
+          if (d == null || d.isEmpty) return _iconBox();
+          return Stack(alignment: Alignment.center, fit: StackFit.expand, children: [
+            Image.memory(d, fit: BoxFit.cover),
+            const Icon(Icons.play_circle_fill, color: Colors.white70),
+          ]);
+        },
+      );
+    } else {
+      child = _iconBox();
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(width: widget.size, height: widget.size, child: child),
     );
   }
 }

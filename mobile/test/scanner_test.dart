@@ -113,4 +113,26 @@ void main() {
     expect(r.heldBack.single.file.path, '/b/big.mp4');
     expect(safeToDelete([dup]).toDelete.length, 1); // original not selected -> fine to delete the extra copy
   });
+
+  test('file category by extension', () {
+    expect(categoryOf('JPG'), FileCategory.image);
+    expect(categoryOf('mp4'), FileCategory.video);
+    expect(categoryOf('pdf'), FileCategory.pdf);
+    expect(categoryOf('xlsx'), FileCategory.document);
+    expect(categoryOf('apk'), FileCategory.apk);
+    expect(categoryOf(''), FileCategory.other);
+  });
+
+  test('friendlyFolder shows where the file really is', () {
+    expect(friendlyFolder('/storage/emulated/0/Download/Invoices/a.pdf'), 'Download › Invoices');
+    expect(friendlyFolder('/storage/emulated/0/a.pdf'), 'Internal storage');
+    expect(friendlyFolder('/storage/emulated/0/DCIM/Empty', isFolder: true), 'DCIM › Empty');
+    expect(friendlyFolder('/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/x.jpg'),
+        'Android › media › com.whatsapp › WhatsApp › Media › WhatsApp Images');
+  });
+
+  test('friendlyDate', () {
+    expect(friendlyDate(0), '');
+    expect(friendlyDate(DateTime(2026, 3, 5, 12).millisecondsSinceEpoch), '05 Mar 2026');
+  });
 }
