@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.66.0"
+VERSION = "3.67.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -630,6 +630,8 @@ class App(tk.Tk):
         self._tab_commands()
         self._tab_tools()
         self._tab_inventory()
+        self._tab_cameras()
+        self._tab_computers()
         self._tab_alerts()
         self._tab_history()
         self._tab_setup()
@@ -888,6 +890,74 @@ class App(tk.Tk):
         f = self.nav.page("checks")
         self._page_header(f, "checks", "Health checks")
         self.tc = make_tree(f, ("res", "det"), ("Result", "Details"), (100, 800), first=("Check", 300))
+
+    def _category_page(self, key, title, cats, actions, intro=""):
+        """A focused page for ONE kind of device (cameras, or PCs): the filtered list plus the buttons that only
+        make sense for that kind. Keeps the big 'All devices' tab for everything and gives each team a clean
+        single place to work from."""
+        f = self.nav.page(key)
+        self._page_header(f, key, title)
+        if intro:
+            ttk.Label(f, text=intro, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w")
+        act = ttk.Frame(f, padding=(0, 6))
+        act.pack(fill="x")
+        for txt, cmd in actions:
+            ttk.Button(act, text=txt, command=cmd).pack(side="left", padx=3)
+        ttk.Button(act, text="Open selected in browser", command=lambda k=key: self._cat_open_web(k)).pack(
+            side="left", padx=3)
+        ttk.Button(act, text="Refresh", command=lambda k=key: self._fill_category(k)).pack(side="left", padx=3)
+        tv = make_tree(f, ("ip", "mac", "vendor", "kind", "status", "notes"),
+                       ("IP", "MAC address", "Vendor", "Kind", "Status", "Notes"),
+                       (120, 150, 180, 120, 100, 260), first=("Name", 230), selectmode="browse")
+        tv.bind("<Double-1>", lambda e, k=key: self._cat_open_web(k))
+        self._cat = getattr(self, "_cat", {})
+        self._cat[key] = {"tv": tv, "cats": cats, "rows": {}}
+
+    def _fill_category(self, key):
+        info = getattr(self, "_cat", {}).get(key)
+        if not info:
+            return
+        tv = info["tv"]
+        tv.delete(*tv.get_children())
+        info["rows"] = {}
+        devs = [d for d in self.devices if d.get("category") in info["cats"]]
+        for d in sorted(devs, key=lambda x: core.ip_key(x.get("ip", ""))):
+            name = d.get("name") or core.auto_name(d)
+            kind = "DVR / NVR" if core.cctv_role(d) == "nvr" else core.AUTO_KIND.get(d.get("category"), "")
+            status = "online" if d.get("online") else "offline"
+            note = "; ".join(d.get("notes") or [])[:70]
+            iid = tv.insert("", "end", text=name, values=(d.get("ip", ""), d.get("mac", ""), d.get("vendor", ""),
+                                                           kind, status, note))
+            info["rows"][iid] = d
+
+    def _cat_open_web(self, key):
+        info = getattr(self, "_cat", {}).get(key)
+        if not info:
+            return
+        sel = info["tv"].selection()
+        d = info["rows"].get(sel[0]) if sel else None
+        if not d or not d.get("ip"):
+            return
+        import webbrowser
+        webbrowser.open(f"http://{d['ip']}")
+
+    def _tab_cameras(self):
+        self._category_page(
+            "cameras", "Cameras & DVR / NVR", (core.CAT_CAM,),
+            [("Check camera pictures", self._camera_picture_check),
+             ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
+             ("PoE & camera settings", lambda: self.show_tab("setup"))],
+            intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
+                  "automatically. Use 'Restart & fix camera IPs' for the restart -> fixed-IP -> bind flow.")
+
+    def _tab_computers(self):
+        self._category_page(
+            "computers", "PCs & laptops", (core.CAT_PC,),
+            [("PC Care (clean & repair)", lambda: self.show_tab("pccare")),
+             ("Usage per computer", lambda: self.show_tab("usage")),
+             ("Bandwidth plan", lambda: self.show_tab("bwplan"))],
+            intro="Every computer and laptop on the network. Open PC Care to clean and repair a PC, or Usage to "
+                  "see what each one is using.")
 
     def _tab_setup(self):
         f = nd_tabs.scroll_area(self.nav.page("setup"))   # a long page of cards - let it scroll, not cram
@@ -1868,6 +1938,8 @@ class App(tk.Tk):
                                         d["vendor"], bw, svc, d["reason"], "; ".join(d["notes"])))
                 self.row_dev[iid] = d
         tree_resort(tv)        # a column the user sorted by (IP, name...) stays sorted after every redraw
+        for k in getattr(self, "_cat", {}):   # keep the Cameras / Computers pages in sync with each scan
+            self._fill_category(k)
 
     def fill_problems(self):
         tv = self.tp

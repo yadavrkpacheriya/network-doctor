@@ -2424,6 +2424,10 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
                                                            ("sweep", "Login sweep")]),
     # the asset register
     ("inventory_s", "Inventory", "#4338ca", "#e0e7ff", [("inventory", "Inventory"), ("binding", "IP-MAC binding")]),
+    # everything about the CCTV cameras / recorders in one place
+    ("cameras_s", "Cameras", "#b45309", "#fef3c7", [("cameras", "Cameras & DVR/NVR")]),
+    # everything about the office PCs / laptops in one place
+    ("computers_s", "Computers", "#1d4ed8", "#dbeafe", [("computers", "PCs & laptops")]),
     # everything wrong + why
     ("alerts_s", "Network Issues", "#c2410c", "#ffedd5", [("alerts", "Alerts"), ("problems", "Problems"),
                                                           ("rca", "Root cause"), ("checks", "Health checks"),

@@ -1,3 +1,11 @@
+## Network Doctor 3.67.0
+
+### Two new menus: Cameras, and Computers
+- **Cameras** - every CCTV camera and DVR / NVR in one place (recorders told apart from cameras automatically), with the camera-only buttons: Check camera pictures, Restart & fix camera IPs, PoE & camera settings.
+- **Computers** - every PC and laptop in one place, with the PC-only buttons: PC Care (clean & repair), Usage per computer, Bandwidth plan.
+
+Each list refreshes with every scan, double-click (or "Open selected in browser") opens the device's web page, and the big "All devices" tab still has everything together.
+
 ## Network Doctor 3.66.0
 
 ### For cameras you switched to DHCP: restart - settle - bind
