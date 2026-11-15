@@ -471,7 +471,9 @@ class BandwidthPage:
             ttk.Entry(g, textvariable=b, width=15).grid(row=i, column=3, padx=4)
         bar = ttk.Frame(f)
         bar.pack(fill="x", pady=4)
-        for txt, cmd in (("Make the IP list", self.make_ips), ("Change IP of selected...", self.change_ip),
+        for txt, cmd in (("Make the IP list", self.make_ips),
+                         ("Resolve conflicts automatically", lambda: self.make_ips(auto_resolve=True)),
+                         ("Change IP of selected...", self.change_ip),
                          ("Reserve on the router now", self.apply_ips),
                          ("Show commands", self.show_ips), ("Undo (remove these reservations)", self.undo_ips),
                          ("Save IP list (Excel CSV)", self.save_ips)):
@@ -501,7 +503,7 @@ class BandwidthPage:
             self.want[d["mac"]] = ip
         self.make_ips()
 
-    def make_ips(self):
+    def make_ips(self, auto_resolve=False):
         s = self.st()
         move, ranges = set(), {}
         for key, v in self.var_move.items():
@@ -517,7 +519,7 @@ class BandwidthPage:
             self.var_move["cam"].set(False)
             move.discard("cam")
         self.plan_rows = B.ip_plan(self.app.devices, self.app.gw, ranges, move, self.tags(), self.over(),
-                                   self.app.ip_type_of, self.lan(), self.want)
+                                   self.app.ip_type_of, self.lan(), self.want, auto_resolve=auto_resolve)
         tv = self.tv_ip
         tv.delete(*tv.get_children())
         self.ip_rows = {}

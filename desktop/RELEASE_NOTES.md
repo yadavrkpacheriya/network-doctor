@@ -1,3 +1,8 @@
+## Network Doctor 3.61.0
+
+### IP conflicts fixed automatically
+When two devices answer the same IP, the Fixed-IPs list used to just say "fix the conflict first". New button **Internet & Usage > Bandwidth plan > Fixed IPs > "Resolve conflicts automatically"**: it keeps the IP on the device that can't be changed from the router (a hand-typed or NVR-stored IP) and **moves the other device to a free IP** by itself. The only case it can't auto-fix is when *both* devices have a hand-typed IP or a private/random MAC - those it clearly flags as "change it on the device", because no router can move an address that the device sets itself. Nothing changes on the router until you press Reserve, and every Reserve has an Undo.
+
 ## Network Doctor 3.60.0
 
 ### Fixes "devices can't connect to WiFi after binding"
