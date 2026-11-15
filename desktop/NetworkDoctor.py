@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.64.0"
+VERSION = "3.65.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -3211,18 +3211,19 @@ class App(tk.Tk):
     def _camera_picture_worker(self):
         import nd_livecheck as LC
         import nd_sweep as SW
-        st = self._settings()
-        base = st.setdefault("cam_live", {})      # mac -> {"base": bytes, "url": working snapshot url}
+        # read-only snapshot of what we need; nothing here mutates shared state from this background thread
+        mem_all = dict(self._settings().get("cam_live") or {})
         with core.DB_LOCK:
             store = dict(self.db.get("sweep_status") or {})
         cams = [d for d in self.devices if d.get("online") and d.get("category") == core.CAT_CAM and d.get("ip")]
         checked = frozen = dark = 0
+        updates = {}                               # mac -> new cam_live entry, applied on the Tk thread at the end
         for d in cams:
             mac, ip = d.get("mac", ""), d["ip"]
             auth = SW.saved_get(store, mac)
-            mem = base.get(mac) or {}
+            mem = mem_all.get(mac) or {}
             urls = [mem["url"]] if mem.get("url") else [f"http://{ip}{p}" for p in LC.SNAPSHOT_PATHS]
-            a = b = b""
+            a = b""
             used = ""
             for u in urls:
                 a = LC.fetch(u, auth=auth)
@@ -3237,19 +3238,25 @@ class App(tk.Tk):
             checked += 1
             name = d.get("name") or d.get("hostname") or ip
             if r["status"] == "ok":
-                base[mac] = {"url": used, "base": LC.update_baseline(mem.get("base", 0), r["size"])}
+                updates[mac] = {"url": used, "base": LC.update_baseline(mem.get("base", 0), r["size"])}
             else:
-                base[mac] = {"url": used, "base": mem.get("base", 0) or r["size"]}
+                updates[mac] = {"url": used, "base": mem.get("base", 0) or r["size"]}
                 if r["status"] == "frozen":
                     frozen += 1
                 elif r["status"] == "dark":
                     dark += 1
                 self.q.put(("call", lambda rr=r, nm=name, p=ip:
                             self._raise_alert(rr["sev"], f"Camera {nm} ({p}): {rr['detail']}", [], "Camera picture")))
+        self.q.put(("call", lambda u=updates, ck=checked, fz=frozen, dk=dark: self._camera_picture_done(u, ck, fz, dk)))
+
+    def _camera_picture_done(self, updates, checked, frozen, dark):
+        """On the Tk thread: merge the learned snapshot baselines into settings and show the result - so the
+        settings file is only ever written from one thread."""
+        self._settings().setdefault("cam_live", {}).update(updates)
         self._save_settings()
-        self.q.put(("call", lambda: self.var_status.set(
+        self.var_status.set(
             f"Camera pictures: checked {checked}, {frozen} frozen, {dark} possibly covered."
-            + ("" if checked else " (no camera exposed an HTTP snapshot - set a snapshot URL to use this.)"))))
+            + ("" if checked else " (no camera exposed an HTTP snapshot - set a snapshot URL to use this.)"))
 
     def _daily_report_now(self):
         path, _ = self._make_daily_report(open_after=True)
