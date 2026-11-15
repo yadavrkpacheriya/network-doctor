@@ -1,3 +1,10 @@
+## Network Doctor 3.64.0
+
+### Blocked sites now reach phones on WiFi
+The router site-block only works for devices that use the router's DNS - a phone set to its own DNS (8.8.8.8) just ignores it, so the site still opened. New button **Internet & Usage > Block websites > "Make blocks reach phones (force DNS)"**: it redirects every device's DNS to the router and blocks DNS-over-TLS, so your block applies to phones too. Reversible with "Undo force-DNS", and a backup is taken first.
+
+Honest limit shown in the app: a phone with **Private DNS set to a DNS-over-HTTPS provider** can still slip through (it looks like normal HTTPS). Turn Private DNS off on the phone, or ask me to also block the known providers' IPs.
+
 ## Network Doctor 3.63.0
 
 ### SNMP turns on by itself - safely

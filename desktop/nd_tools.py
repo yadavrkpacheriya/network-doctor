@@ -627,6 +627,26 @@ def site_block_commands(sites):
     return "\n".join(apply), "\n".join(undo)
 
 
+def force_dns_commands(lan_iface_list=""):
+    """RouterOS (apply, undo) that forces EVERY device to use the router's own DNS, so a site block actually
+    reaches phones that set their own DNS (8.8.8.8 etc.). It (1) redirects all client DNS (UDP+TCP port 53) to
+    the router and (2) drops DNS-over-TLS (port 853). This is what makes 'the blocked site still opens on Wi-Fi'
+    stop happening. It does NOT touch DNS-over-HTTPS (port 443) - that looks like normal web traffic and cannot be
+    blocked without breaking HTTPS, so a phone with 'Private DNS' set to a DoH provider can still slip through;
+    turning that off on the phone (or the router blocking the provider's IPs) is the only cure. Reversible."""
+    scope = f' in-interface-list={lan_iface_list}' if lan_iface_list else ""
+    rm = (':do {/ip firewall nat remove [find where comment~"^ND dns-force"]} on-error={}\n'
+          ':do {/ip firewall filter remove [find where comment~"^ND dns-force"]} on-error={}')
+    apply = [rm,
+             f'/ip firewall nat add chain=dstnat protocol=udp dst-port=53 action=redirect to-ports=53{scope} '
+             f'comment="ND dns-force udp53"',
+             f'/ip firewall nat add chain=dstnat protocol=tcp dst-port=53 action=redirect to-ports=53{scope} '
+             f'comment="ND dns-force tcp53"',
+             '/ip firewall filter add chain=forward protocol=tcp dst-port=853 action=drop '
+             'comment="ND dns-force dot853"']
+    return "\n".join(apply), rm
+
+
 def sites_for(groups=(), extra=()):
     """Expand group keys (social/chat/video/shopping) plus any extra typed domains into one site list."""
     out = []

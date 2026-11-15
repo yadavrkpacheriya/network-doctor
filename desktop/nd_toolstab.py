@@ -841,6 +841,10 @@ class ToolsTab:
                    command=lambda: self._router_block_sites(False)).pack(side="left")
         ttk.Button(rbar, text="Remove router block",
                    command=lambda: self._router_block_sites(True)).pack(side="left", padx=6)
+        ttk.Button(rbar, text="Make blocks reach phones (force DNS)",
+                   command=lambda: self._force_dns(False)).pack(side="left", padx=6)
+        ttk.Button(rbar, text="Undo force-DNS",
+                   command=lambda: self._force_dns(True)).pack(side="left")
         row = ttk.Frame(f)
         row.pack(fill="x", pady=6)
         ttk.Label(f, text="The firewall below instead uses THIS PC as the DNS server (more categories, live counts), "
@@ -860,6 +864,29 @@ class ToolsTab:
 
     def _fw_save(self, cfg):
         fw_save(cfg)
+
+    def _force_dns(self, remove=False):
+        """Make a router site-block actually reach phones that set their own DNS, by redirecting all client DNS to
+        the router and dropping DNS-over-TLS. Reversible. Warns about the DNS-over-HTTPS limit."""
+        app = self.app
+        if not app.router_client(ask=False):
+            if messagebox.askyesno(APP, "No router login is saved yet. Open Setup to add it?"):
+                app.show_tab("setup")
+            return
+        if remove:
+            _, undo = T.force_dns_commands()
+            app.router_apply(undo, "Undo force-DNS (phones can set their own DNS again)")
+            return
+        if not messagebox.askyesno(APP, "Force every device to use the router's DNS?\n\nThis makes blocked sites "
+                                        "stop opening on phones that set their own DNS (like 8.8.8.8). It redirects "
+                                        "all DNS to the router and blocks DNS-over-TLS.\n\nNote: phones with "
+                                        "'Private DNS' set to a DNS-over-HTTPS provider can still slip through - "
+                                        "that looks like normal web traffic. Turn Private DNS off on the phone, or "
+                                        "I can block the known providers' IPs too.\n\nA backup is taken and you can "
+                                        "Undo this. Continue?"):
+            return
+        apply, _ = T.force_dns_commands()
+        app.router_apply(apply, "Force all devices through the router's DNS")
 
     def _router_block_sites(self, remove=False):
         """Block (or unblock) the chosen site groups + 'Also block' list on the router itself, so the whole
