@@ -338,7 +338,41 @@ def _in_range(ip, rng):
         return False
 
 
-def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None, net=None, want=None):
+def _anchored(d, ip_type_of):
+    """A device whose IP is set ON the device (hand-typed static) or whose MAC is random - the router cannot move
+    it, so in a conflict it is the one that must keep the IP (and the OTHER device is moved)."""
+    typ = ip_type_of(d) if ip_type_of else ""
+    return bool(d.get("random")) or bool(re.search(r"static|fixed", typ or "", re.I))
+
+
+def _pick_keeper(members, ip_type_of):
+    """Of the devices sharing one IP, which one keeps it: an anchored (hand-typed / random) device if there is one,
+    otherwise the lowest-MAC device. Everyone else that CAN be moved gets a free IP instead."""
+    anchored = [d for d in members if _anchored(d, ip_type_of)]
+    if anchored:
+        return anchored[0]["mac"]
+    return min(members, key=lambda d: d["mac"])["mac"]
+
+
+def _free_ip(taken, nw, rng=None):
+    """First unused IP - inside rng=(lo,hi) if given, else anywhere in the subnet. None if nothing is free."""
+    if rng:
+        seq = range(_ipkey(rng[0]), _ipkey(rng[1]) + 1)
+        for i in seq:
+            ip = str(ipaddress.IPv4Address(i))
+            if ip not in taken and (not nw or ipaddress.IPv4Address(i) in nw):
+                return ip
+        return None
+    if nw:
+        for h in nw.hosts():
+            ip = str(h)
+            if ip not in taken:
+                return ip
+    return None
+
+
+def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None, net=None, want=None,
+            auto_resolve=False):
     """One row per live device: keep its IP, or move it into its group's block. Every row ends up as a DHCP
     reservation on the router (the router always hands the same IP to the same MAC - also after a power cut).
     move: groups whose devices are moved into their block. Cameras should normally NOT be moved: the NVR / DVR stores
@@ -353,6 +387,13 @@ def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None,
         nw = ipaddress.ip_network(net, strict=False) if net else None
     except ValueError:
         nw = None
+    keeper_of = {}
+    if auto_resolve:
+        for ip, c in cnt.items():
+            if c > 1:
+                members = [d for d in live if d["ip"] == ip and d["mac"] not in moving]
+                if members:
+                    keeper_of[ip] = _pick_keeper(members, ip_type_of)
     rows = []
     for d in sorted(live, key=lambda x: _ipkey(x["ip"])):
         g = group_of(d, tags, over)
@@ -380,7 +421,24 @@ def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None,
                 row.update(ip_new=new, action="move", why="chosen by you; the device takes it when it reconnects "
                            "(switch its Wi-Fi off and on, or 'ipconfig /renew')")
         elif cnt[d["ip"]] > 1 or (d.get("conflict") and not any(x["ip"] == d["ip"] for x in live if x["mac"] in moving)):
-            row.update(action="skip", why="IP conflict: fix the conflict first")
+            if auto_resolve and cnt[d["ip"]] > 1:
+                keeper = keeper_of.get(d["ip"])
+                if d["mac"] == keeper:
+                    row["why"] = "kept on this IP - the other device sharing it is being moved off"
+                elif not row["manual"] and not d.get("random"):
+                    rng = ranges.get(g) if (g in (move or ()) and ranges.get(g)) else None
+                    new = _free_ip(taken, nw, rng) or _free_ip(taken, nw, None)
+                    if new:
+                        taken.add(new)
+                        row.update(ip_new=new, action="move", why="moved off a shared IP to clear the conflict; "
+                                   "it takes the new IP when it reconnects (Wi-Fi off/on or 'ipconfig /renew')")
+                    else:
+                        row.update(action="skip", why="IP conflict, but no free IP is left to move it to")
+                else:
+                    row.update(action="skip", why="IP conflict - this device's IP is hand-typed or its MAC is "
+                               "private, so change it on the device itself")
+            else:
+                row.update(action="skip", why="IP conflict: fix the conflict first")
         elif len(d.get("ips") or []) > 1:
             row.update(action="skip", why="answers on several IPs")
         elif g in (move or ()) and ranges.get(g) and not _in_range(d["ip"], ranges[g]):
