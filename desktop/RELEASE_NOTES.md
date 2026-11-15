@@ -1,3 +1,10 @@
+## Network Doctor 3.65.0
+
+### Audit fix: camera-check could clash with other saves
+The "Check camera pictures" scan wrote its learned data to the settings file from a background thread, which could collide with the app saving settings at the same time (risking a corrupt settings file on a busy moment). It now gathers results in the background and writes them once on the main thread - the settings file is only ever written from one place.
+
+Full line-by-line sweep this round: all 48 modules compile; no undefined names; no missing-attribute errors; every background job that shows a message or updates the screen does so safely on the main thread; all menu/button handlers capture their values correctly. 795 tests green.
+
 ## Network Doctor 3.64.0
 
 ### Blocked sites now reach phones on WiFi
