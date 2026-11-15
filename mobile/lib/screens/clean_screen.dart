@@ -31,17 +31,12 @@ class _CleanScreenState extends State<CleanScreen> {
   final _sel = <String>{}; // selected paths to delete
   List<_Group> _groups = [];
 
-  // the user folders worth scanning (skips Android/data + Android/obb, which are app-private and restricted)
-  static const _roots = [
-    '/storage/emulated/0/Download',
-    '/storage/emulated/0/Documents',
-    '/storage/emulated/0/DCIM',
-    '/storage/emulated/0/Pictures',
-    '/storage/emulated/0/Movies',
-    '/storage/emulated/0/Music',
-    '/storage/emulated/0/WhatsApp',
-    '/storage/emulated/0/Android/media',
-  ];
+  // Scan the WHOLE internal storage, not just a few folders, so it cleans the full phone (Downloads, WhatsApp,
+  // Telegram, screenshots, camera, everything). Only Android/data and Android/obb are skipped - those are other
+  // apps' PRIVATE files/caches, which Android does not let any app (without root) read or delete.
+  static const _scanRoot = '/storage/emulated/0';
+  static const _skip = ['/Android/data', '/Android/obb', '/.Trash', '/LOST.DIR'];
+  final List<String> _emptyDirs = [];
 
   void _set(void Function() fn) {
     if (mounted) setState(fn);
@@ -73,22 +68,9 @@ class _CleanScreenState extends State<CleanScreen> {
       return;
     }
     final all = <FileMeta>[];
-    for (final root in _roots) {
-      final dir = Directory(root);
-      if (!await dir.exists()) continue;
-      _set(() => _status = 'Scanning ${root.split('/').last}...');
-      try {
-        await for (final e in dir.list(recursive: true, followLinks: false)) {
-          if (e is! File) continue;
-          try {
-            final st = await e.stat();
-            all.add(FileMeta(e.path, st.size, st.modified.millisecondsSinceEpoch));
-            _scanned++;
-            if (_scanned % 400 == 0) _set(() => _status = 'Scanning... $_scanned files');
-          } catch (_) {/* unreadable file - skip */}
-        }
-      } catch (_) {/* unreadable folder - skip */}
-    }
+    _emptyDirs.clear();
+    _set(() => _status = 'Scanning the whole phone...');
+    await _walk(Directory(_scanRoot), all, 0);
     _set(() => _status = 'Looking for duplicates in ${all.length} files...');
     await _hashCandidates(all);
     final dups = duplicateGroups(all, minSize: 1024); // ignore tiny files
@@ -96,10 +78,12 @@ class _CleanScreenState extends State<CleanScreen> {
     final junk = junkFiles(all);
     final installers = installerFiles(all);
     final large = largeFiles(all);
+    final emptyAsFiles = [for (final d in _emptyDirs) FileMeta(d, 0, 0)];
     final groups = <_Group>[
       _Group('Duplicate files', const Color(0xFF7C3AED), free.files, preselect: true),
       _Group('Junk (temp / log / empty)', const Color(0xFFB45309), junk, preselect: true),
       _Group('Leftover installers (APK)', const Color(0xFFBE123C), installers),
+      _Group('Empty folders', const Color(0xFF6B7280), emptyAsFiles),
       _Group('Biggest files', const Color(0xFF0369A1), large),
     ]..removeWhere((g) => g.files.isEmpty);
     final sel = <String>{};
@@ -117,6 +101,37 @@ class _CleanScreenState extends State<CleanScreen> {
           ? 'Nothing to clean - your storage looks tidy. $_scanned files checked.'
           : 'Found ${humanSize(total)} you can review and free, in $_scanned files.';
     });
+  }
+
+  // Walk one folder, collecting files and noting empty folders, skipping other apps' private trees and symlinks.
+  // Manual recursion (not list(recursive:true)) so we can PRUNE Android/data etc. and spot empty folders. Capped
+  // so a huge tree can't run away.
+  Future<bool> _walk(Directory dir, List<FileMeta> all, int depth) async {
+    if (depth > 12 || _scanned > 300000) return false;
+    final p = dir.path;
+    for (final s in _skip) {
+      if (p.endsWith(s) || p.contains('$s/')) return false; // a pruned, skipped tree - not "empty"
+    }
+    var hasChild = false;
+    try {
+      await for (final e in dir.list(followLinks: false)) {
+        hasChild = true;
+        if (e is File) {
+          try {
+            final st = await e.stat();
+            all.add(FileMeta(e.path, st.size, st.modified.millisecondsSinceEpoch));
+            _scanned++;
+            if (_scanned % 500 == 0) _set(() => _status = 'Scanning the whole phone... $_scanned files');
+          } catch (_) {/* unreadable file */}
+        } else if (e is Directory) {
+          await _walk(e, all, depth + 1);
+        }
+      }
+    } catch (_) {
+      return true; // unreadable folder - leave it, don't call it empty
+    }
+    if (!hasChild && depth > 0) _emptyDirs.add(p);
+    return true;
   }
 
   // Hash only files that share a size (cheap), and only a slice of each (first + last 256 KB + size) so even big
@@ -182,10 +197,15 @@ class _CleanScreenState extends State<CleanScreen> {
     var freed = 0, fail = 0;
     final gone = <String>{};
     for (final g in _groups) {
+      final isFolder = g.title == 'Empty folders';
       for (final f in g.files) {
         if (!_sel.contains(f.path)) continue;
         try {
-          await File(f.path).delete();
+          if (isFolder) {
+            await Directory(f.path).delete();
+          } else {
+            await File(f.path).delete();
+          }
           freed += f.size;
           gone.add(f.path);
         } catch (_) {
@@ -240,9 +260,10 @@ class _CleanScreenState extends State<CleanScreen> {
         Padding(
           padding: const EdgeInsets.all(12),
           child: Text(
-            'Finds duplicate, junk and big files in your storage so you can free space and keep the phone fast. '
-            'Android does not let any app clear other apps\' caches without root - use "Open phone storage settings" '
-            'below for that.',
+            'Scans your WHOLE phone storage for duplicate, junk, big files and empty folders so you can free real '
+            'space. Note: Android does not let ANY app (without root) clear other apps\' cache or free RAM - that '
+            'is done in the phone\'s own Settings > Apps / Storage, or the OS does it automatically. This cleans '
+            'files, which is the space that actually stays freed.',
             style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
           ),
         ),
