@@ -463,6 +463,18 @@ def reservation_rows(plan_rows):
     return [dict(r["dev"], ip=r["ip_new"]) for r in plan_rows if r["action"] in ("keep", "move")]
 
 
+def confirmed_rows(plan_rows, ranges):
+    """The 'confirmed' devices: ones whose CURRENT IP already sits inside their group's fixed range, so binding
+    them (IP-MAC reservation) is safe and settled - no move, no guesswork. Used to bind only cameras/PCs that
+    have already landed in their fixed-IP block after a restart, and leave the rest alone."""
+    out = []
+    for r in plan_rows:
+        rng = ranges.get(r.get("group"))
+        if rng and rng[0] and rng[1] and _in_range(r.get("ip_now", ""), rng) and r.get("action") in ("keep", "move"):
+            out.append(r)
+    return out
+
+
 def reservation_commands(plan_rows, tags):
     """DHCP reservations (router keeps the IP for the MAC; the device stays on 'automatic')."""
     return T.binding_commands(reservation_rows(plan_rows), tags or {})
