@@ -1,3 +1,13 @@
+## Network Doctor 3.66.0
+
+### For cameras you switched to DHCP: restart - settle - bind
+Two new buttons on **Internet & Usage > Bandwidth plan > Fixed IPs**, for the exact flow when cameras have been moved to automatic IP:
+
+- **Restart cameras** - reboots every camera that has a saved login, so it renews and comes back on its reserved IP (XMeye/DVRIP cameras). Live view pauses about a minute while each restarts. Asks first and shows how many answered.
+- **Bind confirmed (already in range)** - binds (IP-MAC reserves) ONLY the devices whose current IP is already inside their fixed range - the settled ones. A camera still sitting outside its range is left alone, so nothing gets bound to the wrong IP.
+
+Recommended order: Make the IP list -> Resolve conflicts -> Reserve on the router now -> Restart cameras -> Bind confirmed.
+
 ## Network Doctor 3.65.0
 
 ### Audit fix: camera-check could clash with other saves

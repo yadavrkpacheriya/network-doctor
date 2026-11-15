@@ -475,6 +475,8 @@ class BandwidthPage:
                          ("Resolve conflicts automatically", lambda: self.make_ips(auto_resolve=True)),
                          ("Change IP of selected...", self.change_ip),
                          ("Reserve on the router now", self.apply_ips),
+                         ("Restart cameras", self.restart_cameras),
+                         ("Bind confirmed (already in range)", self.bind_confirmed),
                          ("Show commands", self.show_ips), ("Undo (remove these reservations)", self.undo_ips),
                          ("Save IP list (Excel CSV)", self.save_ips)):
             ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
@@ -565,6 +567,70 @@ class BandwidthPage:
         moved = sum(1 for r in self.plan_rows if r["action"] == "move")
         self.var_msg.set("IPs reserved on the router." + (f" {moved} moved device(s) take the new IP when restarted, or "
                                                           "after 'ipconfig /renew'." if moved else ""))
+
+    def _ranges_now(self):
+        return {k: (a.get().strip(), b.get().strip()) for k, (a, b) in self.var_rng.items()}
+
+    def bind_confirmed(self):
+        """Bind (IP-MAC reserve) ONLY the devices whose current IP already sits inside their fixed range - the
+        settled ones. Leaves everything still outside its range untouched, so a half-moved camera is never bound
+        to the wrong IP."""
+        if not self.plan_rows:
+            self.make_ips()
+        rows = B.confirmed_rows(self.plan_rows, self._ranges_now())
+        if not rows:
+            messagebox.showinfo(APP, "No device is inside its fixed range yet.\n\nUse 'Make the IP list' (or "
+                                     "'Resolve conflicts automatically'), press 'Reserve on the router now', then "
+                                     "'Restart cameras' so they pick up the new IP - after that the confirmed ones "
+                                     "can be bound here.")
+            return
+        apply_s, undo_s = B.reservation_commands(rows, self.tags())
+        self.r_apply, self.r_undo = apply_s, undo_s
+        self.show_ips()
+        self._send(apply_s, f"Bind {len(B.reservation_rows(rows))} confirmed device(s) already in their fixed range",
+                   lambda err: None if err else self._bind_confirmed_done(rows))
+
+    def _bind_confirmed_done(self, rows):
+        with core.DB_LOCK:
+            b = self.app.db.setdefault("bindings", {})
+            for r in rows:
+                b[r["dev"]["mac"]] = {"ip": r["ip_new"], "time": core.now_s()}
+        core.save_db(self.app.db)
+        self.var_msg.set(f"Bound {len(rows)} device(s) that are already in their fixed range.")
+
+    def restart_cameras(self):
+        """Restart the cameras so they renew DHCP and pick up their reserved IP. Reviewed (it reboots real
+        cameras), and runs in the background; the settings/db are only touched on the main thread."""
+        import nd_sweep as SW
+        with core.DB_LOCK:
+            store = dict(self.app.db.get("sweep_status") or {})
+        cams = [d for d in self.app.devices if d.get("online") and d.get("category") == core.CAT_CAM
+                and d.get("ip") and SW.saved_get(store, d.get("mac", ""))]
+        if not cams:
+            messagebox.showinfo(APP, "No camera with a saved login was found. Add camera logins first "
+                                     "(Scan & Devices > check logins), then try again - a login is needed to "
+                                     "restart a camera.")
+            return
+        if not messagebox.askyesno(APP, f"Restart {len(cams)} camera(s) now?\n\nEach camera will reboot and come "
+                                        f"back in about a minute with its reserved IP. Live view / recording pauses "
+                                        f"briefly while it restarts."):
+            return
+        self.var_msg.set(f"Restarting {len(cams)} camera(s)...")
+        creds = [(d.get("ip"), SW.saved_get(store, d.get("mac", ""))) for d in cams]
+        threading.Thread(target=self._restart_cameras_worker, args=(creds,), daemon=True).start()
+
+    def _restart_cameras_worker(self, creds):
+        import nd_dvrip as DV
+        ok = fail = 0
+        for ip, auth in creds:
+            try:
+                DV.reboot(ip, auth[0], auth[1])
+                ok += 1
+            except Exception:  # noqa: BLE001 - offline / wrong port / not a DVRIP camera
+                fail += 1
+        self.app.q.put(("call", lambda: self.var_msg.set(
+            f"Restarted {ok} camera(s)" + (f", {fail} did not answer (offline or not an XMeye/DVRIP camera)" if fail
+                                           else "") + ". They return with their reserved IP in ~1 minute.")))
 
     def undo_ips(self):
         self._ip_commands()

@@ -141,6 +141,15 @@ class DvrIp:
             pass  # it drops the connection while restarting
 
 
+def reboot(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
+    """Log in and restart one camera/DVR (DVRIP / XMeye). Returns a short note. The device drops the connection
+    as it restarts - that is the expected, successful outcome, not an error."""
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        c.reboot()
+        return "restarting"
+
+
 def read_info(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
     """Login + what the device says about itself: {"serial","model","firmware","name"} (missing parts are '')."""
     with DvrIp(ip, port, timeout, connect) as c:
