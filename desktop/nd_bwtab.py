@@ -599,38 +599,72 @@ class BandwidthPage:
         self.var_msg.set(f"Bound {len(rows)} device(s) that are already in their fixed range.")
 
     def restart_cameras(self):
-        """Restart the cameras so they renew DHCP and pick up their reserved IP. Reviewed (it reboots real
-        cameras), and runs in the background; the settings/db are only touched on the main thread."""
+        """Restart the cameras so they renew DHCP and pick up their reserved IP. Uses the login the Login sweep
+        saved; for cameras with no saved login it asks once for a user / password to try. Reviewed, runs in the
+        background, and tries Hikvision / Dahua (HTTP) and XMeye (DVRIP) so it works across brands."""
         import nd_sweep as SW
+        from tkinter import simpledialog
         with core.DB_LOCK:
             store = dict(self.app.db.get("sweep_status") or {})
-        cams = [d for d in self.app.devices if d.get("online") and d.get("category") == core.CAT_CAM
-                and d.get("ip") and SW.saved_get(store, d.get("mac", ""))]
+        cams = [d for d in self.app.devices if d.get("online") and d.get("category") == core.CAT_CAM and d.get("ip")]
         if not cams:
-            messagebox.showinfo(APP, "No camera with a saved login was found. Add camera logins first "
-                                     "(Scan & Devices > check logins), then try again - a login is needed to "
-                                     "restart a camera.")
+            messagebox.showinfo(APP, "No online cameras were found to restart.")
             return
-        if not messagebox.askyesno(APP, f"Restart {len(cams)} camera(s) now?\n\nEach camera will reboot and come "
-                                        f"back in about a minute with its reserved IP. Live view / recording pauses "
-                                        f"briefly while it restarts."):
+        # each camera: its saved login, or None
+        plan = [(d.get("ip"), SW.saved_get(store, d.get("mac", ""))) for d in cams]
+        no_login = [ip for ip, a in plan if not a]
+        fallback = None
+        if no_login:
+            use = messagebox.askyesno(APP, f"{len(cams) - len(no_login)} camera(s) have a saved login; "
+                                           f"{len(no_login)} do not.\n\nEnter one camera username / password to try "
+                                           f"on the ones without a saved login? (Most cameras share the same login.)")
+            if use:
+                user = simpledialog.askstring(APP, "Camera username (e.g. admin):", parent=self.app) or ""
+                pw = simpledialog.askstring(APP, "Camera password:", show="*", parent=self.app) or ""
+                if user:
+                    fallback = (user, pw)
+        if not messagebox.askyesno(APP, f"Restart {len(cams)} camera(s) now?\n\nEach reboots and comes back in about "
+                                        f"a minute with its reserved IP. Live view / recording pauses briefly."):
             return
-        self.var_msg.set(f"Restarting {len(cams)} camera(s)...")
-        creds = [(d.get("ip"), SW.saved_get(store, d.get("mac", ""))) for d in cams]
+        creds = [(ip, a or fallback) for ip, a in plan]
+        creds = [(ip, a) for ip, a in creds if a]   # only cameras we have some login for
+        if not creds:
+            messagebox.showinfo(APP, "No login available for any camera, so none can be restarted. Run the Login "
+                                     "sweep with the camera password, or power-cycle the cameras / reboot them from "
+                                     "the NVR.")
+            return
+        self.var_msg.set(f"Restarting {len(creds)} camera(s)...")
         threading.Thread(target=self._restart_cameras_worker, args=(creds,), daemon=True).start()
 
     def _restart_cameras_worker(self, creds):
         import nd_dvrip as DV
-        ok = fail = 0
+        import nd_camline as CL
+        ok = refused = fail = 0
         for ip, auth in creds:
-            try:
-                DV.reboot(ip, auth[0], auth[1])
-                ok += 1
-            except Exception:  # noqa: BLE001 - offline / wrong port / not a DVRIP camera
-                fail += 1
-        self.app.q.put(("call", lambda: self.var_msg.set(
-            f"Restarted {ok} camera(s)" + (f", {fail} did not answer (offline or not an XMeye/DVRIP camera)" if fail
-                                           else "") + ". They return with their reserved IP in ~1 minute.")))
+            outcome = "fail"
+            try:                                   # Hikvision / Dahua over HTTP (web ports)
+                CL.reboot_camera(ip, auth[0], auth[1])
+                outcome = "ok"
+            except CL.CamError as e:
+                outcome = "refused" if "refused" in str(e) else "fail"
+            except Exception:  # noqa: BLE001
+                outcome = "fail"
+            if outcome == "fail":
+                try:                               # XMeye / DVRIP (port 34567)
+                    DV.reboot(ip, auth[0], auth[1])
+                    outcome = "ok"
+                except Exception:  # noqa: BLE001
+                    outcome = "fail"
+            ok += outcome == "ok"
+            refused += outcome == "refused"
+            fail += outcome == "fail"
+        msg = f"Restarted {ok} camera(s)"
+        if refused:
+            msg += f", {refused} refused the login"
+        if fail:
+            msg += f", {fail} did not answer a known reboot"
+        self.app.q.put(("call", lambda m=msg: self.var_msg.set(m + ". Restarted cameras return with their reserved "
+                                                               "IP in ~1 minute.")))
 
     def undo_ips(self):
         self._ip_commands()

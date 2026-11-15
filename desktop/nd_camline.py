@@ -83,6 +83,34 @@ def old_new_csv(rows, tags=None):
 
 
 # ------------------------------------------------------------------------------------------- device switches
+def reboot_camera(ip, user, pw, ports=(80, 8000, 8899), ssl_on=False, send=None):
+    """Restart one IP camera, trying the brands this app knows over HTTP (Hikvision ISAPI, Dahua CGI) on the
+    usual web ports. Returns a short note, or raises CamError if nothing answered / the login was refused. XMeye /
+    DVRIP cameras (port 34567) are handled separately by nd_dvrip; the caller tries that too."""
+    send = send or S.http_request
+    refused = False
+    for port in ports:
+        # Hikvision / ISAPI
+        try:
+            code, _, _ = send(ip, port, "PUT", "/ISAPI/System/reboot", user, pw, body="", ssl_on=ssl_on)
+            if code in (200, 201):
+                return "restarting (Hikvision)"
+            if code == 401:
+                refused = True
+        except Exception:  # noqa: BLE001 - try the next brand / port
+            pass
+        # Dahua / CP-Plus
+        try:
+            code, _, _ = send(ip, port, "GET", "/cgi-bin/magicBox.cgi?action=reboot", user, pw, ssl_on=ssl_on)
+            if code == 200:
+                return "restarting (Dahua)"
+            if code == 401:
+                refused = True
+        except Exception:  # noqa: BLE001
+            pass
+    raise CamError("the login was refused" if refused else "no known reboot method answered on this camera")
+
+
 def hik_set_dhcp(ip, port, ssl_on, user, pw, send=None):
     """Hikvision: read the IP settings, change only 'static' to 'dynamic', write them back. Returns a note."""
     send = send or S.http_request
