@@ -939,6 +939,19 @@ PHONE_NAMES = (r"(android|iphone|ipad|galaxy|redmi|oppo|vivo|realme|oneplus|poco
                r"\bmi-|\bmi \d|apple-watch|watch)")
 
 
+def resolve_ips(ips, router_arp, ping):
+    """A device can show two IPs after a DHCP change: the live one AND an old one the router still holds in its
+    ARP / lease table. Returns (live_ips_set, stale_ips_sorted_list). A stale IP is one ONLY the router knows
+    (in router_arp) that did not answer this PC's scan (not in ping) - but only when the device still has at least
+    one live IP left; a fully-asleep device (every IP router-only) keeps all its IPs so it never disappears."""
+    ips = set(ips)
+    stale = {ip for ip in ips if ip in router_arp and ip not in ping}
+    live = ips - stale
+    if live and stale:
+        return live, sorted(stale, key=ip_key)
+    return ips, []
+
+
 def categorize(d, gw):
     p = set(d["ports"])
     v = (d["vendor"] or "").lower()
@@ -1521,6 +1534,15 @@ def build_devices(raw, oui, db):
         mac = d["mac"] or ""
         d["random"] = is_random_mac(mac)
         d["vendor"] = vendor_of(mac, oui)
+        # A device often shows TWO IPs after a DHCP change: the new, live one AND an old one the router still holds
+        # in its ARP / lease table. Keep the live IP(s) as the device's real address and move any router-only
+        # (stale) IP to a note, so the list shows ONE current IP instead of a confusing double entry.
+        live, stale = resolve_ips(d["ips"], raw.get("router_arp") or {}, raw.get("ping") or set())
+        if stale:
+            d["stale_ips"] = stale
+            d["ips"] = live
+            d["notes"].append("old IP still on the router: " + ", ".join(stale)
+                              + " - clear that lease so it stops showing twice")
         d["ip"] = sorted(d["ips"], key=ip_key)[0]
         if mac and db["labels"].get(mac):
             d["names"]["label"] = db["labels"][mac]

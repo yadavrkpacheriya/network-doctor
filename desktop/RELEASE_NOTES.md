@@ -1,3 +1,10 @@
+## Network Doctor 3.70.0
+
+### Devices no longer show two IPs
+After a device changed its DHCP address, the list showed it twice - the new live IP and the old one the router still kept in its ARP / lease table - and often picked the OLD one as the main address. Now Network Doctor keeps the **live** IP (the one that actually answered the scan) as the device's address and moves the stale router-only IP to a note: "old IP still on the router: ... - clear that lease so it stops showing twice." A device that is only seen by the router (asleep phone) still keeps its IP, so nothing disappears.
+
+(If a device truly answers on two IPs at once - right after a DHCP change, before the old lease expires - both still show for a short while until the old one drops; restarting the device or clearing its old router lease fixes it immediately.)
+
 ## Network Doctor 3.69.0
 
 ### Fix: IP-MAC binding now actually applies on the router
