@@ -1,3 +1,11 @@
+## Network Doctor 3.62.0
+
+### DVR / NVR told apart from cameras automatically
+Recorders and cameras were all counted together as "CCTV cameras", and only the one you tagged by hand showed as an NVR. Now Network Doctor spots a DVR / NVR on its own - from its web page, name and model - and:
+- labels it **"DVR / NVR"** (instead of "Camera") in the device list, no tagging needed;
+- counts them **separately** in the top summary ("CCTV cameras: 40  DVR / NVR: 2").
+A tag you set by hand always wins. (Next: a one-click filter to show only recorders.)
+
 ## Network Doctor 3.61.0
 
 ### IP conflicts fixed automatically

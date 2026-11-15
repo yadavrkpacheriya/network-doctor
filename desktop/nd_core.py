@@ -1589,10 +1589,36 @@ CAM_BRANDS = (("hikvision", "Hikvision"), ("dahua", "Dahua"), ("xmeye", "XMeye")
               ("godrej", "Godrej"), ("honeywell", "Honeywell"))
 
 
+_NVR_RE = re.compile(r"\b(nvr|dvr|xvr|hvr|recorder)\b")
+
+
+def cctv_role(d):
+    """Within the CCTV family, tell a RECORDER (NVR / DVR) apart from a plain camera - automatically, so the user
+    does not have to tag each one. '' for non-CCTV devices. A tag the user set always wins; otherwise the device's
+    own web page / name / model is checked for nvr/dvr/recorder wording and for a recorder's many video streams."""
+    if d.get("category") != CAT_CAM:
+        return ""
+    k = (d.get("kind") or "").lower()
+    if "nvr" in k or "dvr" in k:
+        return "nvr"
+    if k == "camera":
+        return "camera"
+    http = d.get("http") or {}
+    txt = " ".join(str(x) for x in (d.get("name", ""), http.get("title", ""), http.get("server", ""),
+                                    http.get("realm", ""), str(http.get("blob", ""))[:2000],
+                                    (d.get("upnp") or {}).get("modelName", ""),
+                                    " ".join(d.get("notes") or []))).lower()
+    if _NVR_RE.search(txt):
+        return "nvr"
+    return "camera"
+
+
 def auto_name(d):
     """A readable name for a device that tells none (e.g. 'Hikvision Camera .105', 'HP PC .57', 'Phone .101').
     Shown until you tag it; never stored as its real name."""
     kind = AUTO_KIND.get(d.get("category"), "Device")
+    if d.get("category") == CAT_CAM and cctv_role(d) == "nvr":
+        kind = "DVR / NVR"
     http = d.get("http") or {}
     txt = " ".join(str(x) for x in (http.get("title", ""), http.get("server", ""), http.get("realm", ""),
                                     str(http.get("blob", ""))[:2000], (d.get("upnp") or {}).get("modelName", ""),
