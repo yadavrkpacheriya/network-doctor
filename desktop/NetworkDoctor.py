@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.81.0"
+VERSION = "3.82.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3129,11 +3129,13 @@ class App(tk.Tk):
         try:
             from collections import Counter
             miss = Counter()
-            with core.DB_LOCK:
-                sw = dict(self.db.get("sweep_status") or {})
+            # "saved login" means a working credential in settings["device_logins"] (keyed by MAC) - a camera
+            # that was swept but refused the password is in sweep_status yet genuinely has no saved login, so
+            # check the credential store, consistent with restart_cameras / picture check. (R-009)
+            saved = dict(self._settings().get("device_logins") or {})
             login_cats = (core.CAT_CAM, core.CAT_BIO, core.CAT_NET)
             for d in self.devices:
-                if (d.get("online") and d.get("mac") and d["mac"] not in sw
+                if (d.get("online") and d.get("mac") and d["mac"] not in saved
                         and d.get("category") in login_cats):
                     miss[d.get("category", "device")] += 1
             for cat, n in miss.items():
@@ -3417,8 +3419,9 @@ class App(tk.Tk):
         import nd_sweep as SW
         # read-only snapshot of what we need; nothing here mutates shared state from this background thread
         mem_all = dict(self._settings().get("cam_live") or {})
-        with core.DB_LOCK:
-            store = dict(self.db.get("sweep_status") or {})
+        # the saved camera login lives in settings["device_logins"] (keyed by MAC), not db["sweep_status"]
+        # (status only). Reading the wrong store meant the picture check never used a saved login either. (R-009)
+        store = dict(self._settings().get("device_logins") or {})
         cams = [d for d in self.devices if d.get("online") and d.get("category") == core.CAT_CAM and d.get("ip")]
         checked = frozen = dark = 0
         updates = {}                               # mac -> new cam_live entry, applied on the Tk thread at the end

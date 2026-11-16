@@ -12,6 +12,20 @@ Format per entry:
 
 ---
 
+## 2026-11-16 — User-reported (v3.82.0)
+
+### R-009 · Saved camera logins ignored — "Restart cameras" said "no credentials saved"
+- **Symptom:** After saving every camera login in the Login sweep, "Restart cameras" (and the camera
+  picture check) reported "no credentials saved" and would not run — the exact bug Rakesh re-reported.
+- **Root cause:** Two separate stores. The sweep saves working logins to `settings["device_logins"]`
+  (keyed by MAC, password encrypted). But `nd_bwtab.restart_cameras`, `NetworkDoctor._camera_picture_worker`,
+  and the `_setup_gaps` "needs a login" hint all read `db["sweep_status"]`, which holds only the sweep's
+  OK/refused status and never a password — so `saved_get` always returned None.
+- **Repair:** All three now read `settings["device_logins"]`. Added a regression test
+  (tests/test_saved_logins.py::CredentialStoreIsDeviceLogins) asserting a sweep_status entry yields no
+  credential and device_logins does, so the two stores can never be confused again.
+- **Prevents:** The whole "saved login not recognised" class for camera restart / picture check / hints.
+
 ## 2026-11-16 — Line-by-line read: module coverage ledger
 Fully read, end to end (not just scanned):
 - nd_core.py (2251) — R-006, R-007 fixed; everything else correct.

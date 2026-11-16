@@ -1,3 +1,13 @@
+## Network Doctor 3.82.0
+
+### Fixed: saved camera logins were ignored by "Restart cameras" and the picture check (said "no credentials saved")
+The Login sweep saves each working camera login in one place (settings, keyed by the camera's MAC), but
+"Restart cameras", the camera picture check, and the "needs a login" setup hint were all reading a
+*different* store that only holds the sweep's OK/refused status - never the password. So even after you
+saved every camera login in the sweep, restart kept reporting "no credentials saved" and refused to run.
+All three now read the real saved-login store, so the logins you saved are used automatically - no
+retyping. A regression test locks this so the two stores can never be confused again.
+
 ## Network Doctor 3.81.0
 
 ### Fixed: "I turned on SNMP but reading the switch still fails"
