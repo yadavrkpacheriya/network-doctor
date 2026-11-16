@@ -957,6 +957,17 @@ def resolve_ips(ips, router_arp, ping):
     return ips, []
 
 
+def problem_key(title):
+    """A stable id for a problem, independent of the count in it, so 'marked as known' sticks across scans:
+    '4 device(s) ... no IP ...' and '6 device(s) ... no IP ...' map to the same key."""
+    import re
+    s = (title or "").lower()
+    s = re.sub(r"\(\s*\d+\s*\)", "", s)      # drop a trailing "(4)"
+    s = re.sub(r"\b\d+\b", "", s)            # drop any standalone numbers
+    s = re.sub(r"[^a-z]+", " ", s).strip()   # keep letters/words only
+    return s
+
+
 def free_ips(net, used, gw=""):
     """Every host address in the subnet that NO known device is using - so you can pick a safe IP for a device you
     set by hand. used: all IPs any device currently has (online or seen before); gw is always excluded."""

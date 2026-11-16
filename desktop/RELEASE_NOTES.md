@@ -1,3 +1,13 @@
+## Network Doctor 3.74.0
+
+### Mark a problem as "known" so it stops nagging - permanently
+Some warnings are things you already know and accept (cameras on the NVR's own network, a couple of phones that come and go, placeholder-MAC cameras). New buttons on **Alerts > Problems**:
+- **Mark as known / ignore** - hides the selected problem for good, across every future scan (remembered by a count-independent key, so "4 devices..." and "6 devices..." of the same issue both stay hidden).
+- **Show / restore ignored** - untick to bring any back.
+
+### "Fake / cloned MAC" is now honest
+This was flagged as a WARNING for every placeholder-MAC camera (A0:00:00:xx), even when each camera has its OWN unique address and causes no clash. It is now just an **INFO note** unless two devices actually share one MAC - the real clash, which is still reported separately as a warning. So your unique cameras stop raising a false alarm.
+
 ## Network Doctor 3.73.0
 
 ### Free-IP list - know which address is safe to use
