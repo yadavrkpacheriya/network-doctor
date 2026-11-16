@@ -67,10 +67,22 @@ Fully read, end to end (not just scanned):
 - nd_linux.py (132) — clean (read-only /proc + /sys facts, test-parameterized roots, read-only ioctls).
 - nd_xlsx.py (148) — clean (dep-free xlsx writer/reader; XML-escaped, illegal-char stripped,
   bounds-checked shared strings, named-member reads only — no path traversal).
+- nd_sweeptab.py (619) — clean (login-sweep UI; passwords never saved by default + cleared after each
+  scan, one-try-per-device with auto-skip to avoid lockout, all DB/UI writes via q.put under DB_LOCK;
+  camera line-up moves one at a time with reversible DHCP bindings, waits per-camera, stops at first
+  failure, never moves recorders, confirms before every change).
+- nd_protab.py (743) — clean (Pro pages; remote access opens NO router port — tunnel forwards only the
+  TCP 8787 remote-access addr, sign-in required, every action audited; auto-defense reversible +
+  exclude-list + levels default "notify"; accounts/license delegate to verified nd_auth/nd_license;
+  tunnel token used once, never saved).
+- nd_bwtab.py (975) — clean (bandwidth plan; every Apply has an Undo, FastTrack restored on undo;
+  fixed-IPs reserve-not-move by default, cameras warned + confirmed, bind-confirmed avoids half-moved
+  cameras; camera isolation blocks internet both ways + closes port-forwards reversibly; Reset removes
+  ONLY ND-made items, never ISP/owner config, saves nd-before-reset.rsc first with read-only preview).
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: the tab/UI modules (nd_tabs, nd_toolstab full read, nd_bwtab, nd_protab, nd_sweeptab)
-and NetworkDoctor.py (the main app).
+Still to read: nd_tabs.py (2582, shared UI/section navigator), nd_toolstab.py (2131, full read —
+partially edited for R-008), and NetworkDoctor.py (5137, the main app).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
