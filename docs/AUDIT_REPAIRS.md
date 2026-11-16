@@ -12,6 +12,18 @@ Format per entry:
 
 ---
 
+## 2026-11-16 — Line-by-line read: module coverage ledger
+Fully read, end to end (not just scanned):
+- nd_core.py (2251) — R-006, R-007 fixed; everything else correct.
+- nd_camline.py (428) — clean (camera-move logic is reversible, one-at-a-time, safe).
+- nd_bandwidth.py (629) — clean (ip_plan/auto-resolve correct; router commands reversible).
+- nd_tools.py (2161) — clean (binding/guard/DNS/site-block commands full-path + reversible;
+  PC-fix PowerShell conservative; command library informational).
+Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
+the big feature modules (nd_net, nd_usage, nd_monitor, nd_pcengine, nd_sweep, nd_snmp), the
+security/router modules (nd_reset, nd_routeros, nd_snmpcfg, nd_arpblock, nd_access, nd_dnsfilter,
+nd_dvrip, nd_defense, nd_vuln), NetworkDoctor.py, and the small helpers.
+
 ## 2026-11-16 — Line-by-line read (v3.80.0+)
 
 ### R-007 · Device DB had no backup recovery (tags/labels could be lost)
