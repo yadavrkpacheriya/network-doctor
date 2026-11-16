@@ -43,13 +43,23 @@ Fully read, end to end (not just scanned):
 - nd_pcengine.py (1755) — clean (PC-Care PowerShell engine; every change reversible via undo scripts;
   safe-path guards block system folders; user removal backs up + verifies before delete; net/TCP reset
   gated and warned). Exemplary reversible design.
+- nd_configbak.py (194) — clean (router config backup; export-only, never pushes config).
+- nd_endpoint.py (309) — clean (endpoint inventory; read-only, bounded).
+- nd_telemetry.py (239) — clean (phone/agent telemetry intake; sanitized, bounded, rate-limited).
+- nd_home.py (243) — clean (home/dashboard tab; read-only summary rendering).
+- nd_pccare.py (278) — clean (PC-Care tab; marshals to main thread; actions gated + reversible).
+- nd_livecheck.py (76) — clean (live reachability poll; read-only).
+- nd_poe.py (99) — clean (PoE status read; read-only SNMP-style poll).
+- nd_report.py (120) — clean (report builder; pure formatting over collected data).
+- nd_tunnel.py (288) — clean (Cloudflare tunnel helper; owner-opt-in, loopback-terminated, no silent expose).
+- nd_share.py (367) — clean (phone-link JSON API; LAN-only default, hmac.compare_digest for all secrets,
+  pairing/login lockouts, size caps, per-IP rate limits, remote gated behind owner opt-in + sign-in).
+- nd_slow.py (486) — clean (slow-site diagnostic; measure() read-only, judge() pure; router fix_script
+  outputs are reversible remove-before-add scripts, button-gated, never auto-applied).
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
-the big feature modules (nd_net, nd_usage, nd_monitor, nd_pcengine, nd_sweep, nd_snmp), nd_brain,
-nd_configbak, nd_endpoint, nd_telemetry, nd_home, nd_pccare, nd_tunnel, nd_share, nd_slow,
-NetworkDoctor.py, and the small helpers (nd_xlsx, nd_linux, nd_smbinfo, nd_livecheck, nd_poe,
-nd_report, nd_license, nd_auth, nd_ranges).
+Still to read: the tab/UI modules (nd_tabs, nd_toolstab full read, nd_bwtab, nd_protab, nd_sweeptab),
+NetworkDoctor.py, and the small helpers (nd_xlsx, nd_linux, nd_smbinfo, nd_license, nd_auth, nd_ranges).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
