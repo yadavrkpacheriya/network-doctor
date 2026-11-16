@@ -1,3 +1,8 @@
+## Network Doctor 3.76.0
+
+### Scan can no longer get stuck on "Waiting for the last answers"
+The final scan phase waited for every background check (conflict rounds, packet tests, name lookups) with no overall time limit, so one unresponsive device could freeze the whole scan forever. There is now a 75-second cap on that phase: a normal scan still finishes in well under a minute, but if one check hangs, the scan now moves on with whatever has arrived and completes instead of hanging. The slow check's name is recorded for diagnostics.
+
 ## Network Doctor 3.75.0
 
 ### Clear all alerts in one click
