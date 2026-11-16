@@ -957,6 +957,41 @@ def resolve_ips(ips, router_arp, ping):
     return ips, []
 
 
+def free_ips(net, used, gw=""):
+    """Every host address in the subnet that NO known device is using - so you can pick a safe IP for a device you
+    set by hand. used: all IPs any device currently has (online or seen before); gw is always excluded."""
+    import ipaddress
+    try:
+        nw = ipaddress.ip_network(net, strict=False)
+    except ValueError:
+        return []
+    taken = set(used or ())
+    if gw:
+        taken.add(gw)
+    return [str(h) for h in nw.hosts() if str(h) not in taken]
+
+
+def collapse_ranges(ips):
+    """Fold a long list of IPs into compact ranges for display: ['..2','..3','..5'] -> ['..2 - ..3', '..5']."""
+    import ipaddress
+    nums = sorted({int(ipaddress.IPv4Address(i)) for i in ips})
+    if not nums:
+        return []
+    out, start, prev = [], nums[0], nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        out.append((start, prev))
+        start = prev = n
+    out.append((start, prev))
+    res = []
+    for a, b in out:
+        sa, sb = str(ipaddress.IPv4Address(a)), str(ipaddress.IPv4Address(b))
+        res.append(sa if a == b else f"{sa} - {sb}")
+    return res
+
+
 def categorize(d, gw):
     p = set(d["ports"])
     v = (d["vendor"] or "").lower()
