@@ -169,6 +169,12 @@ These were built or promised but **never confirmed on your real hardware**, or e
 - **Force-DNS site block:** a phone using Private DNS over DNS-over-HTTPS can still slip through — turn Private DNS off on the phone, or ask to block the providers' IPs (3.64).
 - **LeakWatch / endpoint:** a PC without the agent installed is not watched; can't catch a leak by screenshot or printing; per-process byte totals not collected (3.38 / 3.39).
 
+## Stated requests NOT fully delivered (recovered from cross-session memory)
+These came from your chats (including ones since deleted) and were filed in memory. Checked against what actually shipped — these three are **incomplete**, and none were flagged as pending in the release notes:
+- **Per-app bandwidth (MB) breakdown on each PC**, like Windows Settings → Data usage. Only PARTIAL: the agent names *which app* opened each connection, but release note 3.39 states **per-process byte totals are not collected** — so the exact "this app used X MB" number you wanted does not exist yet. **Real gap.**
+- **Low-latency remote access that does NOT depend on the PC being on.** Current remote access (Tailscale / Cloudflare tunnel) needs the office PC switched on. An always-available path (a small always-on device, or a cloud relay) was never built. **Open — unsolved.**
+- **Full feature parity: every Windows function also in Android + Ubuntu.** Linux got a parity pass (3.23.10) and the phone app mirrors many actions, but complete 1:1 parity was never confirmed. **Verify / likely partial.**
+
 ## From your saved notes / standing goals (verify these are fully met)
 - **Directors' + your own PC "faster internet sometimes"** (e.g. backup uploads) — VIP/Boost exists (uncapped, 3.22); confirm it's set up for the right PCs.
 - **Cameras on local network only, remote viewing via NVR app** — camera-isolation exists; confirm it's applied.
