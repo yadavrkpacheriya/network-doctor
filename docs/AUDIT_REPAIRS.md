@@ -85,10 +85,16 @@ Fully read, end to end (not just scanned):
   assistant router action has an Undo and asks first; AutoFixWindow surfaces fixes that keep getting
   undone (the R-004 recurrence concern); Assistant never runs free-form router commands — only shipped
   fixes. All DB/tag writes via save_db + after_tags_changed.
+- nd_toolstab.py (2131) — clean (Tools tab: watch/speed/ports/SNMP/website/guard/dns/web/CGNAT/backup/
+  lan/wifi/nic/mtu/subnet/wol/mac/inventory/login/ready). R-008 fix confirmed in place (show() pre-fills
+  SNMP Read community from the saved private one). Every router-change path gated (login + Yes/No + undo):
+  SNMP port off/on/restart needs the write-community + port_risk warning + undo stack; Network guard
+  defaults random-MAC/torrent OFF, warns before blocking random MACs, blocks rogue routers only when
+  ticked, never auto-applies; website-block/force-DNS reversible with backup; CGNAT check is read-only
+  and refuses wide-open rules (one scoped port + undo). All diagnostics read-only; thread-safe queue/poll.
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: nd_toolstab.py (2131, full read — partially edited for R-008) and NetworkDoctor.py
-(5137, the main app).
+Still to read: NetworkDoctor.py (5137, the main app) — the last module.
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
