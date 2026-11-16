@@ -56,10 +56,21 @@ Fully read, end to end (not just scanned):
   pairing/login lockouts, size caps, per-IP rate limits, remote gated behind owner opt-in + sign-in).
 - nd_slow.py (486) — clean (slow-site diagnostic; measure() read-only, judge() pure; router fix_script
   outputs are reversible remove-before-add scripts, button-gated, never auto-applied).
+- nd_ranges.py (214) — clean (multi-range planner; read-only, RFC1918-only, 4096-addr cap, skips
+  virtual/VPN adapters, never sweeps > /22 whole — only /24s with a known device).
+- nd_auth.py (202) — clean (Pro accounts: PBKDF2-SHA256 200k + per-user salt, hmac.compare_digest,
+  fail-safe RBAC, last-admin protection, atomic save, append-only audit log, TTL token sessions).
+- nd_license.py (206) — clean (pure-Python Ed25519 verify-only RFC 8032, sig+expiry checked, R-005
+  atomic write, on-curve + S<L checks correct; private key never ships).
+- nd_smbinfo.py (134) — clean (read-only SMB2 NTLM-challenge parser for PC name/OS; no login, no
+  password sent, bounded reads, timeouts, exception-safe — same technique as nmap).
+- nd_linux.py (132) — clean (read-only /proc + /sys facts, test-parameterized roots, read-only ioctls).
+- nd_xlsx.py (148) — clean (dep-free xlsx writer/reader; XML-escaped, illegal-char stripped,
+  bounds-checked shared strings, named-member reads only — no path traversal).
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: the tab/UI modules (nd_tabs, nd_toolstab full read, nd_bwtab, nd_protab, nd_sweeptab),
-NetworkDoctor.py, and the small helpers (nd_xlsx, nd_linux, nd_smbinfo, nd_license, nd_auth, nd_ranges).
+Still to read: the tab/UI modules (nd_tabs, nd_toolstab full read, nd_bwtab, nd_protab, nd_sweeptab)
+and NetworkDoctor.py (the main app).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
