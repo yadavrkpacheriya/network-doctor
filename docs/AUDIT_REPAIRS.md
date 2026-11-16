@@ -79,10 +79,16 @@ Fully read, end to end (not just scanned):
   fixed-IPs reserve-not-move by default, cameras warned + confirmed, bind-confirmed avoids half-moved
   cameras; camera isolation blocks internet both ways + closes port-forwards reversibly; Reset removes
   ONLY ND-made items, never ISP/owner config, saves nd-before-reset.rsc first with read-only preview).
+- nd_tabs.py (2582) — clean (shared UI: map/binding/commands/usage/slow/alerts/troubleshoot/assistant +
+  section navigator). Binding default can't cut a device off + check_ip rejects bad IPs; Commands
+  run-on-router prompts on add/set/remove/disable/enable/reboot/reset; every auto-fix + troubleshoot +
+  assistant router action has an Undo and asks first; AutoFixWindow surfaces fixes that keep getting
+  undone (the R-004 recurrence concern); Assistant never runs free-form router commands — only shipped
+  fixes. All DB/tag writes via save_db + after_tags_changed.
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: nd_tabs.py (2582, shared UI/section navigator), nd_toolstab.py (2131, full read —
-partially edited for R-008), and NetworkDoctor.py (5137, the main app).
+Still to read: nd_toolstab.py (2131, full read — partially edited for R-008) and NetworkDoctor.py
+(5137, the main app).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
