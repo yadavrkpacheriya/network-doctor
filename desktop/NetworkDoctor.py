@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.73.0"
+VERSION = "3.74.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -881,6 +881,10 @@ class App(tk.Tk):
         a, b = ttk.Frame(pw), ttk.Frame(pw)
         pw.add(a, weight=2)
         pw.add(b, weight=3)
+        bar = ttk.Frame(a, padding=(0, 2))
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Mark as known / ignore", command=self._ignore_problem).pack(side="left")
+        ttk.Button(bar, text="Show / restore ignored", command=self._show_ignored_problems).pack(side="left", padx=6)
         self.tp = make_tree(a, ("sev", "count"), ("Severity", "Devices"), (100, 80), first=("Problem", 700))
         self.tp.bind("<<TreeviewSelect>>", self._show_issue)
         self.txt = text_box(b)
@@ -1996,14 +2000,70 @@ class App(tk.Tk):
         tv = self.tp
         tv.delete(*tv.get_children())
         self.row_issue = {}
-        if not self.issues:
-            tv.insert("", "end", text="No problems found by the scan", tags=("pass",))
-        for i in self.issues:
+        ignored = set(self._settings().get("ignored_problems") or [])
+        shown = [i for i in self.issues if core.problem_key(i["title"]) not in ignored]
+        nhidden = len(self.issues) - len(shown)
+        if not shown:
+            tv.insert("", "end", text="No problems found by the scan"
+                      + (f"  ({nhidden} marked as known, hidden)" if nhidden else ""), tags=("pass",))
+        for i in shown:
             iid = tv.insert("", "end", text=i["title"], values=(i["sev"].upper(), len(i["items"]) or ""), tags=(i["sev"],))
             self.row_issue[iid] = i
+        if nhidden and shown:
+            tv.insert("", "end", text=f"({nhidden} problem(s) marked as known are hidden - 'Show / restore ignored')",
+                      tags=("pass",))
         kids = tv.get_children()
         if kids:
             tv.selection_set(kids[0])
+
+    def _ignore_problem(self):
+        """Mark the selected problem as known so it stops showing and alerting - permanently, across scans. Stored
+        by a count-independent key, so '4 devices...' and '6 devices...' of the same problem both stay hidden."""
+        from tkinter import messagebox
+        sel = self.tp.selection()
+        i = self.row_issue.get(sel[0]) if sel else None
+        if not i:
+            messagebox.showinfo(APP, "Select a problem in the list first.")
+            return
+        if not messagebox.askyesno(APP, f"Mark this as known and stop showing it?\n\n\"{i['title']}\"\n\nYou can bring "
+                                        f"it back any time with 'Show / restore ignored'."):
+            return
+        s = self._settings()
+        lst = s.setdefault("ignored_problems", [])
+        k = core.problem_key(i["title"])
+        if k not in lst:
+            lst.append(k)
+        self._save_settings()
+        self.fill_problems()
+
+    def _show_ignored_problems(self):
+        import tkinter as tk
+        from tkinter import ttk
+        s = self._settings()
+        lst = list(s.get("ignored_problems") or [])
+        if not lst:
+            from tkinter import messagebox
+            messagebox.showinfo(APP, "Nothing is marked as known - all problems are shown.")
+            return
+        w = tk.Toplevel(self)
+        w.title("Problems marked as known")
+        w.geometry("560x420")
+        ttk.Label(w, text="These problems are hidden. Untick one and Save to show it again.",
+                  ).pack(anchor="w", padx=10, pady=8)
+        vars_ = {}
+        # map each stored key back to the latest matching problem title for a friendly label
+        titles = {core.problem_key(i["title"]): i["title"] for i in self.issues}
+        for k in lst:
+            v = tk.BooleanVar(value=True)
+            vars_[k] = v
+            ttk.Checkbutton(w, text=titles.get(k, k), variable=v).pack(anchor="w", padx=14)
+
+        def save():
+            s["ignored_problems"] = [k for k, v in vars_.items() if v.get()]
+            self._save_settings()
+            self.fill_problems()
+            w.destroy()
+        ttk.Button(w, text="Save", command=save).pack(pady=10)
 
     def _show_issue(self, _=None):
         sel = self.tp.selection()

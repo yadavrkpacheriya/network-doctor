@@ -1164,20 +1164,32 @@ def mac_health_issues(devices, tags=None):
                            "web page allows it, set a unique MAC there too. IP-MAC binding will not work while the "
                            "MACs are duplicated."})
     bogus = []
+    dup_macs = {mac for mac, ds in by_mac.items() if len({d.get("ip") for d in ds if d.get("ip")}) > 1}
     for d in online:
         oui = (d.get("mac") or "").replace(":", "").replace("-", "").lower()[:6]
         if oui and oui in BOGUS_OUI:
             nm = tags.get(d.get("mac"), {}).get("name") or d.get("name") or ""
             bogus.append(f"{nm or d.get('category', 'device')} {d.get('ip', '')} ({d.get('mac')})")
+    # A placeholder OUI (A0:00:00:xx) only CAUSES trouble when two devices actually share one MAC - and that real
+    # clash is already reported above as "the same MAC on two or more devices". When every such camera has its OWN
+    # unique address and IP, it is harmless, so it is an INFO note, not a warning that nags forever.
     if bogus:
-        out.append({"sev": "warning", "title": f"Devices with a fake / cloned MAC address ({len(bogus)})",
+        clashing = any((d.get("mac") or "").upper() in dup_macs for d in online
+                       if (d.get("mac") or "").replace(":", "").replace("-", "").lower()[:6] in BOGUS_OUI)
+        sev = "warning" if clashing else "info"
+        tail = ("Several share almost the same address, so the ARP tables clash and the gateway flaps."
+                if clashing else
+                "Each one here has its OWN unique address and IP, so they are harmless - no clash. This is just a "
+                "note that these cameras use placeholder MACs; nothing to fix unless two ever share one IP.")
+        out.append({"sev": sev, "title": f"Devices with a fake / cloned MAC address ({len(bogus)})",
                     "items": bogus,
                     "detail": "These addresses (A0:00:00:xx and similar) are not real manufacturer MACs - typical of "
-                              "no-name CCTV cameras. Several such devices share almost the same address, so the "
-                              "network's ARP tables clash and the gateway flaps for a few seconds at a time.",
-                    "fix": "Give every one a unique fixed IP (Devices > line up cameras) so no two ever clash. Where "
-                           "the camera's web page allows, set a proper unique MAC. Best of all, move the cameras onto "
-                           "their own switch so their ARP noise never reaches the PCs and the router."})
+                              "no-name CCTV cameras. " + tail,
+                    "fix": ("Give every one a unique fixed IP (Cameras > Restart & fix camera IPs) so no two ever "
+                            "clash. Where the camera's web page allows, set a proper unique MAC. Best of all, move "
+                            "the cameras onto their own switch so their ARP noise never reaches the PCs and router."
+                            if clashing else
+                            "Nothing needed. If you want them off this list, you can mark it as known in Problems.")})
     return out
 
 
