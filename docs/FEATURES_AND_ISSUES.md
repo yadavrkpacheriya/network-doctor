@@ -146,4 +146,36 @@ A chain of "builds fine, never runs" bugs, each caught and fixed: `/proc` crash 
 
 ---
 
-*Source: RELEASE_NOTES.md (117 versions). Bug-detail reference for the recent audit: docs/AUDIT_REPAIRS.md.*
+# C. PENDING / UNCONFIRMED / KNOWN LIMITS (the "at-risk" list)
+
+These were built or promised but **never confirmed on your real hardware**, or explicitly left as "next". Worth verifying on the office network — they're the items most likely to be forgotten.
+
+## Built but NOT yet tested on real devices (tested only against simulated ones)
+- **Line up cameras / move to fixed IP** — move ONE camera first and check its picture before the rest (3.29 / 3.31).
+- **XMeye / NetSurveillance cameras & recorders** (port 34567) — not tested on a real XMeye device (3.31).
+- **ONVIF camera move** — not tested on a real ONVIF camera (3.31.1).
+- **NVR/DVR auto-update of a moved camera's IP** (Hikvision/Dahua) — not tested on a real recorder (3.30.1).
+- **Usage real-name DNS log line** — not confirmed on a real router (log format taken from RouterOS docs) (3.30).
+- **Gateway ARP protection (reply-only) guard** — not tested on a real router; apply at a quiet time with Undo ready (3.40).
+
+## Scan speed never measured on your network
+- The parallel-scan work (3.33 / 3.34) targets ~1 min on a /24 vs the ~140 s you last saw — **actual time was never measured on your network**. Worth timing a real scan.
+
+## Explicitly "next" / not built yet
+- **One-click filter to show only recorders** (DVR/NVR) — promised as "next" in 3.62, not confirmed shipped.
+- **PC Care — not included yet:** remove user accounts, duplicate finder, folder organizer, and the small tools (bulk rename, resize pictures) — they need typed answers the page doesn't take (3.36).
+
+## Known limits (by design — may still bite you)
+- **Force-DNS site block:** a phone using Private DNS over DNS-over-HTTPS can still slip through — turn Private DNS off on the phone, or ask to block the providers' IPs (3.64).
+- **LeakWatch / endpoint:** a PC without the agent installed is not watched; can't catch a leak by screenshot or printing; per-process byte totals not collected (3.38 / 3.39).
+
+## From your saved notes / standing goals (verify these are fully met)
+- **Directors' + your own PC "faster internet sometimes"** (e.g. backup uploads) — VIP/Boost exists (uncapped, 3.22); confirm it's set up for the right PCs.
+- **Cameras on local network only, remote viewing via NVR app** — camera-isolation exists; confirm it's applied.
+- **"MNC-level testing so disruptions never repeat"** — the line-by-line audit (R-001…R-008) is the first pass; a real-hardware test round on the untested items above is the natural next step.
+
+> Note: I searched your chat history for anything missed, but the chat index returned the ERP (FanAir) project thread, not the Network Doctor conversation, so this at-risk list is drawn from the release notes' own "not yet tested / next / limit" notes plus your saved Network Doctor notes — not from re-reading the Network Doctor chat. If you paste the Network Doctor chat link, I can scan it directly for anything these sources don't cover.
+
+---
+
+*Source: RELEASE_NOTES.md (117 versions) + /areas/network-doctor.md. Bug-detail reference for the recent audit: docs/AUDIT_REPAIRS.md.*
