@@ -1326,7 +1326,7 @@ def scan(subnet, opts, progress, stop):
                 side[key] = fn()
             except Exception as e:  # noqa: BLE001 - one failed question must not lose the scan
                 side[key + "_err"] = (str(e) or type(e).__name__)[:150]
-        t = threading.Thread(target=run_it, daemon=True)
+        t = threading.Thread(target=run_it, daemon=True, name=key)
         t.start()
         return t
 
@@ -1431,10 +1431,18 @@ def scan(subnet, opts, progress, stop):
     webs_of(first)
     chk()
     progress(80, "Waiting for the last answers (conflict rounds, packet tests, names)...")
+    # Overall deadline so one hung background question can never freeze the whole scan.
+    # Normal finish is well under a minute; after FINAL_WAIT_MAX we move on with whatever
+    # arrived. The leftover threads are daemon, so they die with the process - never a hang.
+    FINAL_WAIT_MAX = 75.0
+    deadline = time.time() + FINAL_WAIT_MAX
     for t in waiting:
-        while t.is_alive():
+        while t.is_alive() and time.time() < deadline:
             t.join(0.3)
             chk()
+    slow = [getattr(t, "name", "?") for t in waiting if t.is_alive()]
+    if slow:
+        tests["final_wait_timeout"] = slow
 
     # merge what the threads found
     for ip, macs in ((side.get("conflict") or {}).get("macs") or {}).items():
