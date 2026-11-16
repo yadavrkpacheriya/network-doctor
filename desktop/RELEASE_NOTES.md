@@ -1,3 +1,12 @@
+## Network Doctor 3.79.0
+
+### Full code audit - reliability hardening
+Completed a line-by-line audit of the whole app. Result: the code is in good shape. One more fix
+shipped - the Pro license file is now written atomically so a crash can never drop your activation.
+Verified clean: no unsafe background-thread UI writes, every important data file (devices, logins,
+alerts, settings, license) is now crash-safe, and all router commands use the API-safe full-path
+form. Details in docs/AUDIT_REPAIRS.md.
+
 ## Network Doctor 3.78.0
 
 ### IP-conflict alert now tells you how to make it auto-fix

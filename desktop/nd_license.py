@@ -190,8 +190,12 @@ def save_license(data_dir: str, lic: str):
         return ok, payload, reason
     d = os.path.join(data_dir, "pro")
     os.makedirs(d, exist_ok=True)
-    with open(license_path(data_dir), "w", encoding="utf-8") as f:
+    # Atomic write: a torn license file would silently drop the user's Pro activation.
+    path = license_path(data_dir)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(lic.strip() + "\n")
+    os.replace(tmp, path)
     return True, payload, "ok"
 
 

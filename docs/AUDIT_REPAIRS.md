@@ -12,7 +12,28 @@ Format per entry:
 
 ---
 
-## 2026-11-16 — Full Windows audit (v3.77.0 – v3.78.0)
+## 2026-11-16 — Full Windows audit (v3.77.0 – v3.79.0)
+
+### R-005 · License file written non-atomically
+- **Symptom:** (latent) a crash/collision while saving the Pro license could leave a torn file,
+  silently dropping the user's activation back to free.
+- **Root cause:** `nd_license.save_license` wrote the license with a plain `open(...,"w")`.
+- **Repair:** Atomic write (temp + `os.replace`), same as every other persistent file.
+- **Prevents:** The "lost Pro license for no reason" case.
+
+### Audit pass — classes checked across all 40 modules (33k lines), result
+- **Thread-safety (UI/settings off the main thread):** CLEAN. Only the `firewall` startup race
+  (R-002) existed; fixed. All tab-module worker threads marshal UI via `q.put`/`after`.
+- **File-corruption (non-atomic writes):** every non-regenerable persistent file (device DB, auth,
+  alert log, config backups, settings, license) is now atomic. Two regenerable caches (threat feeds,
+  DNS blocklist) left as plain writes on purpose — a torn file there just re-downloads, harmless.
+- **RouterOS command paths:** full-path commands, no WinBox-context (bare-verb) syntax that fails
+  over the API. Bare-verb strings found were D-Link switch-console CLI / a Windows batch `set`, not
+  RouterOS.
+- **Static:** 0 compile failures, pyflakes clean (cosmetic f-strings only), no broken
+  `command=self.X` handlers, no undefined names, no mutable default arguments.
+
+
 
 ### R-004 · IP conflict kept re-appearing; user expected the brain to auto-fix it
 - **Symptom:** "Two devices use the same IP" alert recurred; user thought it should already be
