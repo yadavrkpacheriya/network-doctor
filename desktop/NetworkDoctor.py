@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.76.0"
+VERSION = "3.77.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -2325,7 +2325,7 @@ class App(tk.Tk):
                             "Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'}; "
                             "$n=@($r).Count; if($n){$r | Remove-NetFirewallRule}; $n"], 30).strip()
         self._settings()["fw_ok"] = time.time()
-        self._save_settings()
+        self._save_persist()  # firewall() also runs on a startup background thread (quiet=True); marshal the save
         if not quiet:
             extra = (f"\n\nAlso removed {removed} Windows rule(s) that were BLOCKING Network Doctor (created when "
                      "Windows asked to allow the app and Cancel was clicked)." if removed.isdigit() and int(removed) else "")
@@ -4731,22 +4731,56 @@ class App(tk.Tk):
         return out
 
     # ---------------------------------------------------------------- online updates (GitHub Releases)
+    @staticmethod
+    def _read_json(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            return d if isinstance(d, dict) else None
+        except Exception:
+            return None
+
     def _settings(self):
         if not hasattr(self, "_set"):
-            try:
-                with open(os.path.join(core.DATA_DIR, "settings.json"), encoding="utf-8") as f:
-                    self._set = json.load(f)
-            except Exception:
-                self._set = {}
+            # If settings.json is ever torn/corrupt, recover from the .bak backup before falling back to a
+            # blank dict - a blank dict would silently wipe every saved tag, camera login, whitelist and
+            # ignored problem (a "new bug every day with no update"). See _save_settings for the atomic write.
+            p = os.path.join(core.DATA_DIR, "settings.json")
+            self._set = self._read_json(p) or self._read_json(p + ".bak") or {}
         return self._set
 
     def _save_settings(self):
+        # Atomic write: dump to a temp file, fsync, keep the last good file as .bak, then os.replace() it in.
+        # os.replace is atomic on Windows and POSIX, so a reader (or a colliding writer) can never see a
+        # half-written settings.json - the file class of "settings wiped itself overnight" bug is gone.
         try:
             os.makedirs(core.DATA_DIR, exist_ok=True)
-            with open(os.path.join(core.DATA_DIR, "settings.json"), "w", encoding="utf-8") as f:
+            path = os.path.join(core.DATA_DIR, "settings.json")
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._settings(), f, indent=1)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            if os.path.exists(path):
+                try:
+                    os.replace(path, path + ".bak")   # last known-good backup
+                except Exception:
+                    pass
+            os.replace(tmp, path)
         except Exception:
             pass
+
+    def _save_persist(self):
+        """Thread-safe save. _save_settings has no lock, so a background thread writing settings.json
+        while the main thread also writes it can truncate/corrupt the file (a 'new bug with no update').
+        Any code that may run off the main thread must save through here, not _save_settings directly."""
+        if threading.current_thread() is not threading.main_thread():
+            self.q.put(("call", self._save_settings))
+        else:
+            self._save_settings()
 
     UPDATE_MODES = {"Install automatically (recommended)": "auto", "Ask me first": "ask", "Never check": "off"}
     UPDATE_EVERY = 6 * 3600  # (old) seconds between automatic checks - now once a day at 15:00, see _daily_update

@@ -1,3 +1,17 @@
+## Network Doctor 3.77.0
+
+### Settings can no longer wipe themselves overnight (big reliability fix)
+Fixed the cause of "a new problem appears every day even though nothing was updated." The settings
+file (your tags, camera logins, whitelist, ignored problems, SNMP community) is now written
+**atomically** - the app writes a temporary file and swaps it in instantly, and keeps a backup. If
+the file is ever damaged, the app recovers from the backup instead of silently resetting to blank.
+Also fixed a start-up background task that could write the settings file unsafely. Together these
+remove the whole class of "the app forgot my settings" bugs.
+
+### Audit & Repairs log
+Added docs/AUDIT_REPAIRS.md - a permanent record of every bug found and exactly how it was fixed, so
+fixes are never lost and each audit builds on the last.
+
 ## Network Doctor 3.76.0
 
 ### Scan can no longer get stuck on "Waiting for the last answers"
