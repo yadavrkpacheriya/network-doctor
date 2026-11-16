@@ -306,9 +306,15 @@ def portforward_report(nat_rows, devices, tags=None, over=None):
 
 
 def find_conflicts(devices):
-    """{ip: [devices]} for IPs that more than one live device (different MAC) answers for."""
+    """{ip: [devices]} for IPs that more than one STABLE live device (different MAC) answers for - a real clash.
+
+    Randomized-MAC phones are skipped: they rotate their MAC and churn through DHCP, so two of them briefly holding
+    the same address mid-scan is normal reassignment, not a conflict to fix - counting those buried the real
+    clashes under dozens of phone-vs-phone 'clashes' that fix themselves in seconds."""
     by_ip = {}
     for d in live_devices(devices):
+        if d.get("random"):
+            continue
         by_ip.setdefault(d["ip"], []).append(d)
     return {ip: v for ip, v in by_ip.items() if len({x["mac"] for x in v}) > 1}
 

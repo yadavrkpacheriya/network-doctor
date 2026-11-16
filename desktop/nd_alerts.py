@@ -483,6 +483,14 @@ class AlertLog:
         except Exception:
             self.items = []
 
+    def clear(self):
+        """Remove every alert at once (the 'reset all alerts' action)."""
+        with self.lock:
+            n = len(self.items)
+            self.items = []
+        self.save()
+        return n
+
     def save(self):
         try:
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
