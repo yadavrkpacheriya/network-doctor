@@ -156,6 +156,13 @@ class ToolsTab:
         self.current = key
         if key == "watch":
             self.refresh_watch()
+        if key == "switch":
+            # The app's "Turn on SNMP (safe)" sets a RANDOM private community (never 'public') and saves it.
+            # Pre-fill the Read box with it, so reading the router works right after enabling SNMP instead of
+            # silently failing against the default 'public'. A community the user typed themselves is kept.
+            saved = (self.app._settings().get("snmp_community") or "").strip()
+            if saved and self.var_sw_comm.get().strip() in ("", "public"):
+                self.var_sw_comm.set(saved)
 
     def _adv(self, toggle_row, container, after=None):
         """A right-aligned 'Advanced' tick box on toggle_row that shows/hides an (empty) frame in container.

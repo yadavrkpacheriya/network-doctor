@@ -44,6 +44,20 @@ nd_configbak, nd_endpoint, nd_telemetry, nd_home, nd_pccare, nd_tunnel, nd_share
 NetworkDoctor.py, and the small helpers (nd_xlsx, nd_linux, nd_smbinfo, nd_livecheck, nd_poe,
 nd_report, nd_license, nd_auth, nd_ranges).
 
+## 2026-11-16 — Line-by-line read (v3.81.0)
+
+### R-008 · SNMP Read box ignored the private community the app set ("enabled SNMP but still can't read")
+- **Symptom:** After using "Turn on SNMP (safe)", the Switches (SNMP) Read tab still showed "No SNMP
+  answer" when reading the router. User had saved the router login and enabled SNMP but it never worked.
+- **Root cause:** "Turn on SNMP" correctly sets a RANDOM private community (never 'public', the
+  hacker-safe design) and saves it to settings["snmp_community"]. But the Read tab's community field
+  (nd_toolstab.py:485) was hard-coded to "public" and never loaded the saved community, so every read
+  used the wrong community and failed.
+- **Repair:** nd_toolstab ToolsTab.show() now pre-fills the SNMP community box with the saved private
+  community whenever it still holds the unusable "public" default (a community the user typed is kept).
+- **Note:** If the box still shows "public" after this (no saved community), "Turn on SNMP" never
+  actually applied on the router — the router API login in Setup is the thing to check.
+
 ## 2026-11-16 — Line-by-line read (v3.80.0+)
 
 ### R-007 · Device DB had no backup recovery (tags/labels could be lost)
