@@ -19,10 +19,21 @@ Fully read, end to end (not just scanned):
 - nd_bandwidth.py (629) — clean (ip_plan/auto-resolve correct; router commands reversible).
 - nd_tools.py (2161) — clean (binding/guard/DNS/site-block commands full-path + reversible;
   PC-fix PowerShell conservative; command library informational).
+- nd_reset.py (147) — clean (only ND-tagged items touched; exports config first; restores before removing).
+- nd_routeros.py (396) — clean (DPAPI password storage, pooled logins, correct API wire format).
+- nd_snmpcfg.py (75) — clean (random community, LAN-only, read-only, reversible — hacker-safe).
+- nd_arpblock.py (156) — clean (never blocks backbone/phones, auto-heals, internet-only).
+- nd_access.py (143) — clean (reply-only ARP / DHCP-full detection, reversible one-click fix).
+- nd_dvrip.py (233) — clean (XMeye protocol; bounded reads; single-match-only writes).
+- nd_dnsfilter.py (314) — clean (DNS filter server; never loops to self; per-client stats).
+- nd_defense.py (152) — clean (auto-defense: never acts on backbone/phones; cooldowns; auto-release).
+- nd_vuln.py (169) — clean (read-only security check; never logs in or exploits).
+TO VERIFY in NetworkDoctor.py: that nd_arpblock.expired() and nd_defense.expired() are polled and released.
 Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
-the big feature modules (nd_net, nd_usage, nd_monitor, nd_pcengine, nd_sweep, nd_snmp), the
-security/router modules (nd_reset, nd_routeros, nd_snmpcfg, nd_arpblock, nd_access, nd_dnsfilter,
-nd_dvrip, nd_defense, nd_vuln), NetworkDoctor.py, and the small helpers.
+the big feature modules (nd_net, nd_usage, nd_monitor, nd_pcengine, nd_sweep, nd_snmp), nd_brain,
+nd_configbak, nd_endpoint, nd_telemetry, nd_home, nd_pccare, nd_tunnel, nd_share, nd_slow,
+NetworkDoctor.py, and the small helpers (nd_xlsx, nd_linux, nd_smbinfo, nd_livecheck, nd_poe,
+nd_report, nd_license, nd_auth, nd_ranges).
 
 ## 2026-11-16 — Line-by-line read (v3.80.0+)
 
