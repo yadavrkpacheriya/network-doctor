@@ -34,6 +34,8 @@ Fully read, end to end (not just scanned):
 - nd_snmp.py (709) — clean (BER/SNMP read stack; writes gated on write-community + port_risk safety check).
 - nd_net.py (1448) — clean (port scan, DNS codec+hijack check, WoL, subnet calc, MTU probe, speed test,
   Wi-Fi analyzer, LAN speed server private-only, web/TLS check, MAC lookup).
+- nd_usage.py (1494) — clean (usage SQLite WAL store, app classification, insights/leak detection,
+  embedded offline dashboard with proper escaping).
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
 Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
