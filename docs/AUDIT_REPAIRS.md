@@ -36,6 +36,10 @@ Fully read, end to end (not just scanned):
   Wi-Fi analyzer, LAN speed server private-only, web/TLS check, MAC lookup).
 - nd_usage.py (1494) — clean (usage SQLite WAL store, app classification, insights/leak detection,
   embedded offline dashboard with proper escaping).
+- nd_monitor.py (1741) — clean (threat-intel, RDAP org lookup, NetFlow v5/v9/IPFIX parser, syslog
+  parsing, Monitor sampler/sniffer, root-cause engine; thread-safe, bounded, never flags own scans).
+  Note: Setup-paste SNMP uses community 'netdoctor' (LAN-locked to this PC); in-app enable uses a
+  random one. Both non-'public' (relevant to R-008).
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
 Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
