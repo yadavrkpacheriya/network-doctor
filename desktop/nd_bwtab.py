@@ -605,8 +605,10 @@ class BandwidthPage:
         background, and tries Hikvision / Dahua (HTTP) and XMeye (DVRIP) so it works across brands."""
         import nd_sweep as SW
         from tkinter import simpledialog
-        with core.DB_LOCK:
-            store = dict(self.app.db.get("sweep_status") or {})
+        # the Login sweep saves the working login under settings["device_logins"] (keyed by MAC), NOT in
+        # db["sweep_status"] (which holds only OK/refused status). Reading the wrong store made this always
+        # report "no credentials saved" even when a sweep had saved them. (R-009)
+        store = dict(self.app._settings().get("device_logins") or {})
         cams = [d for d in self.app.devices if d.get("online") and d.get("category") == core.CAT_CAM and d.get("ip")]
         if not cams:
             messagebox.showinfo(APP, "No online cameras were found to restart.")

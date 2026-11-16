@@ -74,5 +74,21 @@ class LineUpUsesThem(unittest.TestCase):
         self.assertIn(MAC, CL.candidates([res]))
 
 
+class CredentialStoreIsDeviceLogins(unittest.TestCase):
+    """R-009: camera restart / picture-check must read the credential store (settings['device_logins']),
+    NOT db['sweep_status'] (status only). A sweep_status entry holds no user/pw, so saved_get on it is None."""
+
+    def test_sweep_status_entry_holds_no_credentials(self):
+        # shape written by nd_sweeptab._save_result into db['sweep_status']
+        sweep_status = {MAC: {"time": 1, "status": S.OK, "detail": "", "method": "xmeye"}}
+        self.assertIsNone(S.saved_get(sweep_status, MAC))        # no user/pw there -> "no login saved"
+
+    def test_device_logins_entry_yields_the_login(self):
+        device_logins = {}
+        S.saved_put(device_logins, MAC, "admin", "camPass1", "xmeye")
+        self.assertEqual(S.saved_get(device_logins, MAC), ("admin", "camPass1"))
+        self.assertIn(MAC, S.saved_all(device_logins))
+
+
 if __name__ == "__main__":
     unittest.main()
