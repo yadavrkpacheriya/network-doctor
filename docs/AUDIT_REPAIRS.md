@@ -92,9 +92,22 @@ Fully read, end to end (not just scanned):
   defaults random-MAC/torrent OFF, warns before blocking random MACs, blocks rogue routers only when
   ticked, never auto-applies; website-block/force-DNS reversible with backup; CGNAT check is read-only
   and refuses wide-open rules (one scoped port + undo). All diagnostics read-only; thread-safe queue/poll.
-TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
-(2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
-Still to read: NetworkDoctor.py (5137, the main app) — the last module.
+NetworkDoctor.py (5137) — IN PROGRESS. Both flagged safety checks VERIFIED CLEAN:
+  (1) EXPIRED/RELEASE: _defense_expire() (L3052) iterates d.expired() → _remote("block", on:False) →
+      d.release(key), scheduled via self.after(mins*60000); arpblock.expired() released every 30s
+      (L1435-1439); App.on_close shutdown heals every active LAN block (L5082-5083). PASS.
+  (2) AUTO_SAFE / no disruptive auto-action: _auto_fix (L2824) applies a router fix ONLY when
+      kind in AL.AUTO_SAFE, always with cmd+undo, and _check_fix_regression (L2913) auto-undoes any
+      fix that produces a NEW problem on the same device/IP (this is the R-004 recurrence safety —
+      a bad fix throttles+reverses itself, the brain learns). Auto-defense (_defense_consider/_act,
+      L2985-3034) is a SEPARATE Pro-only path, gated by: armed + per-threat level explicitly set
+      above "notify" (default notify = NO action) + d.guard() (never backbone/phones) + wifi
+      whitelist + cooldown + audit log + time-limited auto-release. loop/multicast have no
+      disruptive auto-action by default. PASS.
+  Read so far: L1-340 (version/tree helpers/ping+command windows — R-006 core.VERSION=VERSION at L73
+  confirmed), L2740-3099 (alert→auto-fix→regression-undo→auto-defense core). Minor: PingWindow._close
+  references self.usage which it never sets — harmless (wrapped in try/except, flush just no-ops).
+  Still to read: the rest of NetworkDoctor.py (init/scan/UI wiring/_remote API/export/update).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
