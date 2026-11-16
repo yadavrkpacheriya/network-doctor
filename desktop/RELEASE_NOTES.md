@@ -1,3 +1,12 @@
+## Network Doctor 3.78.0
+
+### IP-conflict alert now tells you how to make it auto-fix
+When two devices share an IP, Network Doctor can bind the right one and move the other automatically
+- but only if you've told it which device should KEEP the IP (it must never guess and risk dropping a
+camera off your NVR). The troubleshoot dialog now says this clearly: tag the device that should keep
+the IP as "Default device for its IP" in the Devices tab, and every future repeat of that conflict
+fixes itself and clears its own alert - no "Mark fixed" click needed.
+
 ## Network Doctor 3.77.0
 
 ### Settings can no longer wipe themselves overnight (big reliability fix)
