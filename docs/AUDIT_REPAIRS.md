@@ -40,6 +40,9 @@ Fully read, end to end (not just scanned):
   parsing, Monitor sampler/sniffer, root-cause engine; thread-safe, bounded, never flags own scans).
   Note: Setup-paste SNMP uses community 'netdoctor' (LAN-locked to this PC); in-app enable uses a
   random one. Both non-'public' (relevant to R-008).
+- nd_pcengine.py (1755) — clean (PC-Care PowerShell engine; every change reversible via undo scripts;
+  safe-path guards block system folders; user removal backs up + verifies before delete; net/TCP reset
+  gated and warned). Exemplary reversible design.
 TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
 (2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
 Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
