@@ -1,3 +1,12 @@
+## Network Doctor 3.80.0
+
+### Line-by-line audit - two real fixes
+Reading the code line by line found and fixed two genuine issues:
+- Exported HTML reports showed the wrong version in the footer ("v3.18.0"); they now show the real
+  running version.
+- The device database (your labels/tags and history) now keeps a backup and recovers from it if the
+  file is ever damaged - the same protection settings got in 3.77.0.
+
 ## Network Doctor 3.79.0
 
 ### Full code audit - reliability hardening
