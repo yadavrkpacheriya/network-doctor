@@ -1074,12 +1074,21 @@ def categorize(d, gw):
 # ==========================================================================
 # device memory (own database, no router needed)
 # ==========================================================================
-def load_db():
+def _read_db_file(path):
     try:
-        with open(DB_PATH, encoding="utf-8") as f:
-            db = json.load(f)
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
     except Exception:
-        db = {}
+        return None
+
+
+def load_db():
+    # Recover from the .bak backup before falling back to an empty DB - an empty DB would silently drop every
+    # saved label/tag and all device history (the same "state wiped itself" class fixed for settings.json).
+    db = _read_db_file(DB_PATH)
+    if db is None:
+        db = _read_db_file(DB_PATH + ".bak") or {}
     db.setdefault("labels", {})
     db.setdefault("devices", {})
     db.setdefault("ip_owner", {})
@@ -1098,6 +1107,11 @@ def save_db(db):
         tmp = DB_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
+        if os.path.exists(DB_PATH):
+            try:
+                os.replace(DB_PATH, DB_PATH + ".bak")  # keep the last good copy for load_db() recovery
+            except Exception:
+                pass
         os.replace(tmp, DB_PATH)
     except Exception:
         pass

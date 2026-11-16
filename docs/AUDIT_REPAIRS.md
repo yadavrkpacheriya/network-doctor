@@ -12,6 +12,26 @@ Format per entry:
 
 ---
 
+## 2026-11-16 — Line-by-line read (v3.80.0+)
+
+### R-007 · Device DB had no backup recovery (tags/labels could be lost)
+- **Symptom:** (latent) if devices_db.json were ever corrupt, `load_db` fell back to `{}`, wiping all
+  labels/tags and device history.
+- **Root cause:** No `.bak` safety net (unlike settings after R-003). Writes are atomic, so only
+  external corruption could trigger it, but tags are precious.
+- **Repair:** `save_db` now rotates a `.bak`; `load_db` recovers from it before falling back to empty,
+  and rejects non-dict JSON.
+
+### R-006 · Exported HTML reports showed the wrong app version
+- **Symptom:** Every "Export report (HTML)" footer read "Network Doctor v3.18.0" regardless of the
+  real version.
+- **Root cause:** `nd_core.export_html` prints `nd_core.VERSION`, a separate constant frozen at
+  "3.18.0" that nothing kept in sync with the real `NetworkDoctor.py` VERSION.
+- **Repair:** `NetworkDoctor.py` sets `core.VERSION = VERSION` at startup — one source of truth, so
+  reports always show the running version.
+- **Found by:** the line-by-line read (an earlier grep missed it because the use is a bare `VERSION`
+  inside nd_core).
+
 ## 2026-11-16 — Full Windows audit (v3.77.0 – v3.79.0)
 
 ### R-005 · License file written non-atomically
