@@ -28,7 +28,11 @@ Fully read, end to end (not just scanned):
 - nd_dnsfilter.py (314) — clean (DNS filter server; never loops to self; per-client stats).
 - nd_defense.py (152) — clean (auto-defense: never acts on backbone/phones; cooldowns; auto-release).
 - nd_vuln.py (169) — clean (read-only security check; never logs in or exploits).
-TO VERIFY in NetworkDoctor.py: that nd_arpblock.expired() and nd_defense.expired() are polled and released.
+- nd_brain.py (278) — clean (NB+ensemble; recurrence signatures match callers; AUTO_SAFE excludes
+  block/expose/reboot/quarantine/DNS kinds).
+- nd_sweep.py (708) — clean (one-try-per-device, canary+breaker, LAN-only, saved logins encrypted).
+TO VERIFY in NetworkDoctor.py: (1) nd_arpblock.expired() and nd_defense.expired() are polled+released;
+(2) loop/multicast kinds in nd_brain.AUTO_SAFE have no disruptive auto-action wired.
 Still to read: the tab/UI modules (nd_tabs, nd_toolstab, nd_bwtab, nd_protab, nd_sweeptab),
 the big feature modules (nd_net, nd_usage, nd_monitor, nd_pcengine, nd_sweep, nd_snmp), nd_brain,
 nd_configbak, nd_endpoint, nd_telemetry, nd_home, nd_pccare, nd_tunnel, nd_share, nd_slow,
