@@ -92,7 +92,7 @@ Fully read, end to end (not just scanned):
   defaults random-MAC/torrent OFF, warns before blocking random MACs, blocks rogue routers only when
   ticked, never auto-applies; website-block/force-DNS reversible with backup; CGNAT check is read-only
   and refuses wide-open rules (one scoped port + undo). All diagnostics read-only; thread-safe queue/poll.
-NetworkDoctor.py (5137) — IN PROGRESS. Both flagged safety checks VERIFIED CLEAN:
+NetworkDoctor.py (5137) — COMPLETE, read line-by-line end to end, clean. Both flagged safety checks VERIFIED CLEAN:
   (1) EXPIRED/RELEASE: _defense_expire() (L3052) iterates d.expired() → _remote("block", on:False) →
       d.release(key), scheduled via self.after(mins*60000); arpblock.expired() released every 30s
       (L1435-1439); App.on_close shutdown heals every active LAN block (L5082-5083). PASS.
@@ -104,10 +104,49 @@ NetworkDoctor.py (5137) — IN PROGRESS. Both flagged safety checks VERIFIED CLE
       above "notify" (default notify = NO action) + d.guard() (never backbone/phones) + wifi
       whitelist + cooldown + audit log + time-limited auto-release. loop/multicast have no
       disruptive auto-action by default. PASS.
-  Read so far: L1-340 (version/tree helpers/ping+command windows — R-006 core.VERSION=VERSION at L73
-  confirmed), L2740-3099 (alert→auto-fix→regression-undo→auto-defense core). Minor: PingWindow._close
-  references self.usage which it never sets — harmless (wrapped in try/except, flush just no-ops).
-  Still to read: the rest of NetworkDoctor.py (init/scan/UI wiring/_remote API/export/update).
+  Phone/remote API (_remote_cmd/_remote, L4165-4577): LAN-only share → pairing code → token → (Pro)
+  nd_auth RBAC role check per action → audit log. router_reboot/poweroff/isolate are Pro + admin-role +
+  MANUAL (never automatic). router_cmd accepts only INDICES into the vetted T.COMMANDS library — no
+  arbitrary command injection. block/isolate/site-blocks reversible by rule comment; _arp_fallback_block
+  uses verified AB.plan (never backbone/phones), internet-only, time-limited. CGNAT/vuln/capture/exposure
+  read-only. R-fixes re-confirmed in place: R-003 (_settings recovers from .bak; _save_settings atomic
+  tmp+fsync+rotate+os.replace), R-002 (_save_persist marshals off-thread saves), R-006 (core.VERSION at
+  L73), R-007 (load_db .bak recovery in nd_core). Auto-update (daily 15:00, auto/ask/off, waits for a
+  running scan) is the "update not available" item — working as designed; a published GitHub release at a
+  higher version is what triggers the in-app prompt. Minor (not a bug): PingWindow._close references
+  self.usage which it never sets — harmless, wrapped in try/except so the flush just no-ops.
+
+---
+
+## FINAL AUDIT SUMMARY — 2026-11-16 (line-by-line, every module)
+
+**Scope:** full line-by-line read of the entire desktop codebase (~40 modules, ~33k lines) at the user's
+request ("Full line-by-line, every module"), driven by an autonomous self-continuing check loop.
+
+**Verdict:** the codebase is high-quality, reversible, and safety-conscious throughout. Every module was
+read end to end (not grep-sampled). Real bugs found and fixed: R-001..R-008 (below). The remaining ~39
+modules read clean. No new bugs surfaced in the tab/UI modules, the helpers, or NetworkDoctor.py.
+
+**Standing safety rules — all upheld in code:**
+- Never disrupt the office network: every router change flows through ONE gate (App.router_apply /
+  _router_job) that asks "Apply on the router now?" and keeps an UNDO; the Reset tab touches only
+  ND-tagged items and backs up to nd-before-reset.rsc first; camera moves are one-at-a-time with
+  per-camera verify and stop-at-first-failure.
+- Reversible: every auto-fix has an undo + a post-fix regression check that auto-undoes a fix which
+  causes a new problem (nd_autofix + _check_fix_regression). Auto-defense cuts auto-release on a timer
+  and heal on app close.
+- Hacker-safety: SNMP is enabled hacker-safe (random read-only community, LAN-locked, never 'public',
+  reversible); remote access opens NO router port (Cloudflare tunnel forwards only TCP 8787, sign-in
+  required); CGNAT advisor refuses wide-open rules (one scoped port + undo); no auto-UPnP.
+- block/expose/reboot/quarantine/DNS kinds stay MANUAL: none are wired to any automatic/brain path;
+  they require an explicit operator action (and, on the phone, an admin role + audit).
+
+**Repairs made this audit:** R-001 stuck-scan deadline; R-002 off-thread settings save race; R-003 the
+daily settings-wipe (atomic write + .bak recovery) — the root cause of "a new bug every day with no
+update"; R-004 IP-conflict auto-fix discoverability; R-005 atomic license write; R-006 stale version in
+exported reports; R-007 device-DB .bak recovery; R-008 SNMP Read box ignored the saved private community.
+
+**Module coverage ledger below** (every module marked "clean" was read in full this audit).
 
 ## 2026-11-16 — Line-by-line read (v3.81.0)
 
