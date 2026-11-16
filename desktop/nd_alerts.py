@@ -149,8 +149,13 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
         return _fix(1, "ip_conflict", f"Two devices use the same IP {ip}",
                     "Two devices answer for one IP. Both get cut off at random; printers and ERP sessions drop.",
                     "Give each device its own IP: switch the one with the hand-typed IP to automatic, or bind each "
-                    "MAC to its IP (IP-MAC binding).",
+                    "MAC to its IP (IP-MAC binding). To make this fix itself next time: in the Devices tab, tag the "
+                    "ONE device that should keep this IP as 'Default device for its IP' - then Network Doctor binds "
+                    "that one and moves the other automatically, and clears the alert on its own (no 'Mark fixed' "
+                    "click). It never guesses which device to keep, so without that tag it stays a manual fix.",
                     [f"Note the two MAC addresses in the alert ({', '.join(macs[:2]) or 'see the alert'}).",
+                     "In the Devices tab, tag the device that should KEEP this IP as 'Default device for its IP' - "
+                     "this one line lets the auto-fix handle every future repeat for you.",
                      "Open IP-MAC binding (button below): it shows which device the IP belongs to.",
                      "On the other device set the IP to automatic, or change it to a free IP outside the DHCP range.",
                      "Restart that device's network (unplug the cable 10 seconds, or ipconfig /renew).",

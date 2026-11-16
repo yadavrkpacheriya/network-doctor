@@ -12,7 +12,22 @@ Format per entry:
 
 ---
 
-## 2026-11-16 — Full Windows audit (v3.77.0)
+## 2026-11-16 — Full Windows audit (v3.77.0 – v3.78.0)
+
+### R-004 · IP conflict kept re-appearing; user expected the brain to auto-fix it
+- **Symptom:** "Two devices use the same IP" alert recurred; user thought it should already be
+  auto-fixed and auto-marked done.
+- **Root cause:** NOT a bug — a real live conflict (two physical cameras both set to the same IP).
+  The auto-fix (`_auto_fix_ip_conflict`) and the auto-clear-on-resolve (`_evaluate`) both already
+  exist, but the auto-fix only runs when exactly one conflicting device is tagged "Default device
+  for its IP" (it must never guess which device to keep, to avoid dropping a camera off the NVR).
+  The dialog never told the user that tagging one device unlocks the automatic fix — a discoverability
+  gap, not a logic bug.
+- **Repair:** The IP-conflict troubleshoot text and steps now explicitly tell the user to tag the
+  keeper device as "Default device for its IP" so every future repeat fixes itself and clears its
+  own alert.
+- **Prevents:** User confusion + manual re-fixing of a conflict the app can handle once told the
+  keeper. The never-guess safety rule stays intact.
 
 ### R-003 · Settings wiped themselves overnight ("a new bug every day with no update")
 - **Symptom:** Tags, camera logins, whitelist, ignored problems, SNMP community occasionally all
