@@ -39,3 +39,13 @@ def test_two_handtyped_conflict_flags_device_side():
     assert acts == ["keep", "skip"]   # one keeps, the other must be changed on the device
     skip = [r for r in plan if r["action"] == "skip"][0]
     assert "on the device" in skip["why"]
+
+
+def test_alertlog_clear_empties_everything(tmp_path):
+    import nd_alerts as AL
+    log = AL.AlertLog(str(tmp_path / "a.json"))
+    log.add("warning", "x happened", "test")
+    log.add("critical", "y happened", "test")
+    assert len(log.items) == 2
+    assert log.clear() == 2
+    assert log.items == []

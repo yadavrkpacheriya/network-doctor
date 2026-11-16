@@ -1,3 +1,11 @@
+## Network Doctor 3.75.0
+
+### Clear all alerts in one click
+New **"Clear all alerts"** button on the Alerts tab and on the alert pop-up. It empties the whole alert list at once. It only resets the list - it changes nothing on the network, so any problem that is still happening is simply reported again on the next check.
+
+### Fewer false IP clashes
+The "IP CLASH" list no longer counts randomized-MAC phones that briefly reuse the same DHCP address while reconnecting - that is normal churn, not a real clash. Only genuine conflicts between stable devices (cameras / PCs) are shown now, so the list reflects what actually needs fixing.
+
 ## Network Doctor 3.74.0
 
 ### Mark a problem as "known" so it stops nagging - permanently

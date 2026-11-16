@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.74.0"
+VERSION = "3.75.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -749,6 +749,26 @@ class App(tk.Tk):
         f = self.nav.page("alerts")
         self._page_header(f, "alerts", "Alerts")
         self.alerts_tab = nd_tabs.AlertsTab(self, f)
+
+    def clear_all_alerts(self):
+        """Reset every alert at once. Only clears the alert HISTORY - it does not touch the network or any fix, so
+        if a problem is still live it will simply be re-reported on the next check."""
+        from tkinter import messagebox
+        n = len(self.alert_log.items)
+        if not n:
+            messagebox.showinfo(APP, "There are no alerts to clear.")
+            return
+        if not messagebox.askyesno(APP, f"Clear all {n} alert(s)?\n\nThis only empties the alert list - it changes "
+                                        f"nothing on the network. Any problem that is still happening will be "
+                                        f"reported again on the next check."):
+            return
+        self.alert_log.clear()
+        try:
+            self.alerts_tab.refresh()
+            self.nav.set_label("alerts", "Alerts")
+        except Exception:  # noqa: BLE001
+            pass
+        self.var_status.set(f"Cleared {n} alert(s).")
 
     def _tab_inventory(self):
         f = self.nav.page("inventory")
@@ -3569,6 +3589,8 @@ class App(tk.Tk):
             mb["menu"] = mm
             mb.pack(side="right")
             ttk.Button(bar, text="Close", command=w.destroy).pack(side="right", padx=6)
+            ttk.Button(bar, text="Clear all alerts",
+                       command=lambda: (self.clear_all_alerts(), w.destroy())).pack(side="right", padx=6)
             self.alert_txt = text_box(w)
         t = self.alert_txt
         t.configure(state="normal")

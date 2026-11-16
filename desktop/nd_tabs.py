@@ -1854,6 +1854,7 @@ class AlertsTab:
         ttk.Button(act, text="Re-open", command=lambda: self.mark("open")).pack(side="left")
         ttk.Button(act, text="Copy", command=self.copy).pack(side="left", padx=6)
         ttk.Button(act, text="Auto-fixes...", command=self.open_autofixes).pack(side="left", padx=6)
+        ttk.Button(act, text="Clear all alerts", command=self.app.clear_all_alerts).pack(side="left", padx=6)
         ttk.Label(act, text="Double-click an alert to troubleshoot it", foreground="#667085").pack(side="left", padx=8)
         cols = ("prio", "device", "alert", "fix", "times", "status")
         heads = ("Priority", "Device", "Alert", "Fix", "Times", "Status")
