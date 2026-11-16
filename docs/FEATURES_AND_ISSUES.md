@@ -184,4 +184,43 @@ These came from your chats (including ones since deleted) and were filed in memo
 
 ---
 
+# D. ONE-TRY vs REPEATED — combined analysis
+
+Every issue and feature classified by whether it landed working on the first attempt, or needed multiple versions / kept coming back.
+
+## Combined totals
+| Category | ✅ Clean in 1 try | 🔁 Iterated / repeated | Total |
+|---|---|---|---|
+| Issues (bugs) | 23 | 9 | 32 |
+| Features | 29 | 13 | 42 |
+| **Combined** | **52 (70%)** | **22 (30%)** | **74** |
+
+**The one pattern across all 22 hard ones:** they only break, or stay unconfirmed, against **real hardware / a real network** — the MikroTik router, real XMeye cameras, a clean Linux install, the live office. The 52 clean ones were app-internal logic/UI that the test suite fully covers.
+
+## 🔁 Issues that needed multiple tries or repeated (9)
+| Problem | Versions | Why it was hard |
+|---|---|---|
+| Linux .deb wouldn't open | 3.23.0→3.23.11 (~11) | Failed on real machines 3× running; CI masked it each time |
+| Settings wiped overnight | R-002+R-003+R-007 (3) | "A new bug every day"; took 3 fixes to kill the class |
+| Config backup didn't work | 3.28.0→3.28.4 (4) | Only broke on a real RouterOS router |
+| SNMP read still fails | 3.63→3.81 (2) | Read box kept defaulting to "public" |
+| IP conflict kept re-appearing | R-004 + 3.61 (2+) | Real recurring conflict; flagged "why again" |
+| WiFi cut off after binding | 3.42/3.60/3.69 (3) | Three causes: fake MAC, reply-only ARP, binding not applying |
+| Camera move / XMeye / ONVIF / NVR | 3.29/3.30.1/3.31/3.31.1 (4) | Still untested on real cameras |
+| Phone remote address goes dead | 3.22 + 3.28.x (2) | Cloudflare tunnel address kept changing |
+| Versions never reached you | 3.30.x, 3.37/3.38.x (2) | Build/test pipeline blocked the release |
+
+## 🔁 Features that needed rework (13)
+Line up cameras (6 versions, unconfirmed) · Login sweep (4) · Usage real names (4) · IP-MAC binding (3) · SNMP (3) · Remote access/phone link (5+) · Menu/UI reorg (6+) · PC Care/agent (5) · Auto-fix brain (5) · Linux .deb (11) · Config backup (5) · Data-leak/LeakWatch (3) · Restart cameras (2).
+
+## ✅ Clean in one try — issues (23)
+Stuck scan · License atomic-write · Report wrong version · Quick-check NameError · Port-scanner name clash · Camera-check settings race · Startup "Item already exists" crash · Devices shown twice · Cameras false "randomized MAC" · "Fake/cloned MAC" false warning · False IP clashes from phones · CGNAT false reading with VPN · VIP/Boost ran slower · NVR blocked with cameras · Auto-defense cut own PC · Auto-fix list stayed empty · Threat-list misclassified · Blocked sites not reaching phones · Remote-tunnel error-dialog crash · Phone shown as DVR · PC-agent data not showing · Own-scan false "broadcast storm" · MTU nag after clamp.
+
+## ✅ Clean in one try — features (29)
+Full scan · Quick check · New/changed 7-day marking · Online-only default · Best-guess typing · Sort/filter/MAC search · Cameras & Computers menus · DVR/NVR auto-detect · Show free IPs · IP-conflict auto-fix · Fixed-IP plan · Bandwidth plan/VIP · Live monitor · SNMP bandwidth fallback · Slow-website check · Down-for-everyone check · Brute-force alert · Vuln/capture/exposure · Router-drop diagnosis · Fake-MAC detection · CGNAT check · Whitelist · Let-blocked-connect · Daily report · Alert mute · Mark known/Clear all · History & trends · Inventory Excel · Fix Assistant · Network map.
+
+*Counts are by distinct issue / major feature; sub-features would run higher.*
+
+---
+
 *Source: RELEASE_NOTES.md (117 versions) + /areas/network-doctor.md. Bug-detail reference for the recent audit: docs/AUDIT_REPAIRS.md.*
