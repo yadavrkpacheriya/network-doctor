@@ -475,6 +475,7 @@ class BandwidthPage:
                          ("Resolve conflicts automatically", lambda: self.make_ips(auto_resolve=True)),
                          ("Change IP of selected...", self.change_ip),
                          ("Reserve on the router now", self.apply_ips),
+                         ("Show free IPs", lambda: self.app.show_free_ips()),
                          ("Restart cameras", self.restart_cameras),
                          ("Bind confirmed (already in range)", self.bind_confirmed),
                          ("Show commands", self.show_ips), ("Undo (remove these reservations)", self.undo_ips),

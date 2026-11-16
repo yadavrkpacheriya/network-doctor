@@ -1,3 +1,8 @@
+## Network Doctor 3.73.0
+
+### Free-IP list - know which address is safe to use
+New **"Show free IPs"** button on Internet & Usage > Bandwidth plan > Fixed IPs. It lists every address in your subnet that no known device uses (online or seen before), both as compact ranges and a full list, with a "Copy all" button. So when you set a device's IP by hand you can pick a truly free one and avoid a clash. It also reminds you to choose an address OUTSIDE the router's DHCP pool for a permanent static IP.
+
 ## Network Doctor 3.72.0
 
 ### Cameras no longer falsely flagged "randomized MAC" - they can be reserved now

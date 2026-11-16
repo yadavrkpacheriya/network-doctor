@@ -69,7 +69,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.72.0"
+VERSION = "3.73.0"
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
 
@@ -942,6 +942,43 @@ class App(tk.Tk):
             return
         import webbrowser
         webbrowser.open(f"http://{d['ip']}")
+
+    def show_free_ips(self):
+        """List every IP in the subnet that no known device uses, so the user can pick a safe address when setting
+        a device's IP by hand. Conservative: an IP any device has (online or seen before) is treated as taken."""
+        import ipaddress
+        import tkinter as tk
+        from tkinter import ttk
+        try:
+            net = str(ipaddress.ip_network((self.gw or "192.168.0.1") + "/24", strict=False))
+        except ValueError:
+            net = "192.168.0.0/24"
+        used = set()
+        for d in self.devices:
+            if d.get("ip"):
+                used.add(d["ip"])
+            used.update(d.get("ips") or [])
+            used.update(d.get("stale_ips") or [])
+        free = core.free_ips(net, used, self.gw)
+        ranges = core.collapse_ranges(free)
+        w = tk.Toplevel(self)
+        w.title("Free IP addresses")
+        w.geometry("470x580")
+        ttk.Label(w, justify="left", text=(
+            f"{len(free)} free address(es) in {net} - no known device uses these.\n\n"
+            "For a PERMANENT hand-typed IP, pick one OUTSIDE your router's DHCP pool so the router never hands it "
+            "to someone else. If your pool is .100-.254, choose a free address below .100.")).pack(
+            anchor="w", padx=10, pady=8)
+        box = tk.Text(w, wrap="none", font=("Consolas", 10))
+        box.pack(fill="both", expand=True, padx=10, pady=6)
+        box.insert("end", "FREE RANGES\n-----------\n" + "\n".join(ranges)
+                   + "\n\nALL FREE IPs\n------------\n" + "\n".join(free))
+        box.configure(state="disabled")
+        bar = ttk.Frame(w)
+        bar.pack(fill="x", padx=10, pady=6)
+        ttk.Button(bar, text="Copy all free IPs",
+                   command=lambda: (self.clipboard_clear(), self.clipboard_append("\n".join(free)))).pack(side="left")
+        ttk.Button(bar, text="Refresh", command=lambda: (w.destroy(), self.show_free_ips())).pack(side="left", padx=6)
 
     def _cat_tag(self, key):
         """Tag (name / department / where connected / owner) the selected device(s) from the Cameras or Computers
