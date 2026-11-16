@@ -1,3 +1,12 @@
+## Network Doctor 3.81.0
+
+### Fixed: "I turned on SNMP but reading the switch still fails"
+When you use "Turn on SNMP (safe)", the app sets a private, random community name (never the guessable
+"public") for security. But the Switches (SNMP) Read box was still defaulting to "public", so reading
+the router always failed. The Read box now auto-fills with the private community the app set, so reading
+works right after you turn SNMP on. (If it still shows "public", the router login in Setup is missing,
+so SNMP was never actually turned on.)
+
 ## Network Doctor 3.80.0
 
 ### Line-by-line audit - two real fixes
