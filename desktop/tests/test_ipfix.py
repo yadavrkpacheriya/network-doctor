@@ -97,6 +97,35 @@ class ReserveAgainstFakeRouter(unittest.TestCase):
         self.assertIn("remove", undo)
         self.assertIn("ND: fixed IP", undo)
 
+    def test_reach_ip_picks_free_on_camera_subnet(self):
+        ip = F.reach_ip("192.168.1.134", used={"192.168.1.1", "192.168.1.134"})
+        self.assertEqual(F.base24(ip), "192.168.1")       # on the camera's range
+        self.assertEqual(ip, "192.168.1.250")             # prefers .250
+        self.assertNotEqual(ip, "192.168.1.134")
+
+    def test_reach_ip_avoids_used_and_the_camera(self):
+        used = {"192.168.1.%d" % n for n in (250, 251, 252, 249, 248, 240, 200, 199, 100)}
+        ip = F.reach_ip("192.168.1.134", used=used)
+        self.assertTrue(ip and ip not in used and ip != "192.168.1.134")
+
+    def test_reach_ip_bad_input(self):
+        self.assertEqual(F.reach_ip("not-an-ip"), "")
+
+    def test_netsh_argv_add_and_delete(self):
+        add = F.netsh_add_argv("Ethernet", "192.168.1.250")
+        self.assertEqual(add[:5], ["netsh", "interface", "ipv4", "add", "address"])
+        self.assertIn("name=Ethernet", add)
+        self.assertIn("192.168.1.250", add)
+        self.assertIn("255.255.255.0", add)
+        dele = F.netsh_del_argv("Ethernet", "192.168.1.250")
+        self.assertIn("delete", dele)
+        self.assertIn("address=192.168.1.250", dele)
+
+    def test_reach_guide_mentions_camera_and_temp_ip(self):
+        g = F.reach_guide("192.168.1.134")
+        self.assertIn("192.168.1.134", g)
+        self.assertIn("192.168.1.250", g)
+
 
 if __name__ == "__main__":
     unittest.main()

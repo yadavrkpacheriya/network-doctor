@@ -228,6 +228,29 @@ def arp_sweep(nets, arp_fn):
     return out
 
 
+def is_local_link(ip):
+    """True only for an address on a directly-reachable local/PoE link - private (RFC1918) or APIPA
+    link-local. CGNAT 100.64.0.0/10 (Tailscale and carrier NAT), public addresses and loopback are NOT a
+    direct link: a camera reached at one of those came over a VPN/WAN, not the PoE switch, so the PoE check
+    must leave it out. Used to keep 'Direct camera check' to what is really on the local wire."""
+    try:
+        o = [int(x) for x in (ip or "").split(".")]
+    except (ValueError, AttributeError):
+        return False
+    if len(o) != 4 or any(n < 0 or n > 255 for n in o):
+        return False
+    a, b = o[0], o[1]
+    if a == 10:
+        return True
+    if a == 172 and 16 <= b <= 31:
+        return True
+    if a == 192 and b == 168:
+        return True
+    if a == 169 and b == 254:                    # APIPA - a direct PoE link with no DHCP often lands here
+        return True
+    return False                                 # 100.64/10 (VPN/CGNAT), public, loopback -> not a direct link
+
+
 def subnet_ips(ip):
     """The /24 around an IP (x.y.z.1 .. x.y.z.254), for sweeping the PC's own link."""
     try:

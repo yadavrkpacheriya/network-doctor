@@ -49,6 +49,51 @@ def base24(ip):
     return ".".join(p[:3]) if len(p) == 4 else ""
 
 
+# --------------------------------------------------------------- reach an off-subnet camera
+def reach_ip(cam_ip, used=None):
+    """Pick a free address on the CAMERA's /24 for the PC to borrow temporarily, so it can reach a camera on
+    another subnet (browser + the direct fix tools then work). Prefers .250 downward, skips the camera's own
+    IP, the gateway (.1) and anything already used. '' if cam_ip isn't an IPv4."""
+    base = base24(cam_ip)
+    if not base:
+        return ""
+    used = {str(u) for u in (used or [])}
+    used.add(cam_ip)
+    for n in (250, 251, 252, 249, 248, 240, 200, 199, 100):
+        ip = "%s.%d" % (base, n)
+        if ip not in used and n != 1:
+            return ip
+    for n in range(2, 255):                      # fall back to any free host
+        ip = "%s.%d" % (base, n)
+        if ip not in used and ip != cam_ip:
+            return ip
+    return ""
+
+
+def netsh_add_argv(iface, ip, mask="255.255.255.0"):
+    """Add a second IP to a Windows adapter (no gateway - routing stays on the main IP). Reversible."""
+    return ["netsh", "interface", "ipv4", "add", "address", "name=%s" % iface, ip, mask]
+
+
+def netsh_del_argv(iface, ip):
+    """Remove the temporary second IP added by netsh_add_argv."""
+    return ["netsh", "interface", "ipv4", "delete", "address", "name=%s" % iface, "address=%s" % ip]
+
+
+def reach_guide(cam_ip, temp_ip=""):
+    """Plain manual steps to reach an off-subnet camera, shown as the fallback if the one-click temp IP fails."""
+    base = base24(cam_ip) or "192.168.1"
+    temp_ip = temp_ip or (base + ".250")
+    return ("Manual steps to reach %s (it is on a different subnet):\n"
+            "  1. Open Windows 'Change adapter options' > your LAN adapter > Properties >\n"
+            "     Internet Protocol Version 4 > Properties > Advanced > Add a second IP:\n"
+            "         IP: %s    Mask: 255.255.255.0   (leave gateway blank)\n"
+            "  2. Open  http://%s  in your browser and log in to the camera.\n"
+            "  3. Set the camera's IP to your main range (e.g. 192.168.0.x) and save.\n"
+            "  4. Remove the second IP you added in step 1.\n"
+            "Your main network keeps working the whole time." % (cam_ip, temp_ip, cam_ip))
+
+
 # --------------------------------------------------------------- router reserve recipe
 def reserve_recipe(ip, mac, name=""):
     """(cmd, undo) that pins `ip` to `mac` permanently on a MikroTik. Idempotent: an existing dynamic lease is

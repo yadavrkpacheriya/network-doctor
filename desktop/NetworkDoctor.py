@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.2"
+VERSION = "4.3"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1145,7 +1145,79 @@ class App(tk.Tk):
             lambda c: DV.set_dhcp(ip, c[0], c[1]), "Switching to DHCP")).grid(row=3, column=1, pady=6, padx=2)
         ttk.Button(frm, text="Reboot", command=lambda: run(
             lambda c: DV.reboot(ip, c[0], c[1]) or "reboot sent", "Rebooting")).grid(row=3, column=2, pady=6, padx=2)
+        # Reach a camera on another subnet (can't open in browser / fixes fail): borrow a temp IP on its range.
+        off = IPFIX.base24(ip) and IPFIX.base24(ip) != IPFIX.base24(self.lip or "")
+        ttk.Button(frm, text=("Reach / open (other subnet)" if off else "Open in browser"),
+                   command=lambda: self._camera_reach(ip, status)).grid(row=4, column=0, pady=(8, 0), padx=2)
         ttk.Button(frm, text="Close", command=win.destroy).grid(row=4, column=2, sticky="e", pady=(4, 0))
+
+    def _iface_for_ip(self, ip):
+        """Name of the Windows adapter that currently holds `ip` (for netsh add/delete address). '' if unknown."""
+        if not core.IS_WIN:
+            return ""
+        try:
+            out = core.run(["powershell", "-NoProfile", "-Command",
+                            "(Get-NetIPAddress -IPAddress %s -AddressFamily IPv4)."
+                            "InterfaceAlias" % ip], 8) or ""
+            return out.strip().splitlines()[0].strip() if out.strip() else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _camera_reach(self, ip, status=None):
+        """Open an off-subnet camera that the browser/fixes can't reach: add a temporary second IP on this PC
+        in the camera's range (main network untouched), open the camera, offer one-click removal. Falls back
+        to the manual guide if it needs admin or the adapter can't be found. Same-subnet: just open it."""
+        def say(m):
+            if status is not None:
+                status.set(m)
+        off = IPFIX.base24(ip) and IPFIX.base24(ip) != IPFIX.base24(self.lip or "")
+        if not off:
+            webbrowser.open(f"http://{ip}")
+            say("Opened http://%s - if nothing loads, the camera's web page may be on another port." % ip)
+            return
+        guide = IPFIX.reach_guide(ip)
+        if not (core.IS_WIN and core.is_admin()):
+            messagebox.showinfo(APP, "To reach a camera on another subnet automatically, run Network Doctor as "
+                                     "administrator.\n\nOr do it by hand:\n\n" + guide)
+            return
+        iface = self._iface_for_ip(self.lip or "")
+        if not iface:
+            messagebox.showinfo(APP, "Couldn't find this PC's network adapter automatically.\n\n" + guide)
+            return
+        used = {d.get("ip") for d in (getattr(self, "devices", []) or []) if d.get("ip")}
+        temp = IPFIX.reach_ip(ip, used)
+        if not temp:
+            messagebox.showinfo(APP, "Couldn't pick a free temporary IP.\n\n" + guide)
+            return
+        r = core.run(IPFIX.netsh_add_argv(iface, temp), 12)
+        say("Added temporary IP %s on '%s' - opening camera..." % (temp, iface))
+        webbrowser.open(f"http://{ip}")
+
+        def remove():
+            core.run(IPFIX.netsh_del_argv(iface, temp), 12)
+            say("Removed temporary IP %s. Main network unchanged." % temp)
+            w.destroy()
+        w = tk.Toplevel(self)
+        w.title("Reach camera " + ip)
+        w.transient(self)
+        f = ttk.Frame(w, padding=12)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, wraplength=420, justify="left",
+                  text=("Your PC now also answers on %s, so it can reach the camera at %s.\n\n"
+                        "1. The camera's page should have opened in your browser - log in.\n"
+                        "2. Change the camera's IP to your main range (e.g. a free %s.x), save.\n"
+                        "3. Click 'Done - remove temporary IP' below.\n\n"
+                        "Your main network kept working the whole time."
+                        % (temp, ip, IPFIX.base24(self.lip or "") or "192.168.0"))).pack(anchor="w")
+        if ("netsh" in (r or "").lower() and "not" in (r or "").lower()) or "requires elevation" in (r or "").lower():
+            ttk.Label(f, text="(Adding the temp IP may have failed - if the camera doesn't open, use the manual "
+                              "steps.)", foreground="#b45309", wraplength=420).pack(anchor="w", pady=(6, 0))
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(10, 0))
+        ttk.Button(bar, text="Done - remove temporary IP", command=remove).pack(side="left")
+        ttk.Button(bar, text="Open camera again", command=lambda: webbrowser.open(f"http://{ip}")).pack(side="left", padx=6)
+        ttk.Button(bar, text="Show manual steps",
+                   command=lambda: messagebox.showinfo(APP, guide)).pack(side="right")
 
     def _camera_health(self):
         """Fault report for every camera: reachable? login still works? default password? model + firmware.
@@ -1277,10 +1349,12 @@ class App(tk.Tk):
             targets = set()
             try:
                 for lip in PC.local_ipv4s():
-                    if lip and not lip.startswith("169.254"):
+                    # skip APIPA /24 (swept by ARP instead) and VPN/CGNAT cards (e.g. Tailscale 100.64/10) -
+                    # a direct PoE check must not reach across a tunnel and list a remote camera.
+                    if lip and not lip.startswith("169.254") and PC.is_local_link(lip):
                         targets.update(PC.subnet_ips(lip))
                 for c in found:
-                    if c.get("ip"):
+                    if c.get("ip") and PC.is_local_link(c["ip"]):
                         targets.update(PC.subnet_ips(c["ip"]))
                 if extra and extra.count(".") == 2:
                     targets.update("%s.%d" % (extra, n) for n in range(1, 255))
@@ -1307,6 +1381,9 @@ class App(tk.Tk):
                             seen.add(a["ip"])
             except Exception:  # noqa: BLE001
                 pass
+            # Keep only cameras on a directly-connected local link (PoE/LAN). Drops anything discovered over a
+            # VPN/CGNAT card (Tailscale 100.64/10) or the WAN - those are not on this PoE switch.
+            found = [c for c in found if PC.is_local_link(c.get("ip", ""))]
             self.q.put(("call", lambda: self._direct_camera_done(found)))
 
         threading.Thread(target=work, daemon=True).start()
