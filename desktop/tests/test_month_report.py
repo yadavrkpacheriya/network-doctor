@@ -67,7 +67,8 @@ import tempfile  # noqa: E402
 
 @contextlib.contextmanager
 def _store():
-    with tempfile.TemporaryDirectory() as d:
+    # ignore_cleanup_errors: on Windows the SQLite file can still be held briefly at teardown (WinError 32)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         yield U.UsageStore(os.path.join(d, "u.db"))
 
 

@@ -1,0 +1,4 @@
+# Keep the PC-agent files LF everywhere so the copy embedded in nd_agent.py (generated on Linux) always
+# matches the checked-out files, and the agent is never delivered as bloated CRLF.
+endpoint/*.ps1 text eol=lf
+endpoint/*.cmd text eol=lf

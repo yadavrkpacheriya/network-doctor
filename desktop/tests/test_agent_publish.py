@@ -15,10 +15,12 @@ ENDPOINT = os.path.join(ROOT, "endpoint")
 
 class NoDrift(unittest.TestCase):
     def test_embedded_files_match_the_real_endpoint_files(self):
-        """If this fails: you edited endpoint/ without regenerating. Run: python3 tools/gen_agent.py"""
+        """If this fails: you edited endpoint/ without regenerating. Run: python3 tools/gen_agent.py
+        Line endings are normalised - Git may check the files out as CRLF on Windows, which is not drift."""
         for name, embedded in nd_agent.FILES.items():
             with open(os.path.join(ENDPOINT, name), "r", encoding="utf-8", newline="") as f:
-                self.assertEqual(f.read(), embedded, f"{name} drifted - run tools/gen_agent.py")
+                disk = f.read().replace("\r\n", "\n")
+            self.assertEqual(disk, embedded.replace("\r\n", "\n"), f"{name} drifted - run tools/gen_agent.py")
 
     def test_version_matches_the_ps1(self):
         with open(os.path.join(ENDPOINT, "networkdoctor-agent.ps1"), encoding="utf-8") as f:
