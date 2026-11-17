@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.90.0"
+VERSION = "3.91.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1025,37 +1025,121 @@ class App(tk.Tk):
         self._category_page(
             "cameras", "Cameras & DVR / NVR", (core.CAT_CAM,),
             [("Check camera pictures", self._camera_picture_check),
+             ("Camera health report", self._camera_health),
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
                   "automatically. Use 'Restart & fix camera IPs' for the restart -> fixed-IP -> bind flow.")
 
-    def _direct_camera_check(self):
-        """Find cameras on a direct PoE link (no router / no DHCP). Uses ONVIF + XMeye broadcasts (works for
-        local/no-name brands) plus a brand-agnostic port sweep of this PC's subnet. Runs off-thread."""
+    def _camera_health(self):
+        """Fault report for every camera: reachable? login still works? default password? model + firmware.
+        Safe fixes only (reboot, reset-to-DHCP, re-bind) - firmware is reported, never auto-flashed. Off-thread."""
+        import nd_camhealth as H
         import nd_poecheck as PC
-        lip = self.lip or ""
+        import nd_dvrip as DV
+        cams = [{"name": d.get("name") or d.get("ip"), "ip": d.get("ip"), "mac": d.get("mac", "")}
+                for d in (getattr(self, "devices", []) or [])
+                if d.get("ip") and core.CAT_CAM in str(d.get("category", ""))]
+        if not cams:
+            messagebox.showinfo(APP, "No cameras in the device list yet.\n\nRun a scan - or 'Direct camera "
+                                     "check' - first, then try the health report.")
+            return
+        self.var_status.set(f"Checking {len(cams)} camera(s)...")
+        settings = self._settings()
+        saved_store = settings.get("device_logins") or {}
+        vault = SW.trylist_pairs(settings.get("cam_logins") or [])
+
+        def ports_of(c):
+            return PC.camera_ports_open(c["ip"])
+
+        def probe_login(c):
+            if not PC._tcp_open(c["ip"], DV.PORT, 0.6):     # login check only for XMeye/local (port 34567)
+                return None, False
+            tries = []
+            s = SW.saved_get(saved_store, c.get("mac", ""))
+            if s:
+                tries.append((s, False))
+            tries += [((u, p), False) for u, p in vault]
+            tries += [((u, p), True) for u, p in H.COMMON_DEFAULTS]
+            for (u, p), isdef in tries:
+                try:
+                    info = DV.read_info(c["ip"], u, p)      # raises on a refused login
+                    return info, {"user": u, "default": isdef or H.is_default(u, p)}
+                except Exception:  # noqa: BLE001
+                    continue
+            return None, None                                # reachable on 34567 but no login worked
+
+        def work():
+            recs = H.report(cams, ports_of, probe_login)
+            self.q.put(("call", lambda: self._camera_health_done(recs)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _camera_health_done(self, recs):
+        import nd_camhealth as H
+        s = H.summary(recs)
+        self.var_status.set(f"Camera health: {s['ok']} OK, {s['check']} to check, {s['offline']} offline")
+        lines = []
+        for r in recs:
+            tag = {"OFFLINE": "OFFLINE", "CHECK": "CHECK  ", "OK": "OK     "}.get(r["status"], "")
+            extra = [x for x in (r["model"], ("fw " + r["firmware"]) if r["firmware"] else "") if x]
+            lines.append(f"{tag} {r['name']} ({r['ip']})" + ("   " + "  ".join(extra) if extra else ""))
+            for i in r["issues"]:
+                lines.append("          - " + i)
+            if r["fix"]:
+                lines.append("            fix: " + r["fix"])
+        (messagebox.showwarning if (s["offline"] or s["check"]) else messagebox.showinfo)(
+            APP, f"Camera health  -  {s['ok']} OK, {s['check']} to check, {s['offline']} offline\n\n"
+            + "\n".join(lines[:60]) + "\n\n(Firmware is shown for you to update per-camera - the app never "
+            "flashes firmware, to avoid bricking a camera.)")
+
+    def _direct_camera_check(self):
+        """Find cameras on a direct PoE link (no router / no DHCP). ONVIF + XMeye broadcast out of every network
+        card (works for local/no-name brands, even with no IP), plus a brand-agnostic port sweep of every
+        subnet this PC is on and of any camera subnet discovery reveals. Runs off-thread."""
+        import nd_poecheck as PC
+        from tkinter import simpledialog
         if not messagebox.askyesno(APP, "Direct camera check\n\nPlug this PC into the PoE switch that feeds the "
                                         "cameras, then click Yes.\n\nIt finds cameras by ONVIF + XMeye broadcast "
-                                        "(works for local brands, no router or DHCP needed) and by scanning this "
-                                        "PC's subnet" + (f" ({lip})" if lip else "") + ".\n\nStart now?"):
+                                        "(works for local brands - no router or DHCP needed) and by scanning the "
+                                        "cameras' subnet.\n\nTip: turn WiFi off so only the PoE cable is active. "
+                                        "If you know the cameras' IP range you can enter it next.\n\nStart now?"):
             return
+        extra = simpledialog.askstring(APP, "Camera IP range to scan (optional)\n\nIf you know it, type the first "
+                                            "three numbers, e.g.  192.168.1\nLeave blank to auto-detect from this "
+                                            "PC's network cards.", parent=self)
+        extra = (extra or "").strip().rstrip(".")
         self.var_status.set("Direct camera check: listening for cameras...")
 
         def work():
             try:
-                found = PC.discover(timeout=4.0)
+                found = PC.discover(timeout=4.0)        # broadcast/multicast out of every card, resent 3x
             except Exception:  # noqa: BLE001
                 found = []
+            # build the list of IPs to port-scan: every local /24 (skip APIPA 169.254), each discovered camera's
+            # /24, and any range the user typed - so coverage does not depend on the PC being on one right subnet.
+            targets = set()
             try:
-                swept = PC.sweep_many(PC.subnet_ips(lip)) if lip else []
+                for lip in PC.local_ipv4s():
+                    if lip and not lip.startswith("169.254"):
+                        targets.update(PC.subnet_ips(lip))
+                for c in found:
+                    if c.get("ip"):
+                        targets.update(PC.subnet_ips(c["ip"]))
+                if extra and extra.count(".") == 2:
+                    targets.update("%s.%d" % (extra, n) for n in range(1, 255))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                swept = PC.sweep_many(sorted(targets)) if targets else []
             except Exception:  # noqa: BLE001
                 swept = []
             seen = {c.get("ip") for c in found if c.get("ip")}
             for s in swept:
                 if s["ip"] not in seen:
                     found.append(s)
+                    seen.add(s["ip"])
             self.q.put(("call", lambda: self._direct_camera_done(found)))
 
         threading.Thread(target=work, daemon=True).start()

@@ -290,26 +290,69 @@ def _ip_alive(ip, timeout=0.6, ports=CAM_PORTS):
     return None
 
 
+# ------------------------------------------------------------------ local interfaces (robustness)
+def local_ipv4s():
+    """Every IPv4 this PC has, one per network card. We send discovery out ALL of them, so it still reaches
+    the cameras when the PoE link is not the default route (e.g. WiFi is also on) or has only an APIPA address."""
+    ips = set()
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            ips.add(ip)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("255.255.255.255", 1))        # no packet sent; just picks the egress IP
+        ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return [ip for ip in ips if ip and not ip.startswith("127.")]
+
+
 # ------------------------------------------------------------------ the socket runner (real network)
-def _collect(messages, timeout=3.0):
-    """Broadcast/multicast each probe and gather (how, data, src_ip) until `timeout`. messages is
-    [(how, dst_ip, port, payload)]. Best-effort - a blocked protocol just yields nothing."""
-    out = []
-    socks = []
+def _collect(messages, timeout=4.0, locals_=None):
+    """Broadcast/multicast each probe out of EVERY local interface, re-sending a few times across the window
+    (cameras can miss a single packet), and gather (how, data, src_ip). Best-effort - a blocked protocol or
+    interface just yields nothing. `messages` is [(how, dst_ip, port, payload)]."""
+    locals_ = locals_ or local_ipv4s() or [""]
+    socks = []          # (how, sock, dst, port, payload)
     for how, dst, port, payload in messages:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-            s.settimeout(0.3)
-            s.sendto(payload, (dst, port))
-            socks.append((how, s))
-        except Exception:  # noqa: BLE001
-            pass
+        for lip in locals_:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                if lip:
+                    try:
+                        s.bind((lip, 0))                                            # egress THIS card
+                        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(lip))
+                    except Exception:  # noqa: BLE001
+                        pass
+                s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+                s.settimeout(0.3)
+                socks.append((how, s, dst, port, payload))
+            except Exception:  # noqa: BLE001
+                pass
+    out = []
     end = time.time() + timeout
+    sends, next_send = 0, 0.0
     while time.time() < end:
-        for how, s in socks:
+        now = time.time()
+        if now >= next_send and sends < 3:          # send at t=0, 1s, 2s so a dropped probe is retried
+            for how, s, dst, port, payload in socks:
+                try:
+                    s.sendto(payload, (dst, port))
+                except Exception:  # noqa: BLE001
+                    pass
+            sends += 1
+            next_send = now + 1.0
+        for how, s, _d, _p, _pl in socks:
             try:
                 data, addr = s.recvfrom(65535)
                 out.append((how, data, addr[0]))
@@ -317,7 +360,7 @@ def _collect(messages, timeout=3.0):
                 pass
             except Exception:  # noqa: BLE001
                 pass
-    for _how, s in socks:
+    for _how, s, _d, _p, _pl in socks:
         try:
             s.close()
         except Exception:  # noqa: BLE001

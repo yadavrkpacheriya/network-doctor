@@ -1,3 +1,21 @@
+## Network Doctor 3.91.0
+
+### New: Camera health report (Cameras tab)
+Cameras tab → "Camera health report". For every camera it shows: is it reachable (powered + connected), does a
+saved login still work, is it still on a weak/default password, and its model + firmware version. Problems are
+listed worst-first (offline, then needs-check) each with the safe fix. Firmware is only *reported* so you can
+update it per-camera — the app never flashes firmware (wrong firmware bricks a no-name camera).
+
+### Direct camera check — hardened so it works first time
+The direct PoE check (added below) now:
+- sends discovery out of **every network card**, so it reaches the cameras even if WiFi is still on or the
+  PoE link has only an APIPA address;
+- **re-sends** each probe a few times, so a camera that misses one packet is still found;
+- port-scans **every subnet this PC is on** plus any camera subnet discovery reveals, and lets you **type the
+  cameras' IP range** if you know it — so coverage no longer depends on being on one exact subnet.
+
+---
+
 ## Network Doctor 3.90.0
 
 ### New: Direct camera check (PoE, no router needed)

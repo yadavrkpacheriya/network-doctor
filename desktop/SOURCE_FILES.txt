@@ -54,3 +54,4 @@ nd_ipfix.py
 nd_agent.py
 nd_deploy.py
 nd_poecheck.py
+nd_camhealth.py
