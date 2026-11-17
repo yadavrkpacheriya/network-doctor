@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.0"
+VERSION = "4.1"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2876,6 +2876,9 @@ class App(tk.Tk):
         self.alert_cool = {}      # monitor-event key -> time of last pop-up
         self.alert_mute_until = self._settings().get("mute_until", 0) or 0
         self.alert_mute_level = self._settings().get("mute_level")   # None = full mute; "critical" = serious only
+        # Quiet mode (permanent, ON by default): only MAJOR issues the app couldn't fix itself pop up.
+        # It is a saved setting, so it survives restarts AND updates - you never have to mute again.
+        self.alert_quiet = self._settings().get("quiet_mode", True)
         self.alert_win = None
         self.alert_lines = []
         self.alert_log = AL.AlertLog(os.path.join(core.DATA_DIR, "alerts.json"))
@@ -3061,15 +3064,29 @@ class App(tk.Tk):
 
     _SEV_RANK = {"critical": 3, "warning": 2, "info": 1, "note": 0}
 
-    def _may_popup(self, sev):
-        """Should this pop up now? Off if alerts are disabled. While muted, only alerts at or above the mute
-        level get through (serious-only mode); a full mute lets nothing through."""
+    def _may_popup(self, sev, fixing=False):
+        """Should this pop up now? Off if alerts are disabled. The app is already fixing it itself -> stays
+        quiet. Quiet mode (on by default, saved) lets ONLY major (critical) issues through. A timed mute, if
+        set, still applies on top. Everything is always kept in the health log and the Alerts tab either way."""
         if not self.var_alerts.get():
             return False
+        if fixing:                                     # the app is auto-solving this one - don't bother the user
+            return False
+        if self.alert_quiet and self._SEV_RANK.get(sev, 1) < self._SEV_RANK["critical"]:
+            return False                               # only major issues pop up
         if time.time() < self.alert_mute_until:
             lvl = self.alert_mute_level
             return bool(lvl) and self._SEV_RANK.get(sev, 1) >= self._SEV_RANK.get(lvl, 3)
         return True
+
+    def _set_quiet(self, on):
+        """Turn quiet mode (only major issues pop up) on/off and SAVE it, so it holds across restarts and
+        app updates. This is the 'auto-mute' - set once, never again."""
+        self.alert_quiet = bool(on)
+        self._settings()["quiet_mode"] = self.alert_quiet
+        self._save_settings()
+        self.var_status.set("Quiet mode on - only major issues pop up (everything still in the health log)."
+                            if on else "Showing all alerts.")
 
     def _set_mute(self, hours, level=None):
         """Mute pop-ups for `hours`. level=None silences everything; level="critical" still lets serious
@@ -3099,8 +3116,9 @@ class App(tk.Tk):
     def _raise_alert(self, sev, title, items, source):
         text = title + (" - " + "; ".join(items) if items else "")
         self._log_event(sev, text, source)
-        self._record_alert(sev, text, source)
-        if self._may_popup(sev):
+        e = self._record_alert(sev, text, source)       # runs auto-fix; e tells us if the app is handling it
+        fixing = bool(e and (e.get("autofix") or e.get("status") == "fixed"))
+        if self._may_popup(sev, fixing=fixing):
             self._popup(sev, text)
 
     def _usage_spike_check(self):
@@ -3184,8 +3202,9 @@ class App(tk.Tk):
             self._auto_fix(e)
             if core.IS_PRO and getattr(self, "defense", None):
                 self._defense_consider(e)
+            return e
         except Exception:
-            pass
+            return None
 
     def _alerts_touched(self):
         """Mark the alert log changed and flush (save to disk + rebuild the Alerts tab) once, shortly
@@ -4047,6 +4066,10 @@ class App(tk.Tk):
                                                                                                     padx=6)
             mb = ttk.Menubutton(bar, text="Mute...")
             mm = tk.Menu(mb, tearoff=0)
+            _quiet = tk.BooleanVar(value=self.alert_quiet)
+            mm.add_checkbutton(label="Quiet mode - only major issues pop up (stays on after updates)",
+                               variable=_quiet, command=lambda: self._set_quiet(_quiet.get()))
+            mm.add_separator()
             mm.add_command(label="1 hour (everything)", command=lambda: mute_and_close(1))
             mm.add_separator()
             mm.add_command(label="1 day - only serious issues alert",
