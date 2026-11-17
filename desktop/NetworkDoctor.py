@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.92.0"
+VERSION = "3.93.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1026,6 +1026,7 @@ class App(tk.Tk):
             "cameras", "Cameras & DVR / NVR", (core.CAT_CAM,),
             [("Check camera pictures", self._camera_picture_check),
              ("Camera health report", self._camera_health),
+             ("Firmware & versions", self._camera_firmware),
              ("Edit IP / reboot (direct)", self._camera_fix),
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
@@ -1160,8 +1161,40 @@ class App(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _camera_firmware(self):
+        """Show every camera's recorded model + firmware (and version history). Safe: tracking only - the app
+        never flashes firmware. The assisted-update + brick-recovery steps are in docs/CAMERA_FIRMWARE.md."""
+        import nd_camreg as REG
+        reg = self._settings().get("camera_registry") or {}
+        cams = REG.cameras(reg)
+        if not cams:
+            messagebox.showinfo(APP, "No camera firmware recorded yet.\n\nRun 'Camera health report' once "
+                                     "(while online) - it records each camera's model and firmware, and tracks "
+                                     "any version change over time.")
+            return
+        lines = []
+        for e in cams:
+            lines.append(f"{e.get('name') or e.get('ip')}  ({e.get('ip')})   {e.get('model') or '?'}   "
+                         f"fw {e.get('firmware') or '?'}   seen {e.get('last_seen', '')}")
+            hist = e.get("history", [])
+            if len(hist) > 1:
+                lines.append("          firmware history: " + " -> ".join(h["ver"] for h in hist))
+        messagebox.showinfo(APP, f"Recorded cameras ({len(cams)}):\n\n" + "\n".join(lines[:60]) +
+                            "\n\nTo update firmware safely: back up each camera's config first (Restart & fix "
+                            "camera IPs > config backup), apply the correct vendor file for that exact model, "
+                            "then re-run the health report to confirm the new version. The app never flashes "
+                            "firmware by itself - wrong firmware bricks a camera.")
+
     def _camera_health_done(self, recs):
         import nd_camhealth as H
+        import nd_camreg as REG
+        try:                                              # remember each camera's model + firmware across sessions
+            reg = self._settings().setdefault("camera_registry", {})
+            REG.record_all(reg, [{"name": r["name"], "ip": r["ip"], "mac": r["mac"], "model": r["model"],
+                                  "firmware": r["firmware"]} for r in recs if r["status"] != "OFFLINE"])
+            self._save_settings()
+        except Exception:  # noqa: BLE001
+            pass
         s = H.summary(recs)
         self.var_status.set(f"Camera health: {s['ok']} OK, {s['check']} to check, {s['offline']} offline")
         lines = []

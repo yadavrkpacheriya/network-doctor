@@ -1,3 +1,18 @@
+## Network Doctor 3.93.0
+
+### Camera firmware tracking (Cameras → "Firmware & versions")
+The app now remembers every camera across sessions — brand, model, firmware, serial, IP/MAC — and records any
+firmware **version change** over time. Run "Camera health report" while online and it fills the registry;
+"Firmware & versions" shows what each camera is and its firmware history.
+
+**Important — on purpose:** the app does **not** download or flash firmware. For local/no-name brands there is
+no reliable per-model firmware source, and a wrong/interrupted flash bricks a camera with no software recovery.
+So firmware updating stays an **assisted** flow (back up config → apply the correct vendor file, one spare
+camera first → re-run the health report to confirm), fully written up with brick-recovery (TFTP/serial) steps
+in docs/CAMERA_FIRMWARE.md.
+
+---
+
 ## Network Doctor 3.92.0
 
 ### Edit a camera's IP / reboot it directly from the app — no browser
