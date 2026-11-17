@@ -1,3 +1,18 @@
+## Network Doctor 3.89.0
+
+### All logins in one place — PC, camera/NVR/DVR and router
+Setup now keeps every login together, saved once and used by the sweeps automatically:
+
+- **Camera / NVR / DVR logins** (new): add the user/passwords your cameras use once — the Login sweep tries
+  them automatically, so you never re-type them. The one that works for each device is still remembered per
+  device as before.
+- **PC admin login** (from 3.88): installs the agent on all PCs.
+- **Router login**: unchanged, in its own box just below.
+
+All saved logins are encrypted on this PC. Passwords are shown only masked.
+
+---
+
 ## Network Doctor 3.88.0
 
 ### Save an admin login and install the agent on every PC from the app — no visiting each PC

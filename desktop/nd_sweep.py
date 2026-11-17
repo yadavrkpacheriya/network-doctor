@@ -460,6 +460,53 @@ def saved_all(store):
     return out
 
 
+# ------------------------------------------------------------------ saved camera/NVR/DVR try-list (the vault)
+# A list of user/password pairs to TRY on cameras, NVRs and DVRs during the Login sweep - saved once so they
+# never need re-typing. Different from saved_* above (which remembers, per device, the login that worked).
+def trylist_add(store, user, pw):
+    """Add a user/password pair to try on cameras (password encrypted). `store` is a list; no duplicates."""
+    import nd_routeros as RO
+    user = (user or "").strip()
+    if not user:
+        return
+    for e in store:
+        if e.get("user") == user and RO.unprotect(e.get("pw", "")) == pw:
+            return
+    store.append({"user": user, "pw": RO.protect(pw)})
+
+
+def trylist_pairs(store):
+    """[(user, password)] to feed the sweep - decrypted, skipping anything unreadable."""
+    import nd_routeros as RO
+    out = []
+    for e in store or []:
+        if e.get("user"):
+            pw = RO.unprotect(e.get("pw", ""))
+            if pw is not None:
+                out.append((e["user"], pw))
+    return out
+
+
+def trylist_show(store):
+    """[(user, masked_password)] for display - never the real password."""
+    out = []
+    for u, p in trylist_pairs(store):
+        out.append((u, "*" * len(p) if p else ""))
+    return out
+
+
+def trylist_del(store, user, masked_len=None):
+    """Remove saved pair(s) for a user (optionally only the one whose password has this length)."""
+    import nd_routeros as RO
+    keep = []
+    for e in store or []:
+        pw = RO.unprotect(e.get("pw", "")) or ""
+        if e.get("user") == user and (masked_len is None or len(pw) == masked_len):
+            continue
+        keep.append(e)
+    store[:] = keep
+
+
 def auto_targets(devices, saved, kinds=("pc", "cam", "net")):
     """The plan for the automatic check after a scan: only devices that have a remembered login."""
     return [t for t in plan(devices, kinds=kinds) if (t["dev"].get("mac") or "") in (saved or {})]

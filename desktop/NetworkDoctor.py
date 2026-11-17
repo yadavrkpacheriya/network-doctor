@@ -37,6 +37,7 @@ import nd_autofix as AF
 import nd_brain as BR
 import nd_ipfix as IPFIX
 import nd_deploy as DP
+import nd_sweep as SW
 import nd_agent
 import nd_protab
 import nd_tabs
@@ -72,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.88.0"
+VERSION = "3.89.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1202,8 +1203,48 @@ class App(tk.Tk):
                           "PCs also LocalAccountTokenFilterPolicy=1. After the first install, PCs self-update "
                           "within ~2 minutes, so you only do this once per PC.",
                   foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
+
+        cam = nd_tabs.section_card(f, "Camera / NVR / DVR logins - save once, the Login sweep tries them "
+                                      "automatically (no re-typing)", "#b45309")
+        self.var_cam_user = tk.StringVar()
+        self.var_cam_pw = tk.StringVar()
+        for lbl, var, w, show in (("User", self.var_cam_user, 14, ""), ("Password", self.var_cam_pw, 14, "*")):
+            ttk.Label(cam, text=lbl + ":").pack(side="left", padx=(6, 2))
+            ttk.Entry(cam, textvariable=var, width=w, show=show).pack(side="left")
+        ttk.Button(cam, text="Add login", command=self._cam_cred_save).pack(side="left", padx=4)
+        ttk.Button(cam, text="Clear all", command=self._cam_cred_clear).pack(side="left", padx=4)
+        self.var_cam_info = tk.StringVar(value=self._cam_cred_summary())
+        ttk.Label(f, text="These are the logins the sweep TRIES on cameras/NVRs/DVRs (the router login is in its "
+                          "own box below). The one that works for each device is then remembered automatically.",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 0))
+        ttk.Label(f, textvariable=self.var_cam_info, foreground="#b45309").pack(anchor="w", padx=8, pady=(0, 6))
+
         self.tsetup = text_box(f)
         self._fill_setup()
+
+    # ---------------------------------------------------------------- camera/NVR/DVR login vault
+    def _cam_cred_summary(self):
+        shown = SW.trylist_show(self._settings().get("cam_logins") or [])
+        return "saved camera/NVR/DVR logins: " + ", ".join(f"{u} / {m}" for u, m in shown) if shown else \
+               "no camera login saved yet - add the ones your cameras use"
+
+    def _cam_cred_save(self):
+        user, pw = self.var_cam_user.get().strip(), self.var_cam_pw.get()
+        if not user:
+            messagebox.showinfo(APP, "Type the camera/NVR/DVR user name (and password) first.")
+            return
+        SW.trylist_add(self._settings().setdefault("cam_logins", []), user, pw)
+        self._save_settings()
+        self.var_cam_user.set("")
+        self.var_cam_pw.set("")
+        self.var_cam_info.set(self._cam_cred_summary())
+        messagebox.showinfo(APP, "Camera login saved (encrypted). The Login sweep will try it automatically.")
+
+    def _cam_cred_clear(self):
+        if messagebox.askyesno(APP, "Remove all saved camera/NVR/DVR logins?"):
+            self._settings()["cam_logins"] = []
+            self._save_settings()
+            self.var_cam_info.set(self._cam_cred_summary())
 
     # ---------------------------------------------------------------- PC agent deployment
     def _agent_cred_summary(self):

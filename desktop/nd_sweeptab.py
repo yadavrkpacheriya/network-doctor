@@ -123,8 +123,19 @@ class SweepPage:
     def _kinds(self):
         return tuple(k for k, v in self.var_kind.items() if v.get())
 
+    def _cam_vault(self):
+        return self.app._settings().setdefault("cam_logins", [])
+
     def _creds(self):
-        return [(u.get().strip(), p.get()) for u, p in zip(self.var_user, self.var_pw) if u.get().strip()]
+        # typed logins first (immediate intent), then the saved camera/NVR/DVR vault - so every sweep tries the
+        # logins saved once in Setup > Credentials without re-typing. Deduplicated, order preserved.
+        typed = [(u.get().strip(), p.get()) for u, p in zip(self.var_user, self.var_pw) if u.get().strip()]
+        out, seen = [], set()
+        for pair in typed + S.trylist_pairs(self._cam_vault()):
+            if pair not in seen:
+                seen.add(pair)
+                out.append(pair)
+        return out
 
     # ------------------------------------------------------------------ remembered logins
     def _store(self):
