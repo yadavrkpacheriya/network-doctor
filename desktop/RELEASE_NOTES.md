@@ -1,3 +1,17 @@
+## Network Doctor 3.84.0
+
+### New: "Monthly report" — how much internet each day, and on which devices
+Usage tab → **Monthly report**. A clean day-by-day page for the current month: a bar per day, a table that
+names the **biggest device for each day** (and its share), and month totals by category, device, app and
+site. Opens in your browser and is saved so you can share it.
+
+This also answers "why does it show a lot of data used today when the PCs are off": each day counts from
+local midnight (it resets every night — it does not carry yesterday over), and the per-device split makes it
+obvious when the usage is your **cameras / NVR**, which run 24/7, rather than the office PCs. On a typical
+office the cameras alone can be most of the daily total.
+
+---
+
 ## Network Doctor 3.83.0
 
 ### Camera IP conflicts now fix themselves permanently (no more daily repeat)

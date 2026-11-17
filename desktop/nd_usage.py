@@ -1317,6 +1317,75 @@ def dashboard_html(store, days=30):
     return DASHBOARD.replace("/*DATA*/null", data)
 
 
+def daily_series(store, month=None, today=None):
+    """Per-day internet totals for a calendar month ('YYYY-MM'). Each calendar day is its own bucket (local
+    date), so the figure for a day never bleeds into the next - that is the nightly reset. Days with no
+    traffic stay as 0 so the month reads as a continuous day-by-day comparison; future days are omitted.
+    Returns [{day, up, down, total}]."""
+    import calendar
+    today = today or dt.date.today()
+    month = month or today.strftime("%Y-%m")
+    y, m = int(month[:4]), int(month[5:7])
+    last = calendar.monthrange(y, m)[1]
+    rows = {r[0]: (r[1] or 0, r[2] or 0) for r in store._rows(
+        "SELECT day, SUM(up), SUM(down) FROM usage WHERE day LIKE ? GROUP BY day", (month + "-%",))}
+    out = []
+    for d in range(1, last + 1):
+        ds = "%s-%02d" % (month, d)
+        if ds > today.isoformat():
+            break
+        up, down = rows.get(ds, (0, 0))
+        out.append({"day": ds, "up": up, "down": down, "total": up + down})
+    return out
+
+
+def month_report(store, month=None, today=None):
+    """Full-month internet comparison: how much each day, and ON WHICH devices / apps / sites / categories.
+    This is what answers 'why is today 21 GB when the PCs are off' - the per-device and per-category split
+    makes 24/7 camera / NVR traffic obvious instead of a mystery."""
+    today = today or dt.date.today()
+    month = month or today.strftime("%Y-%m")
+    like = (month + "-%",)
+    names = store.names()
+    days = daily_series(store, month, today)
+
+    topdev = {}
+    for day, dev, b in store._rows("SELECT day, dev, SUM(up+down) b FROM usage WHERE day LIKE ? "
+                                   "GROUP BY day, dev ORDER BY b DESC", like):
+        topdev.setdefault(day, (dev, b))
+    for row in days:
+        dv = topdev.get(row["day"])
+        row["top_dev"] = (names.get(dv[0], {}).get("name") or dv[0]) if dv else ""
+        row["top_dev_bytes"] = dv[1] if dv else 0
+
+    devs = []
+    for d, b, u in store._rows("SELECT dev, SUM(up+down) t, SUM(up) FROM usage WHERE day LIKE ? "
+                               "GROUP BY dev ORDER BY t DESC LIMIT 40", like):
+        n = names.get(d, {})
+        devs.append({"dev": d, "name": n.get("name") or d, "ip": n.get("ip", ""),
+                     "dept": n.get("dept", ""), "bytes": b, "up": u})
+    apps = [{"app": r[0], "cat": r[1], "bytes": r[2]} for r in store._rows(
+        "SELECT app, cat, SUM(up+down) b FROM usage WHERE day LIKE ? GROUP BY app ORDER BY b DESC LIMIT 40", like)]
+    sites = [{"site": r[0], "cat": r[1], "bytes": r[2]} for r in store._rows(
+        "SELECT site, cat, SUM(up+down) b FROM usage WHERE day LIKE ? AND site != '' "
+        "GROUP BY site ORDER BY b DESC LIMIT 40", like)]
+    cats = {r[0]: (r[1] or 0) for r in store._rows(
+        "SELECT cat, SUM(up+down) FROM usage WHERE day LIKE ? GROUP BY cat", like)}
+
+    total = sum(x["total"] for x in days)
+    active = [x for x in days if x["total"] > 0]
+    busiest = max(days, key=lambda x: x["total"]) if days else None
+    return {"month": month, "generated": time.strftime("%Y-%m-%d %H:%M"), "days": days,
+            "devices": devs, "apps": apps, "sites": sites, "cats": cats, "total": total,
+            "avg_per_active_day": (total / len(active)) if active else 0,
+            "busiest": busiest, "labels": CAT_LABEL}
+
+
+def month_report_html(store, month=None, today=None):
+    data = json.dumps(month_report(store, month, today), separators=(",", ":")).replace("</", "<\\/")
+    return MONTH_REPORT.replace("/*DATA*/null", data)
+
+
 DASHBOARD = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Network Doctor - internet usage</title>
@@ -1491,4 +1560,98 @@ function draw(){document.querySelectorAll("#period button").forEach(b=>b.setAttr
  document.getElementById("note").textContent=st.dev?"Showing: "+devName(st.dev):"";
  legend("lg1");legend("lg2");drawKpi();drawTime();drawApps();drawHeat();drawDevices();drawSites();drawInsights()}
 fillSelects();draw();matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);
+</script></body></html>"""
+
+
+# ---------------------------------------------------------------------------- monthly comparison report
+# A plain "how much internet each day this month, and on what" page - lighter than the analytics dashboard.
+# Self-contained, theme-aware, printable. The per-device/per-category split is what explains a high day
+# (e.g. CCTV uploading all night while the PCs are off).
+MONTH_REPORT = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Network Doctor - internet usage this month</title>
+<style>
+:root{color-scheme:light;--bg:#f3f3f1;--card:#fff;--line:#e4e3df;--ink:#0b0b0b;--dim:#52514e;--muted:#7a7974;
+ --bar:#2a78d6;--bar2:#9cc4f3;--hi:#b35c00;--hibg:#fff4e5;--work:#2a78d6;--personal:#eb6834;--neutral:#1baf7a}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme=light])){color-scheme:dark;--bg:#111110;--card:#1a1a19;
+ --line:#2e2e2c;--ink:#f0efec;--dim:#c3c2b7;--muted:#8f8e88;--bar:#3987e5;--bar2:#294a6e;--hi:#f0a040;--hibg:#2b2213;
+ --work:#3987e5;--personal:#d95926;--neutral:#199e70}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#111110;--card:#1a1a19;--line:#2e2e2c;--ink:#f0efec;--dim:#c3c2b7;
+ --muted:#8f8e88;--bar:#3987e5;--bar2:#294a6e;--hi:#f0a040;--hibg:#2b2213;--work:#3987e5;--personal:#d95926;--neutral:#199e70}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+ font:14px/1.45 "Segoe UI",system-ui,sans-serif;padding:20px 22px 48px}
+h1{font-size:20px;margin:0 0 2px}.sub{color:var(--dim);font-size:13px;margin-bottom:16px}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;min-width:150px;flex:1}
+.kpi .v{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.kpi .l{color:var(--dim);font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+h2{font-size:15px;margin:0 0 12px}
+.chart{display:flex;align-items:flex-end;gap:4px;height:180px;overflow-x:auto;padding-top:8px}
+.col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;min-width:20px;flex:1}
+.col .bar{width:70%;background:var(--bar);border-radius:3px 3px 0 0;min-height:1px}
+.col.today .bar{background:var(--hi)}
+.col .d{font-size:10px;color:var(--muted);margin-top:4px}.col .t{font-size:10px;color:var(--dim);margin-bottom:3px;white-space:nowrap}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.today td{background:var(--hibg)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:800px){.cols{grid-template-columns:1fr}}
+.tag{font-size:11px;color:var(--dim)}.note{background:var(--hibg);border:1px solid var(--hi);border-radius:10px;
+ padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--ink)}
+</style></head><body>
+<h1>Internet usage this month</h1>
+<div class="sub" id="sub"></div>
+<div id="note"></div>
+<div class="kpis" id="kpis"></div>
+<div class="card"><h2>Each day this month</h2><div class="chart" id="chart"></div></div>
+<div class="card"><h2>Day by day</h2><div style="max-height:360px;overflow:auto"><table id="daytbl">
+<thead><tr><th>Day</th><th class="n">Total</th><th>Biggest device</th><th class="n">Its share</th></tr></thead>
+<tbody></tbody></table></div></div>
+<div class="cols">
+<div class="card"><h2>By category (month)</h2><table id="cattbl"><tbody></tbody></table></div>
+<div class="card"><h2>Top devices (month)</h2><table id="devtbl"><tbody></tbody></table></div>
+<div class="card"><h2>Top apps (month)</h2><table id="apptbl"><tbody></tbody></table></div>
+<div class="card"><h2>Top sites (month)</h2><table id="sitetbl"><tbody></tbody></table></div>
+</div>
+<script>
+var D=/*DATA*/null;
+function fb(n){n=n||0;var u=["B","KB","MB","GB","TB"],i=0;while(n>=1024&&i<4){n/=1024;i++;}
+ return (n>=100||i===0?Math.round(n):n.toFixed(n>=10?1:2))+" "+u[i];}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;}
+var today=new Date().toISOString().slice(0,10);
+document.getElementById("sub").textContent=D.month+"  -  generated "+D.generated+"  -  nightly reset: each day counts from local midnight";
+// note explaining a high day
+var busiest=D.busiest;
+if(busiest&&busiest.total>0){
+ var camLike=(D.cats&&(D.cats.neutral||0));
+ var n=el("div","note");
+ n.textContent="Biggest day: "+busiest.day+" at "+fb(busiest.total)+
+  (busiest.top_dev?(" (most from "+busiest.top_dev+"). "):" . ")+
+  "If a day is high while PCs are off, it is usually cameras/NVR - they run 24/7. The 'Biggest device' column shows which.";
+ document.getElementById("note").appendChild(n);
+}
+var kp=[["Month total",fb(D.total)],["Average per active day",fb(Math.round(D.avg_per_active_day))],
+ ["Busiest day",busiest?fb(busiest.total):"-"],["Days counted",String(D.days.length)]];
+kp.forEach(function(k){var c=el("div","kpi");c.appendChild(el("div","v",k[1]));c.appendChild(el("div","l",k[0]));
+ document.getElementById("kpis").appendChild(c);});
+// chart
+var mx=Math.max(1,...D.days.map(function(d){return d.total;}));
+var ch=document.getElementById("chart");
+D.days.forEach(function(d){var c=el("div","col"+(d.day===today?" today":""));
+ c.appendChild(el("div","t",d.total?fb(d.total):""));
+ var b=el("div","bar");b.style.height=Math.round(d.total/mx*150)+"px";b.title=d.day+": "+fb(d.total);c.appendChild(b);
+ c.appendChild(el("div","d",d.day.slice(8)));ch.appendChild(c);});
+// day table
+var tb=document.querySelector("#daytbl tbody");
+D.days.slice().reverse().forEach(function(d){var tr=el("tr",d.day===today?"today":"");
+ tr.appendChild(el("td",null,d.day));var t=el("td","n",fb(d.total));tr.appendChild(t);
+ tr.appendChild(el("td",null,d.top_dev||"-"));
+ tr.appendChild(el("td","n",d.total&&d.top_dev_bytes?Math.round(d.top_dev_bytes/d.total*100)+"%":"-"));
+ tb.appendChild(tr);});
+function fill(id,rows){var b=document.querySelector("#"+id+" tbody");rows.forEach(function(r){var tr=el("tr");
+ tr.appendChild(el("td",null,r[0]));tr.appendChild(el("td","n",fb(r[1])));b.appendChild(tr);});}
+var lab=D.labels||{};
+fill("cattbl",Object.keys(D.cats).sort(function(a,b){return D.cats[b]-D.cats[a];}).map(function(k){return [lab[k]||k,D.cats[k]];}));
+fill("devtbl",D.devices.slice(0,15).map(function(d){return [d.name+(d.dept?" - "+d.dept:""),d.bytes];}));
+fill("apptbl",D.apps.slice(0,15).map(function(a){return [a.app,a.bytes];}));
+fill("sitetbl",D.sites.slice(0,15).map(function(s){return [s.site,s.bytes];}));
 </script></body></html>"""

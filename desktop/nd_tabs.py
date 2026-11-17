@@ -1209,6 +1209,7 @@ class UsageTab:
         self.cb_dev.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         ttk.Button(top, text="Refresh", command=self.refresh).pack(side="left", padx=4)
         ttk.Button(top, text="Open dashboard (charts)", style="Big.TButton", command=self.dashboard).pack(side="right")
+        ttk.Button(top, text="Monthly report", command=self.month_report).pack(side="right", padx=6)
         ttk.Button(top, text="Export (Excel CSV)", command=self.export).pack(side="right", padx=6)
         self.var_kpi = tk.StringVar(value="")
         ttk.Label(parent, textvariable=self.var_kpi, font=("Segoe UI", 11, "bold"), padding=(0, 2)).pack(anchor="w")
@@ -1424,6 +1425,26 @@ class UsageTab:
         except Exception:
             pass
         self.app.var_status.set(f"Dashboard saved: {path}")
+
+    def month_report(self):
+        """A day-by-day internet report for the current month: how much each day and on which devices/apps/
+        sites/categories. Opens in the browser and is saved so it can be shared."""
+        if not self.app.usage:
+            return
+        os.makedirs(core.REPORT_DIR, exist_ok=True)
+        path = os.path.join(core.REPORT_DIR, time.strftime("usage-month-%Y-%m.html"))
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.US.month_report_html(self.app.usage))
+        except Exception as e:
+            messagebox.showerror(APP, f"Could not build the monthly report: {e}")
+            return
+        try:
+            import webbrowser
+            webbrowser.open("file:///" + path.replace("\\", "/"))
+        except Exception:
+            pass
+        self.app.var_status.set(f"Monthly report saved: {path}")
 
     def export(self):
         if not self.last:
