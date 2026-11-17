@@ -2479,7 +2479,7 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
 
 # Pages that need the internet - hidden from the menu in Offline mode. Everything else (scan, cameras, PCs,
 # file scanner, usage, fixes, firewall, SNMP, ports, Wake-on-LAN, backups, setup) works offline and stays.
-ONLINE_PAGES = {"t_speed", "t_web", "t_dns", "t_remote", "expose"}
+ONLINE_PAGES = {"t_speed", "t_web", "t_dns", "t_remote", "expose", "slow"}
 
 
 class SectionNav:
@@ -2591,7 +2591,7 @@ class SectionNav:
 
     def apply_mode(self):
         off = self._is_offline()
-        self._mode_lbl.configure(text="offline - internet menus hidden" if off else "online")
+        self._mode_lbl.configure(text="offline - internet menus hidden, 'device down' alerts off" if off else "online")
         sec, target = self.cur_sec, self.cur
         if off and self.cur in ONLINE_PAGES:              # leave a now-hidden page
             vis = self.visible_subs(sec) if sec else []

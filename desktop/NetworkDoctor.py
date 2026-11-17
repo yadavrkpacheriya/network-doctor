@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.95.0"
+VERSION = "3.96.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -793,6 +793,30 @@ class App(tk.Tk):
     def _net_mode_changed(self, mode):
         self._settings()["net_mode"] = mode
         self._save_settings()
+        if self._offline_mode():
+            # entering Offline: the remembered office devices are meant to be unreachable now - close the
+            # "not answering / stopped responding" alerts they raised so Offline is actually quiet.
+            for key in [k for k in self.alerts_active if k.startswith(("watch:", "login_check:"))]:
+                self.alerts_active.pop(key, None)
+            try:
+                for pat in ("not answering", "stopped responding", "have stopped responding", "went offline"):
+                    self.alert_log.resolve(pat)
+                self._refresh_alerts()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _offline_mode(self):
+        """True when the user is working offline on purpose (Offline mode, or Auto with no internet). Used to
+        silence alerts about remembered devices being unreachable - expected when disconnected from the office."""
+        m = self._settings().get("net_mode", "auto")
+        if m == "offline":
+            return True
+        if m == "online":
+            return False
+        try:
+            return not core.online()
+        except Exception:  # noqa: BLE001
+            return False
 
     def _tab_changed(self, _=None):
         cur = self.nav.current()
@@ -4213,7 +4237,7 @@ class App(tk.Tk):
                                       "Device watch")
             else:
                 st["fails"] += 1
-                if st["fails"] >= self.WATCH_FAILS and not st["down_since"]:
+                if st["fails"] >= self.WATCH_FAILS and not st["down_since"] and not self._offline_mode():
                     st["down_since"] = now - (self.WATCH_FAILS - 1) * self.WATCH_EVERY
                     st["downs"] += 1
                     title = f"Critical device not answering: {name} ({ip})"
@@ -4228,7 +4252,7 @@ class App(tk.Tk):
                     self._raise_alert("critical", title, [hint], "Device watch")
         down_since = {v["name"]: v["down_since"] for v in self.watch_state.values() if v.get("down_since")}
         cluster = T.mass_disconnect(down_since, now)
-        if cluster and now - self._mass_cool > 900:  # once per 15 min while the outage persists, not every 30 s
+        if cluster and now - self._mass_cool > 900 and not self._offline_mode():  # not when offline on purpose
             self._mass_cool = now
             title = f"Possible shared failure: {len(cluster)} watched devices went offline within a few minutes"
             self._raise_alert("critical", title,
@@ -4271,6 +4295,8 @@ class App(tk.Tk):
         import nd_sweep as SW
         st = self._settings()
         if not st.get("sweep_remember", True) or getattr(self, "_auto_sweep_busy", False):
+            return
+        if self._offline_mode():          # disconnected on purpose: don't flag remembered devices as "down"
             return
         page = getattr(self, "sweep_tab", None)
         if page is not None and page.running:
@@ -4327,6 +4353,8 @@ class App(tk.Tk):
         now. Without this, a camera dropping off the network (power cut, cable pulled, it died) is invisible
         until someone notices the total is lower - the exact gap that made "32 yesterday, 40 today" unreadable."""
         if not macs:
+            return
+        if self._offline_mode():          # disconnected on purpose: remembered devices dropping off is expected
             return
         hist = self.db.get("devices") or {}
         gone = []

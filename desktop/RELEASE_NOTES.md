@@ -1,3 +1,22 @@
+## Network Doctor 3.96.0
+
+### Offline mode now actually silences the false "device down" alerts
+Before, the Online/Offline toggle only changed the menu - it did nothing to alerts, so disconnecting from the
+office network (e.g. for the direct PoE camera test) produced a flood of false "39 cameras not answering",
+"router not answering", "watched devices went offline" alerts for devices that aren't really down - you're
+just not connected to them.
+
+Now, in Offline mode (and Auto when there's no internet) the app **suppresses those device-unreachable
+alerts** - the auto login-check, the critical-device watch and the shared-failure detector all stay quiet -
+and **closes the ones already raised** the moment you switch to Offline. Real local alerts still work. Also
+"Slow website?" joins the internet-only pages hidden offline.
+
+Tip: the top bar's section menus (Cameras, Computers, Scan, Inventory, Fixer...) stay in Offline mode on
+purpose - they all work without internet. Only genuinely internet-only pages hide (Speed test, Website check,
+DNS test, Remote access, Internet exposure, Slow website).
+
+---
+
 ## Network Doctor 3.95.0
 
 ### Online / Offline mode selector
