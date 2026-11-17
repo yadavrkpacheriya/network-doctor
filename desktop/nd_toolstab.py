@@ -1806,8 +1806,8 @@ class ToolsTab:
         for r in self.inv_rows:
             if q and q not in " ".join(str(v) for v in r.values()).lower():
                 continue
-            if (show == "Online now" and not r["online"] or show == "PCs with details" and not r["model"] or
-                    show == "PCs without details" and (r["model"] or "omputer" not in r["category"]) or
+            if (show == "Online now" and not r["online"] or show == "PCs with details" and not T.pc_has_details(r) or
+                    show == "PCs without details" and (T.pc_has_details(r) or not T.is_computer(r)) or
                     show == "Not tagged" and (r["dept"] or r["location"]) or show == "Randomized MAC" and not r["random"]
                     or show in T.INV_FILTERS and not T.INV_FILTERS[show](r)):
                 continue
@@ -1815,7 +1815,7 @@ class ToolsTab:
                             tags=("warn",) if r.get("flags") else () if r["online"] else ("off",))
             self.inv_items[iid] = r
             n += 1
-        pcs = sum(1 for r in self.inv_rows if r["model"])
+        pcs = sum(1 for r in self.inv_rows if T.pc_has_details(r))
         att = sum(1 for r in self.inv_rows if r.get("flags"))
         self.var_inv_sum.set(f"{n} shown of {len(self.inv_rows)} devices  |  online {sum(r['online'] for r in self.inv_rows)}"
                              f"  |  PCs with hardware details {pcs}  |  needing attention {att}  |  "

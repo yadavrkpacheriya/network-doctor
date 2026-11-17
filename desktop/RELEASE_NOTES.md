@@ -1,3 +1,14 @@
+## Network Doctor 3.86.0
+
+### Fixed: "PCs with details" was showing cameras, NVRs and the router
+The Inventory filter "PCs with details" (and its count) decided a row was a PC just because it had a *model*.
+But cameras, NVRs and the router also get a model from the scan, so they wrongly appeared in the PC list and
+inflated the "PCs with hardware details" count. It now uses the real signal — a device that actually ran the
+PC details report — so the list and count show only true PCs. The same flaw also raised a false "no antivirus"
+warning on cameras; that's fixed too.
+
+---
+
 ## Network Doctor 3.85.0
 
 ### PC agent now auto-updates itself — no more reinstalling on every PC

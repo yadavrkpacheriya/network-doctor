@@ -944,7 +944,7 @@ def inv_flags(r):
     if free is not None and size and (free < 15 or free / size < 0.1):
         out.append("disk almost full")
     av = str(r.get("antivirus") or "")
-    if r.get("model") and (not av or "OFF" in av or "OUT OF DATE" in av):
+    if pc_has_details(r) and (not av or "OFF" in av or "OUT OF DATE" in av):   # only PCs, never a camera/NVR
         out.append("antivirus off / old" if av else "no antivirus")
     fw = str(r.get("firewall") or "")
     if "off" in fw.lower():
@@ -967,6 +967,18 @@ INV_FILTERS = {"Needs attention (any)": lambda r: bool(r.get("flags")),
                                                              for f in r.get("flags", [])),
                "Windows not updated 60+ days": lambda r: any("Windows update" in f for f in r.get("flags", [])),
                "Printers": lambda r: "rinter" in str(r.get("category", ""))}
+
+
+def is_computer(r):
+    """True when an inventory row is a PC / laptop - not a camera, NVR, router, printer or phone."""
+    return "omputer" in str(r.get("category", ""))
+
+
+def pc_has_details(r):
+    """A PC/laptop that has actually reported its hardware details. The reliable signal is report_time (a PC
+    detail report exists for it) - NOT 'model', because cameras, NVRs and the router get a model from the scan
+    too but never run the PC detail report. This is what the 'PCs with details' view and count must use."""
+    return bool(r.get("report_time"))
 
 
 def driver_page(maker, serial, model=""):
