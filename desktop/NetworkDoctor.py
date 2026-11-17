@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.89.0"
+VERSION = "3.90.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1025,10 +1025,64 @@ class App(tk.Tk):
         self._category_page(
             "cameras", "Cameras & DVR / NVR", (core.CAT_CAM,),
             [("Check camera pictures", self._camera_picture_check),
+             ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
                   "automatically. Use 'Restart & fix camera IPs' for the restart -> fixed-IP -> bind flow.")
+
+    def _direct_camera_check(self):
+        """Find cameras on a direct PoE link (no router / no DHCP). Uses ONVIF + XMeye broadcasts (works for
+        local/no-name brands) plus a brand-agnostic port sweep of this PC's subnet. Runs off-thread."""
+        import nd_poecheck as PC
+        lip = self.lip or ""
+        if not messagebox.askyesno(APP, "Direct camera check\n\nPlug this PC into the PoE switch that feeds the "
+                                        "cameras, then click Yes.\n\nIt finds cameras by ONVIF + XMeye broadcast "
+                                        "(works for local brands, no router or DHCP needed) and by scanning this "
+                                        "PC's subnet" + (f" ({lip})" if lip else "") + ".\n\nStart now?"):
+            return
+        self.var_status.set("Direct camera check: listening for cameras...")
+
+        def work():
+            try:
+                found = PC.discover(timeout=4.0)
+            except Exception:  # noqa: BLE001
+                found = []
+            try:
+                swept = PC.sweep_many(PC.subnet_ips(lip)) if lip else []
+            except Exception:  # noqa: BLE001
+                swept = []
+            seen = {c.get("ip") for c in found if c.get("ip")}
+            for s in swept:
+                if s["ip"] not in seen:
+                    found.append(s)
+            self.q.put(("call", lambda: self._direct_camera_done(found)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _direct_camera_done(self, cams):
+        self.var_status.set(f"Direct camera check: {len(cams)} camera(s) found")
+        if not cams:
+            messagebox.showinfo(APP, "No cameras answered on this link.\n\nCheck: the PC is plugged into the PoE "
+                                     "switch, the cameras have power (PoE), and - for the subnet scan - set this "
+                                     "PC's IP to the cameras' range (e.g. 192.168.1.50) if you know it.")
+            return
+        lines = []
+        for c in cams:
+            bits = [c.get("ip") or "?"]
+            if c.get("brand") or c.get("guess"):
+                bits.append(c.get("brand") or c.get("guess"))
+            if c.get("model"):
+                bits.append(c["model"])
+            if c.get("mac"):
+                bits.append(c["mac"])
+            how = ", ".join(c.get("seen_by") or [])
+            port = c.get("port")
+            tail = (f"  [{how}]" if how else "") + (f" port {port} open" if port else "")
+            lines.append("  " + "  -  ".join(bits) + tail)
+        messagebox.showinfo(APP, f"{len(cams)} camera(s) connected on this link:\n\n" + "\n".join(lines[:40]) +
+                            "\n\n(Found by ONVIF/XMeye broadcast and subnet scan - these are powered and "
+                            "connected right now.)")
 
     def _tab_computers(self):
         self._category_page(

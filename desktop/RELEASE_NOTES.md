@@ -1,3 +1,20 @@
+## Network Doctor 3.90.0
+
+### New: Direct camera check (PoE, no router needed)
+Cameras tab → "Direct camera check (PoE, no router)". Plug the PC straight into the PoE switch that feeds the
+cameras — no router, no DHCP needed — and it tells you which cameras are powered and connected, with their IP
+/ MAC / brand.
+
+Works for local / no-name brands (not just Hikvision/Dahua): it finds cameras three ways at once —
+- **ONVIF** broadcast (almost every IP camera),
+- **XMeye / NetSurveillance** broadcast on 34569 (the cheap "XM"-chipset cameras most local brands use),
+- a **brand-agnostic port scan** of the PC's subnet (finds any camera by its RTSP / web / XMeye port).
+
+Fully offline — it uses only the local link, so it works with the PC disconnected from the internet. If a
+camera doesn't show, set the PC's IP to the cameras' range (e.g. 192.168.1.50) and run again.
+
+---
+
 ## Network Doctor 3.89.0
 
 ### All logins in one place — PC, camera/NVR/DVR and router

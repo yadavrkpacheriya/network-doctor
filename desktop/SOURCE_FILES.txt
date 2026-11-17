@@ -53,3 +53,4 @@ nd_snmpcfg.py
 nd_ipfix.py
 nd_agent.py
 nd_deploy.py
+nd_poecheck.py
