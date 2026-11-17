@@ -4,7 +4,7 @@
 # It sends only to the shared folder on the IT PC. It never reads a file's contents and never uses the internet.
 param([ValidateSet("fix", "background")] [string]$Mode = "fix")
 
-$AgentVersion = "1.1.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share
+$AgentVersion = "1.2.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share (~2 min)
 
 # ===== IT PC's shared folder (read by Network Doctor). Set once at install in central.txt; the line below is
 #       only the fallback when that file is missing, so a self-update never resets your real share. =====
@@ -285,12 +285,12 @@ while ($true) {
     $tick++
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
     if ($tick % 100 -eq 0) { Send-Auth 6 }               # every ~5 min: failed-login (brute-force) check
-    if ($tick % 600 -eq 0) {                               # every ~30 min: refresh details, re-pin router, self-update
-        Send-Details; Lock-Gateway
-        if (Update-Self) {
-            $mtx.ReleaseMutex()
+    if ($tick % 40 -eq 0) {                                # every ~2 min: pick up an update the app published
+        if (Update-Self) {                                 # (a published version bump reaches every PC in ~2 min,
+            $mtx.ReleaseMutex()                            #  no per-PC visit, no remote command, no credentials)
             Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $DST 'networkdoctor-agent.ps1'),'-Mode','background'
             exit
         }
     }
+    if ($tick % 600 -eq 0) { Send-Details; Lock-Gateway }  # every ~30 min: refresh details, re-pin router
 }

@@ -1,3 +1,13 @@
+## Network Doctor 3.87.0
+
+### Agent updates now reach every PC within ~2 minutes (no per-PC visit)
+The PC agent now checks for a published update every ~2 minutes (was ~30 min / next logon). So the moment
+Network Doctor publishes a new agent to your share, every PC picks it up on its own within a couple of
+minutes — no going to each PC, no remote command, no saved passwords, no extra ports opened. Publish once,
+all PCs follow. (Agent v1.2.0.)
+
+---
+
 ## Network Doctor 3.86.0
 
 ### Fixed: "PCs with details" was showing cameras, NVRs and the router
