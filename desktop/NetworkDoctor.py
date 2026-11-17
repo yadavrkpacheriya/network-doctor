@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.96.0"
+VERSION = "3.97.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1287,6 +1287,18 @@ class App(tk.Tk):
                 if s["ip"] not in seen:
                     found.append(s)
                     seen.add(s["ip"])
+            # ARP-sweep the common camera subnets - finds a camera on a DIFFERENT subnet (the classic "4th
+            # camera won't show" case) because ARP is a Layer-2 broadcast that crosses subnets on one switch.
+            try:
+                if core.scapy_ok():
+                    arp = PC.arp_sweep(PC.COMMON_SUBNETS,
+                                       lambda net: core.scapy_arp_all_replies(net, self.gw or ""))
+                    for a in arp:
+                        if a["ip"] not in seen and a["ip"] != self.lip:
+                            found.append(a)
+                            seen.add(a["ip"])
+            except Exception:  # noqa: BLE001
+                pass
             self.q.put(("call", lambda: self._direct_camera_done(found)))
 
         threading.Thread(target=work, daemon=True).start()

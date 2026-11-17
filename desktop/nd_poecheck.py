@@ -204,6 +204,30 @@ def sweep_many(ips, connect=None, ports=None, workers=100):
     return sorted(out, key=lambda d: _ip_key(d["ip"]))
 
 
+# Common default subnets cameras/NVRs ship on - ARP-swept on a direct link so an off-subnet camera is found
+# no matter what IP it kept (ARP is a Layer-2 broadcast, so it crosses subnets on one switch).
+COMMON_SUBNETS = ("192.168.0.0/24", "192.168.1.0/24", "192.168.2.0/24", "192.168.8.0/24",
+                  "10.0.0.0/24", "172.16.0.0/24")
+
+
+def arp_sweep(nets, arp_fn):
+    """Find ANY device on the direct link by MAC, across subnets. `arp_fn(net) -> {ip: {mac, ...}}` (the app's
+    scapy ARP helper). Returns [{ip, mac, brand, model, serial, how}]. Injectable for tests."""
+    out, seen = [], set()
+    for net in nets:
+        try:
+            rep = arp_fn(net) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        for ip, macs in rep.items():
+            if ip in seen:
+                continue
+            seen.add(ip)
+            mac = sorted(macs)[0] if macs else ""
+            out.append({"ip": ip, "mac": mac, "brand": "", "model": "", "serial": "", "how": "ARP"})
+    return out
+
+
 def subnet_ips(ip):
     """The /24 around an IP (x.y.z.1 .. x.y.z.254), for sweeping the PC's own link."""
     try:

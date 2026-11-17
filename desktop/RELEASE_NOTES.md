@@ -1,3 +1,20 @@
+## Network Doctor 3.97.0
+
+### Direct camera check now finds cameras on ANY subnet (the "4th camera won't show" fix)
+When a camera is plugged into the PoE switch but sits on a different IP range than your PC (e.g. your PC is
+`192.168.0.x` and the camera kept `192.168.1.x` or a `169.254.x.x` address), a normal IP scan can't reach it -
+ARP only works on your own subnet and a dumb PoE switch has no router to bridge the ranges.
+
+"Direct camera check (PoE, no router)" now also **ARP-sweeps the common camera subnets** (192.168.0/1/2/8.x,
+10.x, 172.16.x). ARP is a Layer-2 broadcast, so it crosses subnets on one switch and finds the camera by its
+MAC whatever IP it's on - even if it answers no ONVIF/XMeye. It'll show the off-subnet camera's real IP; then
+use "Edit IP / reboot (direct)" to move it onto your range so it appears in every normal scan.
+
+(Needs Npcap for the ARP sweep - Setup > "What is missing" has the installer. Without it, the ONVIF/XMeye
+broadcast still finds most cameras.)
+
+---
+
 ## Network Doctor 3.96.0
 
 ### Offline mode now actually silences the false "device down" alerts
