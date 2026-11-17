@@ -1,3 +1,12 @@
+## Network Doctor 3.98.0
+
+### Fixed: scan could crash with "KeyError: 'netbios'"
+A scan crashed on the duplicate-computer-names check when two devices shared an **SMB** name but neither had a
+NetBIOS name (common with a Linux/NAS/router that answers SMB only). The check grouped by netbios-or-smb but
+then read the NetBIOS name directly. It now falls back to the SMB name. Scans no longer crash on this.
+
+---
+
 ## Network Doctor 3.97.0
 
 ### Direct camera check now finds cameras on ANY subnet (the "4th camera won't show" fix)

@@ -1850,7 +1850,8 @@ def analyse(raw, devices, db):
                                    "connected by cable AND Wi-Fi at the same time, or two PCs have the same name.")
             fix = ("One PC on two connections: switch Wi-Fi off when the cable is in. Two PCs: rename one "
                    "(Settings > System > About > Rename this PC); duplicate names break file sharing.")
-        add(sev, f"'{ds[0]['names']['netbios']}' appears {len(ds)} times", why, fix, [label_of(d) for d in ds])
+        shown_name = ds[0]["names"].get("netbios") or ds[0]["names"].get("smb") or n
+        add(sev, f"'{shown_name}' appears {len(ds)} times", why, fix, [label_of(d) for d in ds])
     checks.append(("Duplicate computer names", "warn" if dupn else "pass", f"{dupn} group(s), each explained"))
 
     # ---- multi-IP devices
