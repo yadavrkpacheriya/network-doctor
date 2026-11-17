@@ -2477,13 +2477,26 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
                                                 ("activate", "Pro / Activate")]),
 ]
 
+# Pages that need the internet - hidden from the menu in Offline mode. Everything else (scan, cameras, PCs,
+# file scanner, usage, fixes, firewall, SNMP, ports, Wake-on-LAN, backups, setup) works offline and stays.
+ONLINE_PAGES = {"t_speed", "t_web", "t_dns", "t_remote", "expose"}
+
 
 class SectionNav:
     """Two rows of coloured buttons (section, then its pages) above one page area. Pages are created up front
     (page(key) -> frame) and shown with select(key); on_change(key) runs after every switch."""
 
-    def __init__(self, master, on_change=None):
+    def __init__(self, master, on_change=None, mode="auto", on_mode=None):
         self.on_change = on_change
+        self.on_mode = on_mode
+        modebar = tk.Frame(master, bg="#f8fafc")
+        modebar.pack(fill="x", padx=10, pady=(2, 0))
+        tk.Label(modebar, text="Mode:", bg="#f8fafc", fg="#475569", font=("Segoe UI", 9)).pack(side="left")
+        self._mode_var = tk.StringVar(value=mode or "auto")
+        ttk.OptionMenu(modebar, self._mode_var, (mode or "auto"), "auto", "online", "offline",
+                       command=lambda _=None: self._mode_changed()).pack(side="left", padx=4)
+        self._mode_lbl = tk.Label(modebar, text="", bg="#f8fafc", fg="#047857", font=("Segoe UI", 9))
+        self._mode_lbl.pack(side="left", padx=8)
         self.top = tk.Frame(master, bg="#f8fafc")
         self.top.pack(fill="x", padx=10, pady=(2, 0))
         self.strip = tk.Frame(master, height=4, bg="#334155")
@@ -2552,6 +2565,41 @@ class SectionNav:
     def select_section(self, key):
         self.select(self.last.get(key) or self.section(key)[4][0][0])
 
+    def _is_offline(self):
+        m = self._mode_var.get()
+        if m == "offline":
+            return True
+        if m == "online":
+            return False
+        try:
+            return not core.online()                      # auto: follow the real connection
+        except Exception:  # noqa: BLE001
+            return False
+
+    def visible_subs(self, sec_key):
+        """A section's pages, hiding internet-only ones when offline, so local work (cameras, PCs, file
+        scanner, scan, usage, fixes) stays and internet features drop out of the menu."""
+        subs = self.section(sec_key)[4]
+        if self._is_offline():
+            return [(p, t) for p, t in subs if p not in ONLINE_PAGES]
+        return list(subs)
+
+    def _mode_changed(self):
+        if self.on_mode:
+            self.on_mode(self._mode_var.get())
+        self.apply_mode()
+
+    def apply_mode(self):
+        off = self._is_offline()
+        self._mode_lbl.configure(text="offline - internet menus hidden" if off else "online")
+        sec, target = self.cur_sec, self.cur
+        if off and self.cur in ONLINE_PAGES:              # leave a now-hidden page
+            vis = self.visible_subs(sec) if sec else []
+            target = vis[0][0] if vis else self.cur
+        self.cur_sec = None                               # force the sub-bar to rebuild with the filter
+        if target:
+            self.select(target)
+
     def select(self, key):
         if key not in self.sec_of:
             return
@@ -2566,7 +2614,7 @@ class SectionNav:
                 w.destroy()
             self.sub.configure(bg=light)
             self.sub_btn = {}
-            for p, _t in subs:
+            for p, _t in self.visible_subs(sec):
                 b = tk.Label(self.sub, text=f" {self.labels[p]} ", font=("Segoe UI", 10), bg=light, fg="#1f2937",
                              padx=10, pady=5, cursor="hand2")
                 b.pack(side="left")

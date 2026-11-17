@@ -1,3 +1,18 @@
+## Network Doctor 3.95.0
+
+### Online / Offline mode selector
+Top-left of the menu bar there's now a **Mode** selector: **Auto / Online / Offline**.
+- **Offline** hides the internet-only menus (Speed test, Website check, DNS test, Remote access VPN, Internet
+  exposure) so the menu shows only what works without internet — scan, cameras, PCs & file tools, inventory,
+  usage, fixes, firewall, SNMP/ports/Wake-on-LAN, backups and setup.
+- **Online** shows everything.
+- **Auto** (default) follows the real connection — hides those menus when the PC has no internet, shows them
+  when it does. Your choice is remembered.
+
+No local feature is ever hidden, and no menu section disappears entirely.
+
+---
+
 ## Network Doctor 3.94.0
 
 ### Snappier offline

@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.94.0"
+VERSION = "3.95.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -617,7 +617,8 @@ class App(tk.Tk):
         ttk.Button(bot, text="Export devices (Excel CSV)", command=self.exp_csv).pack(side="left", padx=6)
         ttk.Button(bot, text="Forget offline devices", command=self.forget_offline).pack(side="left")
 
-        self.nav = nd_tabs.SectionNav(self, on_change=self._tab_changed)
+        self.nav = nd_tabs.SectionNav(self, on_change=self._tab_changed,
+                                      mode=self._settings().get("net_mode", "auto"), on_mode=self._net_mode_changed)
         self._tab_home()
         self._tab_assist()
         self._tab_devices()
@@ -641,6 +642,7 @@ class App(tk.Tk):
         self._tab_history()
         self._tab_setup()
         self.nav.select("home")
+        self.after(1500, self.nav.apply_mode)   # hide internet-only menus if Offline / auto-detected offline
         self._refresh_alerts()
 
     def _tab_devices(self):
@@ -787,6 +789,10 @@ class App(tk.Tk):
     def show_tab(self, name):
         """Opens a page by its key ('devices', 'usage', 't_guard'...); 'tools' opens the Security section."""
         self.nav.select({"tools": "t_guard"}.get(name, name))
+
+    def _net_mode_changed(self, mode):
+        self._settings()["net_mode"] = mode
+        self._save_settings()
 
     def _tab_changed(self, _=None):
         cur = self.nav.current()
