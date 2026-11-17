@@ -17,6 +17,20 @@ class Assess(unittest.TestCase):
         self.assertEqual(r["status"], "OFFLINE")
         self.assertIn("PoE", r["fix"])
 
+    def test_online_but_no_port_is_not_offline(self):
+        # scan saw it (answered ARP) but no camera TCP port answered -> reachable, "to check", never OFFLINE
+        cam = dict(CAM, online=True)
+        r = H.assess(cam, [], None, False)
+        self.assertEqual(r["status"], "CHECK")
+        self.assertTrue(any("online" in i for i in r["issues"]))
+
+    def test_offsubnet_camera_is_online_with_move_hint(self):
+        cam = dict(CAM, online=True, offsubnet=True)
+        r = H.assess(cam, [], None, False)
+        self.assertEqual(r["status"], "CHECK")
+        self.assertTrue(any("another subnet" in i for i in r["issues"]))
+        self.assertIn("Edit IP", r["fix"])
+
     def test_ok_when_reachable_and_login_fine(self):
         r = H.assess(CAM, [34567], {"model": "HB-X", "firmware": "V5.00"}, {"user": "admin", "default": False})
         self.assertEqual(r["status"], "OK")

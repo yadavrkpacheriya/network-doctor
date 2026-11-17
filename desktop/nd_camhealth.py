@@ -23,16 +23,33 @@ def is_default(user, pw):
 
 def assess(cam, reachable_ports, info, login):
     """Build one camera's health record.
-    cam: {name, ip, mac}. reachable_ports: list of open camera ports ([] = offline).
+    cam: {name, ip, mac, online, offsubnet}. reachable_ports: list of open camera ports ([] = no camera port
+    answered). `online` (from the scan - the camera answered ARP/ping) means it is powered and connected even
+    when no TCP camera port is open. `offsubnet` means its IP is on a different range than this PC, so TCP
+    can't route to it (but it is still reachable at link level).
     info: {model, firmware, ...} or None. login: {'user','default'} if a login worked, None if none worked,
     or False if a login was not attempted (e.g. not an XMeye camera)."""
     rec = {"name": cam.get("name") or cam.get("ip") or "?", "ip": cam.get("ip", ""),
            "mac": cam.get("mac", ""), "model": (info or {}).get("model", ""),
            "firmware": (info or {}).get("firmware", ""), "issues": [], "status": "OK", "fix": ""}
     if not reachable_ports:
-        rec["status"] = "OFFLINE"
-        rec["issues"].append("not responding - check PoE power / network cable (or it is on another subnet)")
-        rec["fix"] = "Power-cycle its PoE port, then run Direct camera check to confirm it is connected"
+        # Truly offline only when the scan did NOT see it either. If the scan marked it online, it IS powered
+        # and connected - the camera port just didn't answer (off-subnet / non-standard port), not offline.
+        if not cam.get("online"):
+            rec["status"] = "OFFLINE"
+            rec["issues"].append("not responding - check PoE power / network cable (or it is on another subnet)")
+            rec["fix"] = "Power-cycle its PoE port, then run Direct camera check to confirm it is connected"
+            return rec
+        rec["status"] = "CHECK"
+        if cam.get("offsubnet"):
+            rec["issues"].append("online, but on another subnet (%s) - connected, just not on this PC's network"
+                                 % (cam.get("ip") or "?"))
+            rec["fix"] = ("Use 'Edit IP / reboot (direct)' to move it onto your range (e.g. 192.168.0.x); "
+                          "then login, firmware and pictures all work")
+        else:
+            rec["issues"].append("online, but no camera service answered - it may use a non-standard port "
+                                 "or its ports are blocked")
+            rec["fix"] = "Open the camera's web page / app to confirm it is a camera and note its port"
         return rec
     if login is None:
         rec["status"] = "CHECK"

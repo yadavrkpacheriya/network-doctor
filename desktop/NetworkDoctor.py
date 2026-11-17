@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.1"
+VERSION = "4.2"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1153,7 +1153,15 @@ class App(tk.Tk):
         import nd_camhealth as H
         import nd_poecheck as PC
         import nd_dvrip as DV
-        cams = [{"name": d.get("name") or d.get("ip"), "ip": d.get("ip"), "mac": d.get("mac", "")}
+        def _base24(ip):
+            try:
+                return ".".join((ip or "").split(".")[:3])
+            except Exception:  # noqa: BLE001
+                return ""
+        my_net = _base24(self.lip)
+        cams = [{"name": d.get("name") or d.get("ip"), "ip": d.get("ip"), "mac": d.get("mac", ""),
+                 "online": bool(d.get("online")),
+                 "offsubnet": bool(my_net) and _base24(d.get("ip")) != my_net}
                 for d in (getattr(self, "devices", []) or [])
                 if d.get("ip") and core.CAT_CAM in str(d.get("category", ""))]
         if not cams:
