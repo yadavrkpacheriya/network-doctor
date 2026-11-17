@@ -100,7 +100,7 @@ TOOLS = [
      "Real speed through the cables and switches between this PC and another PC running Network Doctor. Finds "
      "100 Mbps cables and slow switches."),
     ("wifi", "Wi-Fi analyzer",
-     "Nearby Wi-Fi networks, channels, signal and security, the least crowded channel, and the signal of this PC."),
+     "Nearby Wi-Fi networks, channels, signal and security, the least crowded channel, and the signal of this PC. Plus a \"Why is it slow?\" check: Wi-Fi, cable, router and internet pings (loss, spikes), DNS - names the likely cause."),
     ("nic", "This PC's network adapters",
      "Link speed (1 Gbps / 100 Mbps), duplex, packet errors, DHCP / IP and MTU of every network card in this PC."),
     ("mtu", "MTU finder",
@@ -1316,9 +1316,36 @@ class ToolsTab:
         row = ttk.Frame(f)
         row.pack(fill="x")
         self._run_btn(row, "wifi", "Scan Wi-Fi", self._wifi)
-        ttk.Label(row, text="  Run it on a laptop where the Wi-Fi problem is - it sees what that spot sees.",
-                  foreground="#667085").pack(side="left")
+        self._run_btn(row, "wifi", "Why is it slow? (100 pings)", self._slowcheck)
+        self._stop_btn(row, "wifi")
+        ttk.Button(row, text="Open router page", command=self._open_router_page).pack(side="left", padx=4)
+        ttk.Label(row, text="  Run it on the PC/laptop where the problem is - it sees what that spot sees. The full check "
+                            "takes about 2 minutes.", foreground="#667085").pack(side="left")
         self._out_box(f, "wifi")
+
+    def _open_router_page(self):
+        gw = self.app.gw
+        if gw:
+            webbrowser.open(("https://" if core.tcp_open(gw, 443) and not core.tcp_open(gw, 80) else "http://") + gw)
+
+    def _slowcheck(self, out, stop):
+        n = sum(1 for d in self.app.devices if d.get("online"))
+        out(f"Checking Wi-Fi, adapters, router and internet from this PC (router {self.app.gw or '?'}) ...", "h")
+        verdict, finds, rep = NT.slowdown_check(self.app.gw, n, 100, out, stop)
+        if stop.is_set():
+            out("\nStopped - partial result below.", "warn")
+        out("\n" + verdict, "h")
+        for sev, text in finds:
+            out(("  ! " if sev != "ok" else "  ") + text, {"critical": "crit", "warning": "warn", "ok": "ok"}.get(sev, ""))
+        for key, name in (("gw", "Router"), ("inet", "Internet 1.1.1.1")):
+            st = rep.get(key)
+            if st:
+                out(f"\n{name}: sent {st['sent']}, lost {st['loss']:.0f}%" + (
+                    f", min/median/p95/max {st['min']:.0f}/{st['median']:.0f}/{st['p95']:.0f}/{st['max']:.0f} ms, "
+                    f"jitter {st['jitter']:.1f} ms, spikes {st['spikes']}" if st["recv"] else ""))
+        if rep.get("dns") is not None:
+            out(f"DNS lookup: {rep['dns']:.0f} ms")
+        out(("Slowdown check", "info", verdict), "log")
 
     def _wifi(self, out, stop):
         cur, nets, note = NT.wifi_scan()

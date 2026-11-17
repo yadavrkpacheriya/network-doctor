@@ -1,3 +1,21 @@
+## Network Doctor 4.4
+
+### New: "Why is it slow?" - one-click slowdown check (Tools > Wi-Fi analyzer)
+Runs what an engineer would check, from the PC where the problem is: Wi-Fi signal and channel crowding, cable
+speed/duplex/errors, **100 pings to the router and to the internet** (loss, lost-in-a-row, latency spikes, jitter,
+95th percentile), and DNS speed. It then names the likely cause in order: this PC's own link -> the router/LAN ->
+the internet line/ISP -> DNS. Has a Stop button, sends only tiny pings, and changes nothing on the network.
+"Open router page" opens the router's admin page in the browser.
+
+### Upgraded
+- **Ping statistics** everywhere now also give median, 95th percentile, spike count and longest loss streak
+  (old fields unchanged). Lost pings are now counted in the right place, on Windows, Linux and Mac.
+- **Wi-Fi analyzer** now says the signal in words and dBm, warns when many networks share your channel, when your
+  Wi-Fi is also on a faster 5 GHz band, when a stronger access point of the same Wi-Fi is nearby (PC stuck on a far
+  one), and when the link speed is very low.
+
+---
+
 ## Network Doctor 3.99.0
 
 ### The main Scan now finds cameras on ANY IP range in Offline mode

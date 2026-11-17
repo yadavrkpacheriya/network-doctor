@@ -593,15 +593,74 @@ def ping_times(text):
     return out
 
 
-def ping_stats(ip, count=10):
+def _ping_argv(ip, count):
     if core.IS_WIN:
-        cmd = ["ping", "-n", str(count), "-w", "1000", ip]
-    elif core.IS_MAC:
-        cmd = ["ping", "-c", str(count), "-i", "0.3", "-W", "1000", ip]
-    else:
-        cmd = ["ping", "-c", str(count), "-i", "0.3", "-W", "1", ip]
-    t = ping_times(run(cmd, count * 2 + 10))
-    return stats_of(t, count)
+        return ["ping", "-n", str(count), "-w", "1000", ip]
+    if core.IS_MAC:
+        return ["ping", "-c", str(count), "-i", "0.3", "-W", "1000", ip]
+    return ["ping", "-c", str(count), "-i", "0.3", "-W", "1", ip]
+
+
+_LOST_RE = re.compile(r"timed out|timeout|unreachable|general failure|transmit failed|no answer|100% packet loss", re.I)
+
+
+def parse_ping_series(text, sent):
+    """One entry per probe, in order: round-trip ms, or None for a lost probe. Windows prints one line per probe
+    ('Request timed out' = lost); Linux/Mac number them (icmp_seq) and print nothing for a lost one."""
+    seq = {}
+    for m in re.finditer(r"icmp_seq[=\s](\d+).*?" + _TIME_RE.pattern, text, re.I):
+        v = m.group(3).replace(",", ".")
+        try:
+            x = float(v)
+        except ValueError:
+            continue
+        seq[int(m.group(1))] = 0.5 if m.group(2) == "<" and x <= 1 else x
+    if seq:
+        first = min(seq)
+        return [seq.get(first + i) for i in range(sent)]
+    out = []
+    for line in text.splitlines():
+        t = ping_times(line)
+        if t:
+            out.append(t[0])
+        elif _LOST_RE.search(line) and "statistics" not in line.lower():
+            out.append(None)
+    out = out[:sent]
+    return out + [None] * (sent - len(out))
+
+
+def series_stats(series):
+    """stats_of() plus median, 95th percentile, latency spikes (a reply more than 3x the usual time and at least
+    40 ms above it) and the longest run of lost probes in a row."""
+    sent = len(series)
+    times = [x for x in series if x is not None]
+    st = stats_of(times, sent) if sent else stats_of([], 1)
+    burst = run_ = 0
+    for x in series:
+        run_ = run_ + 1 if x is None else 0
+        burst = max(burst, run_)
+    st.update(median=None, p95=None, spike_ms=None, spikes=0, burst=burst)
+    if times:
+        srt = sorted(times)
+        med = statistics.median(srt)
+        thr = max(3 * med, med + 40)
+        st.update(median=med, p95=srt[min(len(srt) - 1, int(0.95 * len(srt)))], spike_ms=thr,
+                  spikes=sum(1 for t in times if t > thr))
+    return st
+
+
+def ping_stats(ip, count=10):
+    return series_stats(parse_ping_series(run(_ping_argv(ip, count), count * 2 + 10), count))
+
+
+def ping_series(ip, count=100, stop=None, progress=lambda done: None):
+    """Many pings in small chunks so the Stop button works. Light traffic: tiny packets, one at a time."""
+    series, chunk = [], 10
+    while len(series) < count and not (stop and stop.is_set()):
+        n = min(chunk, count - len(series))
+        series += parse_ping_series(run(_ping_argv(ip, n), n * 2 + 10), n)
+        progress(len(series))
+    return series
 
 
 def stats_of(times, sent):
@@ -1034,6 +1093,54 @@ def wifi_scan():
     return {}, [], "Wi-Fi analysis works on Windows, Mac, and Linux (needs NetworkManager)."
 
 
+def signal_label(pct):
+    """Windows/Linux signal % -> (word, approx dBm). -50 dBm = 100 %, -100 dBm = 0 %."""
+    if pct is None:
+        return "unknown", None
+    word = "excellent" if pct >= 80 else "good" if pct >= 60 else "fair" if pct >= 40 else "weak"
+    return word, int(pct / 2 - 100)
+
+
+def _rate_mbps(text):
+    m = re.search(r"([\d.]+)", str(text or ""))
+    return float(m.group(1)) if m else None
+
+
+def wifi_extra(nets, connected=None):
+    """Extra Wi-Fi advice: signal in words, neighbours on the same channel, a better band, a stronger access point
+    of the same Wi-Fi (sticky roaming), and a low link speed."""
+    out = []
+    if not connected or not connected.get("channel"):
+        return out
+    c, sig, ssid = connected["channel"], connected.get("signal"), connected.get("ssid")
+    word, dbm = signal_label(sig)
+    if dbm is not None:
+        out.append(f"  Signal is {word} (about {dbm} dBm).")
+    mine = {core.norm_mac(connected.get("bssid") or "") or connected.get("bssid")}
+    near = [n for n in nets if n.get("channel") and (n.get("signal") or 0) >= 40 and n.get("ssid") != ssid
+            and ((c <= 14 and n["channel"] <= 14 and abs(n["channel"] - c) <= 4) or n["channel"] == c)]
+    if len(near) >= 3:
+        out.append(f"  ! {len(near)} other strong networks use or overlap channel {c} - that is shared air, so Wi-Fi "
+                   "slows down when they are busy.")
+    same = [n for n in nets if n.get("ssid") == ssid and (core.norm_mac(n.get("bssid") or "") or n.get("bssid")) not in mine]
+    if c <= 14:
+        g5 = [n for n in same if n.get("channel") and n["channel"] > 14 and (n.get("signal") or 0) >= 40]
+        if g5:
+            out.append(f"  ! This PC is on 2.4 GHz but '{ssid}' is also on 5 GHz here (channel {g5[0]['channel']}, signal "
+                       f"{g5[0]['signal']}%) - connect to the 5 GHz one for faster, less crowded Wi-Fi.")
+    if sig is not None:
+        better = [n for n in same if (n.get("signal") or 0) >= sig + 15 and n.get("band") == connected.get("band", n.get("band"))]
+        if better:
+            b = max(better, key=lambda n: n.get("signal") or 0)
+            out.append(f"  ! A stronger access point of '{ssid}' is in range ({b['signal']}% vs {sig}%, channel "
+                       f"{b.get('channel')}). This PC is stuck on a far one - turn Wi-Fi off/on, or lower the far AP's power.")
+    rates = [r for r in (_rate_mbps(connected.get("rx")), _rate_mbps(connected.get("tx"))) if r]
+    if rates and min(rates) < 54:
+        out.append(f"  ! Link speed is only {min(rates):.0f} Mbps - the real speed will be far lower. Move closer to the "
+                   "access point or use 5 GHz.")
+    return out
+
+
 CH24_BEST = (1, 6, 11)
 
 
@@ -1069,6 +1176,7 @@ def wifi_analyse(nets, connected=None):
             lines.append("  Tip: use 5 GHz for PCs and laptops near the access point - more channels, less interference.")
         elif sum(v for ch, v in used5.items() if abs(ch - c) < 8) > 3:
             lines.append(f"  ! 5 GHz channel {c} is shared with many networks - channel {best5} looks freer.")
+    lines += wifi_extra(nets, connected)
     lines.append(f"Best 2.4 GHz channel here: {best24}  (only 1, 6 and 11 do not overlap)")
     lines.append(f"Least used 5 GHz channel here: {best5}")
     weak = [n for n in nets if n.get("auth") and re.search(r"\bopen\b|wep|^wpa-personal$|tkip", n["auth"] + " " +
@@ -1079,6 +1187,118 @@ def wifi_analyse(nets, connected=None):
     for n in nets:
         same.setdefault(n["ssid"], set()).add(n.get("channel"))
     return lines, counts
+
+
+# ==========================================================================
+# "Why is my Wi-Fi / network slow?" - one check that runs everything (like asking an engineer)
+# ==========================================================================
+def dns_ms(host="www.google.com"):
+    t = time.perf_counter()
+    try:
+        socket.getaddrinfo(host, 443, socket.AF_INET)
+    except OSError:
+        return None
+    return (time.perf_counter() - t) * 1000
+
+
+def slowdown_judge(rep):
+    """Pure: rep = {"wifi": connected dict, "wifi_lines": [..], "gw": series_stats|None, "inet": series_stats|None,
+    "dns": ms|None, "devices": int, "adapters": [(sev,text)]} -> (verdict, [(severity, text)]).
+    Order of blame: this PC's own link -> the router -> the internet line -> DNS."""
+    f = []
+    local = router = isp = False
+    cur = rep.get("wifi") or {}
+    if cur.get("signal") is not None and cur["signal"] < 50:
+        f.append(("critical" if cur["signal"] < 30 else "warning",
+                  f"Wi-Fi signal is weak ({cur['signal']}%). Move closer to the access point or add one."))
+        local = True
+    for ln in rep.get("wifi_lines") or []:
+        if ln.strip().startswith("!") and "weak security" not in ln and "Weak signal" not in ln:
+            f.append(("warning", ln.strip().lstrip("! ").strip()))
+            local = True
+    for sev, text in rep.get("adapters") or []:
+        if sev != "ok":
+            f.append((sev, text))
+            local = True
+
+    def judge_link(st, name, is_router):
+        nonlocal router, isp
+        if not st:
+            return
+        bad = False
+        if st["recv"] == 0:
+            f.append(("critical", f"{name} does not answer ping at all."))
+            bad = True
+        else:
+            if st["loss"] >= 2:
+                f.append(("critical" if st["loss"] >= 10 else "warning",
+                          f"{st['loss']:.0f}% of pings to {name} were lost ({st['sent'] - st['recv']} of {st['sent']}"
+                          + (f", {st['burst']} in a row" if st.get("burst", 0) > 1 else "") + ")."))
+                bad = True
+            if st.get("spikes", 0) >= 3 or (st.get("p95") or 0) > (50 if is_router else 120):
+                f.append(("warning", f"{name}: {st.get('spikes', 0)} latency spike(s) in {st['sent']} pings (over "
+                                     f"{st['spike_ms']:.0f} ms; usual {st['median']:.0f} ms, worst {st['max']:.0f} ms)."))
+                bad = True
+            if is_router and st["avg"] > 20:
+                f.append(("warning", f"Router answers slowly (average {st['avg']:.0f} ms; a healthy LAN is under 5 ms)."))
+                bad = True
+        if bad:
+            if is_router:
+                router = True
+            else:
+                isp = True
+    judge_link(rep.get("gw"), "the router", True)
+    judge_link(rep.get("inet"), "the internet (1.1.1.1)", False)
+    if rep.get("dns") is not None and rep["dns"] > 150:
+        f.append(("warning", f"Name lookups are slow ({rep['dns']:.0f} ms) - set the router/PC DNS to 1.1.1.1 or 8.8.8.8."))
+    if rep.get("dns") is None and rep.get("inet") and rep["inet"]["recv"]:
+        f.append(("critical", "Internet works but names do not resolve - DNS is broken or blocked."))
+    if rep.get("devices"):
+        f.append(("ok", f"{rep['devices']} devices are online on this network."))
+    if local and not router:
+        verdict = "Likely cause: this PC's own Wi-Fi / cable link (the router itself is fine)."
+    elif router:
+        verdict = ("Likely cause: the LAN side - Wi-Fi/cable between this PC and the router, or an overloaded router/"
+                   "access point. Fix this first; internet results are unreliable until it is clean.")
+    elif isp:
+        verdict = "Likely cause: the internet line / ISP - the local network is clean. Note the times and call the ISP."
+    elif any(s != "ok" for s, _ in f):
+        verdict = "Likely cause: name lookups (DNS) - the network itself is clean."
+    else:
+        verdict = "No fault found: signal, router, internet and DNS all look healthy right now."
+    return verdict, f
+
+
+def slowdown_check(gw, devices=0, count=100, out=lambda s, tag="": None, stop=None):
+    """Runs the whole check (about count seconds on Windows). Returns (verdict, findings, rep)."""
+    rep = {"devices": devices, "wifi": {}, "wifi_lines": [], "gw": None, "inet": None, "dns": None, "adapters": []}
+    out("1/5  Wi-Fi link, signal and channel crowding...", "status")
+    try:
+        cur, nets, note = wifi_scan()
+        rep["wifi"] = cur or {}
+        if nets or cur:
+            rep["wifi_lines"] = wifi_analyse(nets, cur)[0]
+        elif note:
+            out(note, "mute")
+    except Exception:
+        pass
+    out("2/5  Adapters (cable speed, duplex, errors)...", "status")
+    try:
+        rep["adapters"] = adapter_findings(adapters())
+    except Exception:
+        pass
+    steps = [("gw", gw, "3/5  Pinging the router"), ("inet", "1.1.1.1", "4/5  Pinging the internet")]
+    for key, ip, label in steps:
+        if not ip or (stop and stop.is_set()):
+            continue
+        ser = ping_series(ip, count, stop, lambda d, label=label: out(f"{label}: {d}/{count}", "status"))
+        if key == "inet" and ser and not any(x is not None for x in ser) and not (stop and stop.is_set()):
+            ser = ping_series("8.8.8.8", 10, stop)
+        rep[key] = series_stats(ser) if ser else None
+    out("5/5  Name lookup (DNS)...", "status")
+    rep["dns"] = dns_ms()
+    verdict, findings = slowdown_judge(rep)
+    return verdict, findings, rep
 
 
 # ==========================================================================
