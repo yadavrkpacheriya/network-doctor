@@ -70,7 +70,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.84.0"
+VERSION = "3.85.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2700,7 +2700,17 @@ class App(tk.Tk):
     def _endpoint_check(self):
         """New USB-drive copies reported by the LeakWatch agent on the office PCs (nd_endpoint) become alerts -
         the one leak the office network can never see. Each PC+user group is raised once per its latest event."""
-        folder = EP.default_dirs(self._settings().get("endpoint_dir") or "")
+        share = self._settings().get("endpoint_dir") or ""
+        # Publish the newest PC agent to the share so every office PC self-updates (no per-PC reinstall).
+        # Once per distinct share per run, off-thread - a slow network share must never block the tick/UI.
+        if share and getattr(self, "_agent_pub_share", None) != share:
+            self._agent_pub_share = share
+            try:
+                import nd_agent
+                threading.Thread(target=lambda s=share: nd_agent.publish(s), daemon=True).start()
+            except Exception:  # noqa: BLE001 - publishing is best-effort
+                pass
+        folder = EP.default_dirs(share)
         try:
             events = EP.read_events(folder, since_days=7)
         except Exception:  # noqa: BLE001 - a bad share should never stop the tick

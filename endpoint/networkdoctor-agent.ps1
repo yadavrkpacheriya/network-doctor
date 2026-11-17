@@ -4,8 +4,13 @@
 # It sends only to the shared folder on the IT PC. It never reads a file's contents and never uses the internet.
 param([ValidateSet("fix", "background")] [string]$Mode = "fix")
 
-# ===== set this one line to your IT PC's shared folder (read by Network Doctor) =====
+$AgentVersion = "1.1.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share
+
+# ===== IT PC's shared folder (read by Network Doctor). Set once at install in central.txt; the line below is
+#       only the fallback when that file is missing, so a self-update never resets your real share. =====
+$cfgFile   = Join-Path $env:ProgramData "NetworkDoctor\central.txt"
 $Central   = "\\RAKESH-IT\LeakLog"
+try { if (Test-Path $cfgFile) { $c = (Get-Content -LiteralPath $cfgFile -TotalCount 1).Trim(); if ($c) { $Central = $c } } } catch {}
 $MinCopyKB = 1
 # ====================================================================================
 
@@ -218,8 +223,38 @@ if ($Mode -eq "fix") {
     return
 }
 
+# ================================ SELF-UPDATE (silent, from the IT share - no internet, no per-PC reinstall) ===
+$DST = Split-Path $local    # %ProgramData%\NetworkDoctor  (where the installed agent + launcher live)
+function Update-Self {
+    # Pull a newer agent that Network Doctor published to <share>\agent-dist\. Returns $true if it updated the
+    # local files (the caller then relaunches so the new code runs). Never throws - an update must never break
+    # the agent that is already working.
+    try {
+        $dist = Join-Path $Central "agent-dist"
+        $verFile = Join-Path $dist "version.txt"
+        if (-not (Test-Path $verFile)) { return $false }
+        $remote = (Get-Content -LiteralPath $verFile -TotalCount 1).Trim()
+        if (-not $remote) { return $false }
+        if ([version]$remote -le [version]$AgentVersion) { return $false }
+        $src = Join-Path $dist "networkdoctor-agent.ps1"
+        if (-not (Test-Path $src)) { return $false }
+        Copy-Item -LiteralPath $src -Destination (Join-Path $DST "networkdoctor-agent.ps1") -Force
+        $fl = Join-Path $dist "fix-launch.cmd"
+        if (Test-Path $fl) { Copy-Item -LiteralPath $fl -Destination (Join-Path $DST "fix-launch.cmd") -Force }
+        return $true
+    } catch { return $false }
+}
+
 # ================================ BACKGROUND (starts at logon, no window) ================================
-Log-Usb "AGENT_START" "PC agent started" "" 0
+# One background instance only. A self-update relaunches a fresh copy; this mutex stops duplicates stacking up.
+$mtx = New-Object System.Threading.Mutex($false, "Global\NetworkDoctorAgentBG")
+if (-not $mtx.WaitOne(0)) { exit }
+if (Update-Self) {
+    $mtx.ReleaseMutex()
+    Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $DST 'networkdoctor-agent.ps1'),'-Mode','background'
+    exit
+}
+Log-Usb "AGENT_START" "PC agent v$AgentVersion started" "" 0
 Send-Details
 Lock-Gateway        # shield the router's address at every logon (background runs as SYSTEM, so it has the rights)
 Send-Auth 60        # catch password-guessing that happened in the last hour before the agent started
@@ -250,5 +285,12 @@ while ($true) {
     $tick++
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
     if ($tick % 100 -eq 0) { Send-Auth 6 }               # every ~5 min: failed-login (brute-force) check
-    if ($tick % 600 -eq 0) { Send-Details; Lock-Gateway }  # every ~30 min: refresh details + CPU/RAM, re-pin router
+    if ($tick % 600 -eq 0) {                               # every ~30 min: refresh details, re-pin router, self-update
+        Send-Details; Lock-Gateway
+        if (Update-Self) {
+            $mtx.ReleaseMutex()
+            Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $DST 'networkdoctor-agent.ps1'),'-Mode','background'
+            exit
+        }
+    }
 }

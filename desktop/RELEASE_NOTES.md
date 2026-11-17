@@ -1,3 +1,23 @@
+## Network Doctor 3.85.0
+
+### PC agent now auto-updates itself — no more reinstalling on every PC
+Until now, updating the "Fix my PC" agent meant re-running the installer on each PC. From this version it
+updates itself:
+
+- Network Doctor **publishes** the newest agent to your IT share automatically (into `<share>\agent-dist\`).
+- Each PC's agent **checks that share and silently self-updates** — at the next logon or within ~30 minutes,
+  with no internet and no popup. It keeps your share setting (stored in `central.txt`), so an update never
+  resets it.
+
+**One-time step to switch it on:** install the new self-updating agent (v1.1.0) on each PC *once* (re-run
+`install-agent.cmd` as administrator). After that single install, every future agent update reaches all PCs
+on its own — you only ever update it in Network Doctor again.
+
+Also in the agent: the "Fix my PC" window now shows **live progress and the final result** ("Done! Freed N MB")
+on every Windows edition, instead of relying on a popup that never appeared on Windows Home.
+
+---
+
 ## Network Doctor 3.84.0
 
 ### New: "Monthly report" — how much internet each day, and on which devices

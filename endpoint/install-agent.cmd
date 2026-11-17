@@ -2,10 +2,15 @@
 REM Network Doctor - install the PC agent (run as administrator, ONCE per PC).
 REM After this, any user can double-click "Fix my PC" and it runs with full rights - no password, no prompt.
 setlocal
+REM ===== set this once to your IT PC's shared folder (the same one Network Doctor reads) =====
+set "CENTRAL=\\RAKESH-IT\LeakLog"
+REM ==========================================================================================
 set DST=%ProgramData%\NetworkDoctor
 if not exist "%DST%" mkdir "%DST%"
 copy /Y "%~dp0networkdoctor-agent.ps1" "%DST%\networkdoctor-agent.ps1" >nul
 copy /Y "%~dp0fix-launch.cmd"          "%DST%\fix-launch.cmd"          >nul
+REM Remember the share in a config file so a silent self-update never resets it.
+> "%DST%\central.txt" echo %CENTRAL%
 set PSF=-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%DST%\networkdoctor-agent.ps1"
 
 REM Background watch (USB + which app uses the network), as SYSTEM so it has full rights for every user.
