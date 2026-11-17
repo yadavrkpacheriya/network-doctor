@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.98.0"
+VERSION = "3.99.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2219,6 +2219,7 @@ class App(tk.Tk):
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
                 "auto_ranges": self.var_allranges.get(),
+                "l2_discover": self._offline_mode(),   # direct switch / no router: find off-subnet devices by MAC
                 "router_snmp": self._settings().get("router_snmp") or None,
                 "router_fetch": self._router_fetch if RO.from_settings(self._settings(), self.gw) else None}
         threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()

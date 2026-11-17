@@ -1,3 +1,17 @@
+## Network Doctor 3.99.0
+
+### The main Scan now finds cameras on ANY IP range in Offline mode
+Plug the PC and cameras into one PoE switch, set Mode to Offline, and press Scan: it now finds every device by
+its **MAC at Layer-2**, ignoring the IP range entirely. So a camera that kept `192.168.1.x` or a `169.254.x.x`
+address shows up in All devices right next to the others - no router, no matching subnet needed. (It ARP-sweeps
+the common camera ranges; ARP is a broadcast, so it crosses subnets on one switch. Needs Npcap - Setup > "What
+is missing" has the installer.)
+
+After it appears, use "Edit IP / reboot (direct)" to move it onto your main range so it stays visible even in
+Online mode.
+
+---
+
 ## Network Doctor 3.98.0
 
 ### Fixed: scan could crash with "KeyError: 'netbios'"

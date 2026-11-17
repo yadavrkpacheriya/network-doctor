@@ -1211,6 +1211,12 @@ def router_arp_table(gw, community=None, timeout=1.2, port=161):
     return {}, ""
 
 
+# Common default subnets cameras/NVRs ship on - ARP-swept on a direct link (offline mode) so an off-subnet
+# camera on one switch is found by MAC whatever IP it kept.
+L2_SUBNETS = ("192.168.0.0/24", "192.168.1.0/24", "192.168.2.0/24", "192.168.8.0/24",
+              "10.0.0.0/24", "172.16.0.0/24")
+
+
 def scan(subnet, opts, progress, stop):
     """Returns raw results. progress(pct, text). stop = threading.Event."""
     def chk():
@@ -1316,6 +1322,22 @@ def scan(subnet, opts, progress, stop):
         for ip, mac in os_arp_table().items():
             if ip in hostset and ip != lip and not raw["arp"].get(ip):
                 raw["arp"][ip].add(mac)
+    # Direct-link (offline) discovery: on an isolated switch there is no router and a camera may sit on another
+    # IP range. ARP is a Layer-2 BROADCAST, so it crosses subnets on one switch - sweep the common camera
+    # ranges to find every device by its MAC, whatever IP it kept. Needs scapy/Npcap; off-subnet hits go
+    # straight into raw["arp"] so build_devices lists them like any other device.
+    if opts.get("l2_discover") and scapy_ok():
+        progress(34, "Direct link: finding devices on any IP range by MAC (ARP)...")
+        for cnet in L2_SUBNETS:
+            chk()
+            try:
+                for ip, macs in scapy_arp_all_replies(cnet, gw, rounds=1).items():
+                    if ip == lip:
+                        continue
+                    for mac in macs:
+                        raw["arp"][ip].add(mac)
+            except Exception:  # noqa: BLE001
+                continue
     # The router knows every device that talked in the last minutes, on every network it routes - including
     # phones that sleep and cameras on another range. Read its ARP table over SNMP when it allows it.
     if gw:
