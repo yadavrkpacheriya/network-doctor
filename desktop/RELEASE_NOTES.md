@@ -1,11 +1,13 @@
 ## Network Doctor 4.4
 
-### New: "Why is it slow?" - one-click slowdown check (Tools > Wi-Fi analyzer)
+### New: "Why is it slow?" - one-click slowdown check (Tools > Wi-Fi analyzer), in simple command-prompt style
 Runs what an engineer would check, from the PC where the problem is: Wi-Fi signal and channel crowding, cable
 speed/duplex/errors, **100 pings to the router and to the internet** (loss, lost-in-a-row, latency spikes, jitter,
 95th percentile), and DNS speed. It then names the likely cause in order: this PC's own link -> the router/LAN ->
 the internet line/ISP -> DNS. Has a Stop button, sends only tiny pings, and changes nothing on the network.
 "Open router page" opens the router's admin page in the browser.
+The result is compact like a command prompt: one line per check (wifi / router / internet / dns) with OK, WARN or BAD,
+then the PROBLEM in one sentence and numbered FIX steps at the very bottom.
 
 ### Upgraded
 - **Ping statistics** everywhere now also give median, 95th percentile, spike count and longest loss streak

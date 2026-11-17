@@ -106,7 +106,7 @@ class Judge(unittest.TestCase):
 
     def test_all_healthy(self):
         v, f = self.base()
-        self.assertIn("No fault found", v)
+        self.assertIn("ALL OK", v)
         self.assertEqual([s for s, _ in f if s != "ok"], [])
 
     def test_internet_only_bad_blames_isp(self):
@@ -116,7 +116,7 @@ class Judge(unittest.TestCase):
 
     def test_router_loss_blames_lan_not_isp(self):
         v, f = self.base(gw=st([3.0] * 90 + [None] * 10), inet=st([20.0] * 80 + [None] * 20))
-        self.assertIn("LAN side", v)
+        self.assertIn("inside the office", v)
         self.assertTrue(any(s == "critical" for s, _ in f))
 
     def test_weak_wifi_is_local_cause(self):
@@ -133,13 +133,59 @@ class Judge(unittest.TestCase):
 
     def test_slow_and_broken_dns(self):
         _, f = self.base(dns=400)
-        self.assertTrue(any("Name lookups are slow" in t for _, t in f))
+        self.assertTrue(any("DNS slow" in t for _, t in f))
         v, f = self.base(dns=None)
         self.assertTrue(any("do not resolve" in t for _, t in f))
 
     def test_adapter_problem_is_local(self):
         v, f = self.base(adapters=[("warning", "Ethernet runs at only 100 Mbps")])
-        self.assertIn("own Wi-Fi / cable", v)
+        self.assertIn("own Wi-Fi/cable", v)
+
+
+class Screen(unittest.TestCase):
+    def rep(self, **kw):
+        r = {"wifi": {}, "wifi_lines": [], "gw": good(), "gw_ip": "192.168.0.1", "inet": good(rtt=20), "dns": 30,
+             "devices": 40, "adapters": []}
+        r.update(kw)
+        return r
+
+    def test_ok_screen_is_short_and_has_no_fix_section(self):
+        txt = [t for t, _ in NT.slowdown_screen(self.rep())]
+        self.assertTrue(any(t.startswith("> router") and t.endswith("OK") for t in txt))
+        self.assertTrue(any(t.startswith("ALL OK") for t in txt))
+        self.assertNotIn("FIX:", txt)
+        self.assertLess(len(txt), 10)
+
+    def test_problem_then_fix_at_the_bottom(self):
+        scr = NT.slowdown_screen(self.rep(gw=st([3.0] * 90 + [None] * 10), wifi={"ssid": "Office", "signal": 30,
+                                                                                    "channel": 6}))
+        txt = [t for t, _ in scr]
+        self.assertIn("FIX:", txt)
+        self.assertTrue(txt[-1].startswith(" "))             # fixes are the last lines
+        self.assertTrue(txt.index("FIX:") > max(i for i, t in enumerate(txt) if t.startswith("> router")))
+        self.assertTrue(any("Move closer" in t for t in txt))
+        self.assertTrue(any("Restart the router" in t for t in txt))
+
+    def test_fixes_are_not_repeated(self):
+        scr = NT.slowdown_screen(self.rep(gw=st([3.0] * 90 + [None] * 10), inet=st([3.0] * 90 + [None] * 10)))
+        fixes = [t for t, _ in scr if t.startswith(" ") and t[1].isdigit()]
+        self.assertEqual(len(fixes), len(set(fixes)))
+
+    def test_isp_fix_says_call_isp(self):
+        txt = [t for t, _ in NT.slowdown_screen(self.rep(inet=st([20.0] * 80 + [None] * 20)))]
+        self.assertTrue(any("call the ISP" in t for t in txt))
+
+    def test_dns_and_cable_fixes(self):
+        txt = [t for t, _ in NT.slowdown_screen(self.rep(dns=400, adapters=[("warning", "Ethernet runs at only 100 Mbps")]))]
+        self.assertTrue(any("1.1.1.1" in t for t in txt))
+        self.assertTrue(any("patch cable" in t for t in txt))
+
+    def test_wifi_lines_become_plain_fixes(self):
+        lines = ["  ! This PC is on 2.4 GHz but 'X' is also on 5 GHz here - connect to the 5 GHz one for faster",
+                 "  ! A stronger access point of 'X' is in range"]
+        txt = [t for t, _ in NT.slowdown_screen(self.rep(wifi_lines=lines))]
+        self.assertTrue(any("5 GHz Wi-Fi name" in t for t in txt))
+        self.assertTrue(any("nearer box" in t for t in txt))
 
 
 class SlowdownCheckRuns(unittest.TestCase):
@@ -149,7 +195,7 @@ class SlowdownCheckRuns(unittest.TestCase):
                 mock.patch.object(NT, "ping_series", return_value=[3.0] * 10), \
                 mock.patch.object(NT, "dns_ms", return_value=20.0):
             v, f, rep = NT.slowdown_check("192.168.0.1", 12, 10)
-        self.assertIn("No fault found", v)
+        self.assertIn("ALL OK", v)
         self.assertEqual(rep["devices"], 12)
         self.assertEqual(rep["gw"]["recv"], 10)
 

@@ -1330,21 +1330,9 @@ class ToolsTab:
 
     def _slowcheck(self, out, stop):
         n = sum(1 for d in self.app.devices if d.get("online"))
-        out(f"Checking Wi-Fi, adapters, router and internet from this PC (router {self.app.gw or '?'}) ...", "h")
         verdict, finds, rep = NT.slowdown_check(self.app.gw, n, 100, out, stop)
-        if stop.is_set():
-            out("\nStopped - partial result below.", "warn")
-        out("\n" + verdict, "h")
-        for sev, text in finds:
-            out(("  ! " if sev != "ok" else "  ") + text, {"critical": "crit", "warning": "warn", "ok": "ok"}.get(sev, ""))
-        for key, name in (("gw", "Router"), ("inet", "Internet 1.1.1.1")):
-            st = rep.get(key)
-            if st:
-                out(f"\n{name}: sent {st['sent']}, lost {st['loss']:.0f}%" + (
-                    f", min/median/p95/max {st['min']:.0f}/{st['median']:.0f}/{st['p95']:.0f}/{st['max']:.0f} ms, "
-                    f"jitter {st['jitter']:.1f} ms, spikes {st['spikes']}" if st["recv"] else ""))
-        if rep.get("dns") is not None:
-            out(f"DNS lookup: {rep['dns']:.0f} ms")
+        for text, tag in NT.slowdown_screen(rep, stop.is_set()):
+            out(text, tag)
         out(("Slowdown check", "info", verdict), "log")
 
     def _wifi(self, out, stop):

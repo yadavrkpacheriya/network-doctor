@@ -1201,77 +1201,151 @@ def dns_ms(host="www.google.com"):
     return (time.perf_counter() - t) * 1000
 
 
-def slowdown_judge(rep):
-    """Pure: rep = {"wifi": connected dict, "wifi_lines": [..], "gw": series_stats|None, "inet": series_stats|None,
-    "dns": ms|None, "devices": int, "adapters": [(sev,text)]} -> (verdict, [(severity, text)]).
-    Order of blame: this PC's own link -> the router -> the internet line -> DNS."""
+def link_status(st, is_router):
+    """'OK' / 'WARN' / 'BAD' for one ping series (router = strict, internet = relaxed)."""
+    if not st:
+        return ""
+    if st["recv"] == 0 or st["loss"] >= 10:
+        return "BAD"
+    if st["loss"] >= 2 or st.get("spikes", 0) >= 3 or (st.get("p95") or 0) > (50 if is_router else 120) \
+            or (is_router and st["avg"] > 20):
+        return "WARN"
+    return "OK"
+
+
+def _judge(rep):
+    """-> (verdict, [(severity, problem, fix)]). Problems and fixes are one short plain line each."""
     f = []
-    local = router = isp = False
+    local = False
     cur = rep.get("wifi") or {}
     if cur.get("signal") is not None and cur["signal"] < 50:
-        f.append(("critical" if cur["signal"] < 30 else "warning",
-                  f"Wi-Fi signal is weak ({cur['signal']}%). Move closer to the access point or add one."))
+        f.append(("critical" if cur["signal"] < 30 else "warning", f"Wi-Fi signal weak ({cur['signal']}%)",
+                  "Move closer to the Wi-Fi box, or plug in a cable."))
         local = True
     for ln in rep.get("wifi_lines") or []:
-        if ln.strip().startswith("!") and "weak security" not in ln and "Weak signal" not in ln:
-            f.append(("warning", ln.strip().lstrip("! ").strip()))
-            local = True
-    for sev, text in rep.get("adapters") or []:
-        if sev != "ok":
-            f.append((sev, text))
-            local = True
-
-    def judge_link(st, name, is_router):
-        nonlocal router, isp
-        if not st:
-            return
-        bad = False
-        if st["recv"] == 0:
-            f.append(("critical", f"{name} does not answer ping at all."))
-            bad = True
+        t = ln.strip()
+        if not t.startswith("!") or "weak security" in t or "Weak signal" in t:
+            continue
+        local = True
+        if "5 GHz" in t and "connect to the 5 GHz" in t:
+            f.append(("warning", "On slow 2.4 GHz Wi-Fi", "Connect to the 5 GHz Wi-Fi name (faster, less crowded)."))
+        elif "stronger access point" in t:
+            f.append(("warning", "Stuck on a far Wi-Fi box", "Turn Wi-Fi off and on to join the nearer box."))
+        elif "Link speed is only" in t:
+            f.append(("warning", "Wi-Fi link speed very low", "Move closer to the Wi-Fi box, or use 5 GHz / cable."))
         else:
-            if st["loss"] >= 2:
-                f.append(("critical" if st["loss"] >= 10 else "warning",
-                          f"{st['loss']:.0f}% of pings to {name} were lost ({st['sent'] - st['recv']} of {st['sent']}"
-                          + (f", {st['burst']} in a row" if st.get("burst", 0) > 1 else "") + ")."))
-                bad = True
-            if st.get("spikes", 0) >= 3 or (st.get("p95") or 0) > (50 if is_router else 120):
-                f.append(("warning", f"{name}: {st.get('spikes', 0)} latency spike(s) in {st['sent']} pings (over "
-                                     f"{st['spike_ms']:.0f} ms; usual {st['median']:.0f} ms, worst {st['max']:.0f} ms)."))
-                bad = True
-            if is_router and st["avg"] > 20:
-                f.append(("warning", f"Router answers slowly (average {st['avg']:.0f} ms; a healthy LAN is under 5 ms)."))
-                bad = True
-        if bad:
-            if is_router:
-                router = True
-            else:
-                isp = True
-    judge_link(rep.get("gw"), "the router", True)
-    judge_link(rep.get("inet"), "the internet (1.1.1.1)", False)
-    if rep.get("dns") is not None and rep["dns"] > 150:
-        f.append(("warning", f"Name lookups are slow ({rep['dns']:.0f} ms) - set the router/PC DNS to 1.1.1.1 or 8.8.8.8."))
-    if rep.get("dns") is None and rep.get("inet") and rep["inet"]["recv"]:
-        f.append(("critical", "Internet works but names do not resolve - DNS is broken or blocked."))
-    if rep.get("devices"):
-        f.append(("ok", f"{rep['devices']} devices are online on this network."))
-    if local and not router:
-        verdict = "Likely cause: this PC's own Wi-Fi / cable link (the router itself is fine)."
-    elif router:
-        verdict = ("Likely cause: the LAN side - Wi-Fi/cable between this PC and the router, or an overloaded router/"
-                   "access point. Fix this first; internet results are unreliable until it is clean.")
+            f.append(("warning", "Wi-Fi channel is crowded", "Set the Wi-Fi box to channel 1, 6 or 11 (least busy one)."))
+    for sev, text in rep.get("adapters") or []:
+        if sev == "ok":
+            continue
+        local = True
+        if "HALF duplex" in text:
+            f.append((sev, "Cable port is half duplex", "Set PC and switch port to auto-negotiate; try another cable."))
+        elif "only" in text:
+            f.append((sev, "Cable runs at only 100 Mbps", "Replace the patch cable; use a gigabit switch port."))
+        else:
+            f.append((sev, text[:70], "Check the adapter in 'This PC's network adapters'."))
+    router = isp = False
+    g, i = rep.get("gw"), rep.get("inet")
+    sg, si = link_status(g, True), link_status(i, False)
+    if sg in ("WARN", "BAD"):
+        router = True
+        if g["recv"] == 0:
+            f.append(("critical", "Router does not answer", "Check the cable/Wi-Fi to the router; restart the router."))
+        else:
+            if g["loss"] >= 2:
+                f.append(("critical" if sg == "BAD" else "warning", f"Router: {g['loss']:.0f}% lost"
+                          + (f" ({g['burst']} in a row)" if g.get("burst", 0) > 1 else ""),
+                          "Restart the router/Wi-Fi box; check cable and look for a network loop."))
+            if g.get("spikes", 0) >= 3 or (g.get("p95") or 0) > 50 or g["avg"] > 20:
+                f.append(("warning", f"Router: {g.get('spikes', 0)} slow spikes (worst {g['max']:.0f} ms)",
+                          "Something heavy is using the LAN - pause big backups/downloads; see Bandwidth tab."))
+    if si in ("WARN", "BAD"):
+        isp = True
+        if i["recv"] == 0:
+            f.append(("critical", "Internet not reachable", "Restart the modem; if still down, call the ISP."))
+        else:
+            if i["loss"] >= 2:
+                f.append(("critical" if si == "BAD" else "warning", f"Internet: {i['loss']:.0f}% lost",
+                          "Router is fine - call the ISP and give them these numbers and the time."))
+            if i.get("spikes", 0) >= 3 or (i.get("p95") or 0) > 120:
+                f.append(("warning", f"Internet: {i.get('spikes', 0)} slow spikes (worst {i['max']:.0f} ms)",
+                          "Line is unstable - check nothing is uploading/backing up; if not, tell the ISP."))
+    dns = rep.get("dns")
+    dns_bad = False
+    if dns is None and i and i["recv"]:
+        dns_bad = True
+        f.append(("critical", "Website names do not resolve (DNS)", "Set DNS to 1.1.1.1 and 8.8.8.8; check the firewall."))
+    elif dns is not None and dns > 150:
+        dns_bad = True
+        f.append(("warning", f"DNS slow ({dns:.0f} ms)", "Set DNS to 1.1.1.1 and 8.8.8.8 on the router."))
+    if router:
+        verdict = "PROBLEM: inside the office (Wi-Fi, cable or router) - not the ISP."
+    elif local:
+        verdict = "PROBLEM: this PC's own Wi-Fi/cable link - the router is fine."
     elif isp:
-        verdict = "Likely cause: the internet line / ISP - the local network is clean. Note the times and call the ISP."
-    elif any(s != "ok" for s, _ in f):
-        verdict = "Likely cause: name lookups (DNS) - the network itself is clean."
+        verdict = "PROBLEM: the internet line (ISP) - the office network is fine."
+    elif dns_bad:
+        verdict = "PROBLEM: DNS (website names) - the network itself is fine."
     else:
-        verdict = "No fault found: signal, router, internet and DNS all look healthy right now."
+        verdict = "ALL OK: nothing wrong found right now."
     return verdict, f
+
+
+def slowdown_judge(rep):
+    """-> (verdict, [(severity, problem)])"""
+    v, f = _judge(rep)
+    return v, [(s, p) for s, p, _ in f]
+
+
+def slowdown_screen(rep, stopped=False):
+    """The whole result as compact command-prompt style [(text, tag)]: one line per check, then the problem and the
+    fixes at the bottom."""
+    def link(label, ip, st, strict):
+        if not st:
+            return None
+        tag = {"OK": "ok", "WARN": "warn", "BAD": "crit"}.get(link_status(st, strict), "")
+        if not st["recv"]:
+            return (f"> {label:<9}{ip:<15}{st['sent']} sent, 0 got - NO ANSWER   BAD", "crit")
+        return (f"> {label:<9}{ip:<15}{st['sent']} sent, {st['recv']} got, {st['loss']:.0f}% lost   "
+                f"{st['min']:.0f}/{st['median']:.0f}/{st['max']:.0f} ms   spikes {st['spikes']}   "
+                f"{link_status(st, strict)}", tag)
+    rows = []
+    cur = rep.get("wifi") or {}
+    if cur.get("ssid"):
+        sg = cur.get("signal")
+        word = signal_label(sg)[0]
+        rows.append((f"> wifi     {cur['ssid'][:22]}  ch {cur.get('channel', '?')}  signal {sg if sg is not None else '?'}% "
+                     f"({word})" + (f"  {cur['tx']} Mbps" if cur.get("tx") else ""),
+                     "ok" if (sg or 0) >= 60 else "warn" if (sg or 0) >= 40 else "crit"))
+    rows += [r for r in (link("router", rep.get("gw_ip", ""), rep.get("gw"), True),
+                         link("internet", "1.1.1.1", rep.get("inet"), False)) if r]
+    if rep.get("dns") is not None:
+        rows.append((f"> dns      {rep['dns']:.0f} ms", "ok" if rep["dns"] <= 150 else "warn"))
+    elif rep.get("inet"):
+        rows.append(("> dns      FAILED", "crit"))
+    if rep.get("devices"):
+        rows.append((f"> devices  {rep['devices']} online", ""))
+    verdict, finds = _judge(rep)
+    out = [("   sent/got/lost   best/usual/worst   spikes", "mute")] if rep.get("gw") or rep.get("inet") else []
+    out += rows
+    out.append(("", ""))
+    if stopped:
+        out.append(("(stopped early - partial result)", "warn"))
+    out.append((verdict, "ok" if verdict.startswith("ALL OK") else "crit"))
+    if finds:
+        out.append(("FIX:", "h"))
+        seen = []
+        for sev, prob, fix in finds:
+            if fix not in seen:
+                seen.append(fix)
+                out.append((f" {len(seen)}. {fix}   [{prob}]", "warn"))
+    return out
 
 
 def slowdown_check(gw, devices=0, count=100, out=lambda s, tag="": None, stop=None):
     """Runs the whole check (about count seconds on Windows). Returns (verdict, findings, rep)."""
-    rep = {"devices": devices, "wifi": {}, "wifi_lines": [], "gw": None, "inet": None, "dns": None, "adapters": []}
+    rep = {"devices": devices, "gw_ip": gw or "", "wifi": {}, "wifi_lines": [], "gw": None, "inet": None, "dns": None, "adapters": []}
     out("1/5  Wi-Fi link, signal and channel crowding...", "status")
     try:
         cur, nets, note = wifi_scan()
