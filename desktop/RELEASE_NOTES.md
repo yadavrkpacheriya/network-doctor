@@ -1,3 +1,27 @@
+## Network Doctor 3.83.0
+
+### Camera IP conflicts now fix themselves permanently (no more daily repeat)
+Before, a repeating "two devices use the same IP" clash only fixed itself if you had tagged one device
+"Default device for its IP". Cameras are rarely tagged, so the clash came back every morning. Now, when
+nothing is tagged, Network Doctor reserves the IP for whoever the router already leases it to — a safe,
+undoable, router-only change — so the address becomes permanent and the fight stops. When the other device
+is a camera you have a saved login for, it can also be switched to automatic IP so it stops hard-claiming
+the address. All of this is checked for regressions and can be undone from Alerts → Auto-fixes.
+
+### Smarter fixer brain
+The brain now carries a fix recipe for each regular issue (IP conflict, hand-typed-static conflict, cloned
+camera MAC, randomized phone MAC, loops, DHCP-pool-full, frozen cameras), marks which are safe to apply on
+their own versus reviewed one-click, and finds the issues that keep coming back so they get escalated to a
+permanent fix instead of patched again and again. Recurrence now only counts recent repeats, so a
+long-solved problem no longer looks like it is still happening.
+
+### Tested like a real device before release
+New simulation sandbox (developer-side): a fake MikroTik router that speaks the real RouterOS API, plus fake
+XMeye/Hikvision/Dahua/ONVIF cameras, so router and camera changes are proven against a realistic device in
+automated tests before any update ships. 849 automated tests pass.
+
+---
+
 ## Network Doctor 3.82.0
 
 ### Fixed: saved camera logins were ignored by "Restart cameras" and the picture check (said "no credentials saved")

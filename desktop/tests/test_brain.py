@@ -63,7 +63,7 @@ def test_recurrence_flags_a_repeating_problem():
     sig = "gw_flap|"
     for _ in range(3):
         B.recurrence(kb, sig, now=1000)
-    d = B.decide(kb, "router keeps dropping", recipe_kind="gw_flap", cat="")
+    d = B.decide(kb, "router keeps dropping", recipe_kind="gw_flap", cat="", now=1000)  # same clock as the hits
     assert d["recurring"] is True and any("keeps coming back" in w for w in d["why"])
 
 

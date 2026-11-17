@@ -103,6 +103,13 @@ def recurrence(kb, signature, now=None, window=7 * 86400, keep=30):
     return len(lst)
 
 
+def recur_count(kb, signature, now=None, window=7 * 86400):
+    """How many times `signature` has happened within the window - WITHOUT recording a new one. Counts only
+    recent hits, so old timestamps never keep a long-solved problem looking 'recurring'."""
+    now = now or time.time()
+    return sum(1 for t in (kb.get("recur") or {}).get(signature, []) if now - t < window)
+
+
 def decide(kb, text, recipe_kind=None, cat="", src="", sev="warning", now=None):
     """The forest vote. Combines the keyword rule (a strong prior), the learned text model, and the per-
     situation success history into one answer.
@@ -141,13 +148,17 @@ def decide(kb, text, recipe_kind=None, cat="", src="", sev="warning", now=None):
 
     recurring = False
     if kind:
-        n = len((kb.get("recur") or {}).get(f"{kind}|{cat}", []))
+        n = recur_count(kb, f"{kind}|{cat}", now)
         recurring = n >= 3
         if recurring:
             why.append(f"this keeps coming back ({n}x) - a permanent fix is better than patching again")
 
-    return {"kind": kind, "confidence": round(conf, 3), "why": why, "recurring": recurring,
-            "auto_ok": conf >= 0.8 and kind in AUTO_SAFE and src != "external"}
+    out = {"kind": kind, "confidence": round(conf, 3), "why": why, "recurring": recurring,
+           "auto_ok": conf >= 0.8 and kind in AUTO_SAFE and src != "external"}
+    rec = RECIPES.get(kind)
+    if rec:
+        out["recipe"] = dict(rec)           # the master brain's known fix for this kind, for the handler to run
+    return out
 
 
 def teach(kb, examples):
@@ -190,7 +201,7 @@ AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu
 # the real wording of this office from there. Phrases are plain language on purpose - that is what alerts and
 # pasted guidance look like. NOTE: several kinds here block, reboot, shape or quarantine a device; those are
 # deliberately NOT in AUTO_SAFE above, so the brain names them but the action stays a reviewed one-click.
-SEED_VERSION = 3
+SEED_VERSION = 4   # bumped: added ip_conflict/dhcp_conflict/bogus_mac/random_mac curriculum + fix recipes
 KNOWLEDGE = {
     # Access / joining the network
     "arp_block": ["devices cannot connect to wifi even though the password is right",
@@ -259,7 +270,68 @@ KNOWLEDGE = {
     "mikrotik_fix": ["recommend the mikrotik router fix for this", "which router config change fixes this",
                      "the routeros command that solves this", "fix this on the mikrotik",
                      "ready-to-run routeros cli commands to patch firewall gaps ip conflicts or routing bottlenecks"],
+    # The small REGULAR issues the office hits again and again - the ones the fixer brain must name and (where
+    # safe) solve on its own so nobody chases them by hand every day.
+    "ip_conflict": ["two devices use the same ip", "ip conflict on the network", "duplicate ip address",
+                    "same ip answered by two devices", "camera and pc fight over one ip every morning",
+                    "ip address already in use by another device"],
+    "dhcp_conflict": ["a device has a hand-typed static ip inside the router's dhcp range",
+                      "static ip clashes with the dhcp pool", "manually set ip collides with dhcp",
+                      "conflict by arp response for an ip the router also hands out"],
+    "bogus_mac": ["cameras with a fake or cloned mac address", "duplicate non-real mac on cheap cctv",
+                  "two devices show the same mac address", "cloned mac confuses the arp table",
+                  "ip-mac binding knocks devices offline because of duplicated camera macs"],
+    "random_mac": ["phone with a private randomized mac shows as a new device every time",
+                   "randomized mac fills the lease table", "new unknown device every day from mac randomization",
+                   "private wifi address keeps changing and loses the device history"],
 }
+
+
+# -- master brain: the fix recipe for each kind (what the "child" per-domain handlers run) -------------------
+# The master brain knows not just WHAT a problem is but the proven way to end it. For the safe, regular issues
+# this lets the app self-heal; the risky kinds (block / expose / reboot / quarantine / DNS) carry a recipe too
+# but with auto=False, so they stay a reviewed one-click. `where` names the app action that applies it.
+RECIPES = {
+    "ip_conflict":   {"fix": "reserve the IP for whoever the router already leases it to (make-static); if the "
+                             "other device is a camera we can log in to, switch it to automatic IP so it stops "
+                             "claiming the address", "auto": True, "permanent": True, "where": "nd_ipfix.reserve"},
+    "dhcp_conflict": {"fix": "make-static the hand-typed IP so the DHCP server reserves it and never hands it to "
+                             "anyone else", "auto": True, "permanent": True, "where": "router.reserve"},
+    "bogus_mac":     {"fix": "give every camera a unique fixed IP (reservation) so cloned MACs never share an "
+                             "address; ideally move cameras onto their own switch", "auto": False,
+                      "permanent": True, "where": "binding"},
+    "random_mac":    {"fix": "block randomized/private MACs on the WiFi so phones present their real address, or "
+                             "accept them as guests - a reviewed choice, not automatic", "auto": False,
+                      "permanent": True, "where": "arpblock"},
+    "loop":          {"fix": "rate-limit or shut the switch port the loop/storm is on", "auto": False,
+                      "permanent": False, "where": "switchbw"},
+    "dhcp_full":     {"fix": "widen the DHCP pool or clear stale leases so new devices get an address",
+                      "auto": False, "permanent": True, "where": "router"},
+    "camera_down":   {"fix": "restart the frozen camera (ONVIF reboot / PoE cycle) once it still answers ping",
+                      "auto": False, "permanent": False, "where": "camline.reboot"},
+}
+
+
+def recipe(kind):
+    """The master brain's known fix for a problem kind, or None. Child handlers call this to get the recipe to
+    run (and whether it is safe to run without asking)."""
+    r = RECIPES.get(kind)
+    return dict(r) if r else None
+
+
+def recurring_report(kb, now=None, window=7 * 86400, min_count=3):
+    """Pattern-finder: the problem signatures that keep coming back within the window, worst first, each with
+    the master brain's permanent recipe when there is one. This is what escalates a patched-again-and-again
+    issue to a permanent fix. Returns [{signature, kind, count, recipe}]."""
+    now = now or time.time()
+    out = []
+    for sig, stamps in (kb.get("recur") or {}).items():
+        n = sum(1 for t in stamps if now - t < window)
+        if n >= min_count:
+            kind = sig.split("|", 1)[0]
+            out.append({"signature": sig, "kind": kind, "count": n, "recipe": recipe(kind)})
+    out.sort(key=lambda x: x["count"], reverse=True)
+    return out
 
 
 def seed(kb, force=False):
