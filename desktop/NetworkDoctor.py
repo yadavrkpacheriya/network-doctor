@@ -36,6 +36,8 @@ import nd_arpblock as AB
 import nd_autofix as AF
 import nd_brain as BR
 import nd_ipfix as IPFIX
+import nd_deploy as DP
+import nd_agent
 import nd_protab
 import nd_tabs
 import nd_tools as T
@@ -70,7 +72,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.87.0"
+VERSION = "3.88.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1181,8 +1183,90 @@ class App(tk.Tk):
                           "check - what is missing\" has 'Get Npcap'). Site-wide whitelist/blocklist (above), "
                           "connected devices and usage already work on any router too, without any of this.",
                   foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
+        dep = nd_tabs.section_card(f, "Deploy the PC agent to all computers (save one admin login, install "
+                                      "everywhere - no visiting each PC)", "#0f766e")
+        self.var_dep_label = tk.StringVar(value="office-admin")
+        self.var_dep_user = tk.StringVar()
+        self.var_dep_pw = tk.StringVar()
+        for lbl, var, w, show in (("Label", self.var_dep_label, 12, ""), ("Admin user", self.var_dep_user, 14, ""),
+                                  ("Password", self.var_dep_pw, 14, "*")):
+            ttk.Label(dep, text=lbl + ":").pack(side="left", padx=(6, 2))
+            ttk.Entry(dep, textvariable=var, width=w, show=show).pack(side="left")
+        ttk.Button(dep, text="Save login", command=self._agent_cred_save).pack(side="left", padx=4)
+        ttk.Button(dep, text="Install / update agent on all PCs", command=self._agent_deploy_all).pack(side="left", padx=4)
+        self.var_dep_info = tk.StringVar(value=self._agent_cred_summary())
+        ttk.Label(f, textvariable=self.var_dep_info, foreground="#0f766e").pack(anchor="w", padx=8)
+        ttk.Label(f, text="Saves an encrypted Windows admin login and installs the agent on every online PC over "
+                          "the admin share (C$) - no need to visit each PC. The agent reports usage / app names "
+                          "and gives staff the 'Fix my PC' button. Needs File & Printer Sharing on; on workgroup "
+                          "PCs also LocalAccountTokenFilterPolicy=1. After the first install, PCs self-update "
+                          "within ~2 minutes, so you only do this once per PC.",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
         self.tsetup = text_box(f)
         self._fill_setup()
+
+    # ---------------------------------------------------------------- PC agent deployment
+    def _agent_cred_summary(self):
+        creds = DP.admin_list(self._settings().get("admin_logins") or [])
+        return "saved admin logins: " + ", ".join(f"{lb} ({u})" for lb, u in creds) if creds else \
+               "no admin login saved yet - add one to install the agent on all PCs"
+
+    def _agent_cred_save(self):
+        user, pw = self.var_dep_user.get().strip(), self.var_dep_pw.get()
+        if not user or not pw:
+            messagebox.showinfo(APP, "Type the Windows admin user name and password first.\n\nTip: use a local "
+                                     "administrator account that exists on the office PCs (or a domain admin).")
+            return
+        store = self._settings().setdefault("admin_logins", [])
+        DP.admin_set(store, self.var_dep_label.get().strip() or user, user, pw)
+        self._save_settings()
+        self.var_dep_pw.set("")
+        self.var_dep_info.set(self._agent_cred_summary())
+        messagebox.showinfo(APP, "Admin login saved (encrypted on this PC).\n\nNow click 'Install / update agent "
+                                 "on all PCs'.")
+
+    def _agent_deploy_all(self):
+        creds = DP.admin_creds(self._settings().get("admin_logins") or [])
+        if not creds:
+            messagebox.showinfo(APP, "Save an admin login first (above).")
+            return
+        targets = DP.windows_targets(getattr(self, "devices", []) or [])
+        if not targets:
+            messagebox.showinfo(APP, "No online PCs found. Run a scan first, then try again.")
+            return
+        central = self._settings().get("endpoint_dir") or ""
+        if not central and not messagebox.askyesno(APP, "No shared folder is set (Setup > endpoint_dir), so the "
+                                                         "installed agents will use their built-in default share. "
+                                                         "Continue anyway?"):
+            return
+        if not messagebox.askyesno(APP, f"Install / update the PC agent on {len(targets)} online PC(s) now, using "
+                                        f"the saved admin login? Nothing on the PCs is changed except installing "
+                                        f"the agent."):
+            return
+        import tempfile
+        src = tempfile.mkdtemp(prefix="nd-agent-")
+        try:
+            for name, text in nd_agent.FILES.items():
+                with open(os.path.join(src, name), "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP, f"Could not prepare the agent files: {e}")
+            return
+        self.var_dep_info.set(f"deploying to {len(targets)} PC(s)... (this can take a minute)")
+
+        def work():
+            results = DP.deploy_all(targets, creds, central, src)
+            self.q.put(("call", lambda: done(results)))
+
+        def done(results):
+            ok = sum(1 for r in results if r["ok"])
+            lines = [("OK   " if r["ok"] else "FAIL ") + f"{r.get('name', r['ip'])}: {r['detail']}" for r in results]
+            self.var_dep_info.set(f"done: {ok} of {len(results)} PC(s) installed")
+            (messagebox.showinfo if ok else messagebox.showwarning)(
+                APP, f"Agent installed/updated on {ok} of {len(results)} PC(s).\n\n" + "\n".join(lines[:30]) +
+                ("" if ok == len(results) else "\n\nFailing PCs usually need File & Printer Sharing on, or (workgroup) "
+                 "LocalAccountTokenFilterPolicy=1."))
+        threading.Thread(target=work, daemon=True).start()
 
     # ---------------------------------------------------------------- router access (optional)
     def router_save_test(self):

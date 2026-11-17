@@ -1,3 +1,17 @@
+## Network Doctor 3.88.0
+
+### Save an admin login and install the agent on every PC from the app — no visiting each PC
+New in **Setup → "Deploy the PC agent to all computers"**: save a Windows admin login once (stored encrypted,
+same as the camera logins), then click **Install / update agent on all PCs**. The app sweeps every online
+computer and installs the agent over the admin share — so even the *first* install is hands-off. After that,
+each PC self-updates within ~2 minutes.
+
+Uses only built-in Windows (admin share + schtasks) — no PsExec, no extra software. A PC needs File & Printer
+Sharing on, and workgroup PCs need LocalAccountTokenFilterPolicy=1; the app reports per-PC success or the
+exact reason it failed. Credentials never leave this PC except as the login for the PC you deploy to.
+
+---
+
 ## Network Doctor 3.87.0
 
 ### Agent updates now reach every PC within ~2 minutes (no per-PC visit)
