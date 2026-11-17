@@ -835,6 +835,36 @@ def scapy_loop_echo(gw, listen=4):
 # ==========================================================================
 # vendor database
 # ==========================================================================
+_ONLINE = {"t": 0.0, "ok": False}
+
+
+def online(timeout=1.2, connect=None, probes=(("1.1.1.1", 53), ("8.8.8.8", 53), ("github.com", 443))):
+    """Fast check for real internet (cached ~20s). Lets offline background tasks skip long download attempts
+    instead of waiting 30-80s to time out. `connect` is injectable for tests."""
+    now = time.time()
+    if now - _ONLINE["t"] < 20:
+        return _ONLINE["ok"]
+
+    def _c(host, port):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            return s.connect_ex((host, port)) == 0
+        finally:
+            s.close()
+    connect = connect or _c
+    ok = False
+    for host, port in probes:
+        try:
+            if connect(host, port):
+                ok = True
+                break
+        except Exception:  # noqa: BLE001
+            pass
+    _ONLINE.update(t=now, ok=ok)
+    return ok
+
+
 def load_oui(log=lambda m: None):
     if os.path.exists(OUI_PATH):
         try:
@@ -843,6 +873,8 @@ def load_oui(log=lambda m: None):
         except Exception:
             pass
     db = {}
+    if not online():          # offline first run: don't wait 80s on two downloads that can't succeed
+        return db
     for url, kind in (("https://standards-oui.ieee.org/oui/oui.csv", "csv"),
                       ("https://www.wireshark.org/download/automated/data/manuf", "manuf")):
         try:

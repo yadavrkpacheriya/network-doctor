@@ -1,3 +1,14 @@
+## Network Doctor 3.94.0
+
+### Snappier offline
+When this PC is offline (e.g. plugged straight into the PoE switch for the direct camera check), the app no
+longer spends 30-80 seconds trying downloads it can't reach. A quick internet check now lets the MAC-vendor
+list and threat-list refresh skip instantly and use their saved copies, so the app stays responsive. Nothing
+about the local features changed - scanning, cameras, the PoE check, usage, PC Care and all fixes already work
+fully offline; this just removes the waiting. The automatic update check already fails silently offline.
+
+---
+
 ## Network Doctor 3.93.0
 
 ### Camera firmware tracking (Cameras → "Firmware & versions")

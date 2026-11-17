@@ -163,7 +163,8 @@ class ThreatIntel:
             cached = None
         data = cached
         if force or not cached or time.time() - cached.get("time", 0) > 12 * 3600:
-            data = self._download() or cached
+            if force or core.online():        # offline: keep the saved lists, don't stall on a download
+                data = self._download() or cached
         if data and data.get("feeds"):
             feeds = []
             total = 0
