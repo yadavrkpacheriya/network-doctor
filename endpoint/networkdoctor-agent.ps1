@@ -156,48 +156,65 @@ if ($Mode -eq "fix") {
     }
     $host.UI.RawUI.WindowTitle = "Fix my PC"
     $before = (Get-PSDrive C).Free
-    Write-Host "`n  Fixing and cleaning this PC... please wait (about a minute).`n" -ForegroundColor Cyan
+    # --- status file: the one reliable signal. Written as SYSTEM, read by fix-launch.cmd in the user's
+    #     session - so "Fix my PC" shows live progress and the result WITHOUT depending on msg.exe (which is
+    #     missing on Windows Home) or on a visible window (the task runs hidden). "done" vs "stuck" is never
+    #     a guess again: the file says exactly which step is running, or DONE / FAILED.
+    $StatusDir = Join-Path $env:ProgramData "NetworkDoctor"
+    try { if (-not (Test-Path $StatusDir)) { New-Item -ItemType Directory -Path $StatusDir -Force | Out-Null } } catch {}
+    $StatusFile = Join-Path $StatusDir "fix-status.txt"
+    function Set-Status($line) { try { Set-Content -LiteralPath $StatusFile -Value $line -Encoding ASCII -ErrorAction SilentlyContinue } catch {} }
+    Set-Status "RUNNING|starting"
+    Write-Host "`n  Fixing and cleaning this PC... please wait.`n" -ForegroundColor Cyan
     function Purge($path, $label) {
         if (-not (Test-Path $path)) { return }
-        Write-Host "   - $label"
+        Write-Host "   - $label"; Set-Status "RUNNING|$label"
         Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue |
             Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt (Get-Date).AddHours(-1) } |
             Remove-Item -Force -ErrorAction SilentlyContinue
     }
-    # Clean every user's junk (works whether started as SYSTEM by the task, or by an admin). Never real files.
-    Purge "C:\Users\*\AppData\Local\Temp" "Temporary files"
-    Purge "C:\Users\*\AppData\Local\Microsoft\Windows\INetCache" "Internet cache"
-    Purge "C:\Users\*\AppData\Local\CrashDumps" "Crash dumps"
-    Purge "C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Cache" "Chrome cache"
-    Purge "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Cache" "Edge cache"
-    Purge "$env:WINDIR\Temp" "Windows temp"
-    Stop-Service wuauserv -Force; Purge "$env:WINDIR\SoftwareDistribution\Download" "Windows Update leftovers"; Start-Service wuauserv
-    Write-Host "   - Prefetch (Windows rebuilds it)"
-    Remove-Item "$env:WINDIR\Prefetch\*" -Force -ErrorAction SilentlyContinue
-    Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue | Out-Null
-    Write-Host "   - Windows disk cleanup (old updates, logs)"
-    Dism.exe /Online /Cleanup-Image /StartComponentCleanup /Quiet | Out-Null       # reclaims WinSxS space, safe
-    Write-Host "   - Checking Windows health"
-    if ("$(Dism.exe /Online /Cleanup-Image /CheckHealth)" -match 'repairable') {
-        Write-Host "     Repairable damage found - repairing Windows (several minutes)..." -ForegroundColor Yellow
-        Dism.exe /Online /Cleanup-Image /RestoreHealth /Quiet | Out-Null
-        sfc /scannow | Out-Null
-        Write-Host "     Windows repair done."
-    } else { Write-Host "     Windows is healthy." }
-    Lock-Gateway                                                                    # router-drop shield (needs rights)
-    Write-Host "   - Recycle Bin";  Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-    Write-Host "   - Flushing DNS"; ipconfig /flushdns | Out-Null
-    Write-Host "   - Updating details"; Send-Details; Send-Connections
-    if (-not $asSystem) {                                                           # restarting Explorer only makes
-        Write-Host "   - Restarting Explorer"                                       # sense in the user's own session
-        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 2
-        if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer }
+    try {
+        # Clean every user's junk (works whether started as SYSTEM by the task, or by an admin). Never real files.
+        Purge "C:\Users\*\AppData\Local\Temp" "Temporary files"
+        Purge "C:\Users\*\AppData\Local\Microsoft\Windows\INetCache" "Internet cache"
+        Purge "C:\Users\*\AppData\Local\CrashDumps" "Crash dumps"
+        Purge "C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Cache" "Chrome cache"
+        Purge "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Cache" "Edge cache"
+        Purge "$env:WINDIR\Temp" "Windows temp"
+        Set-Status "RUNNING|Windows Update leftovers"
+        Stop-Service wuauserv -Force; Purge "$env:WINDIR\SoftwareDistribution\Download" "Windows Update leftovers"; Start-Service wuauserv
+        Write-Host "   - Prefetch (Windows rebuilds it)"; Set-Status "RUNNING|Prefetch"
+        Remove-Item "$env:WINDIR\Prefetch\*" -Force -ErrorAction SilentlyContinue
+        Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue | Out-Null
+        Write-Host "   - Windows disk cleanup (old updates, logs)"; Set-Status "RUNNING|Windows disk cleanup"
+        Dism.exe /Online /Cleanup-Image /StartComponentCleanup /Quiet | Out-Null   # reclaims WinSxS space, safe
+        Write-Host "   - Checking Windows health"; Set-Status "RUNNING|Checking Windows health"
+        if ("$(Dism.exe /Online /Cleanup-Image /CheckHealth)" -match 'repairable') {
+            Write-Host "     Repairable damage found - repairing Windows (several minutes)..." -ForegroundColor Yellow
+            Set-Status "RUNNING|Repairing Windows (this can take 15-30 min)"
+            Dism.exe /Online /Cleanup-Image /RestoreHealth /Quiet | Out-Null
+            sfc /scannow | Out-Null
+            Write-Host "     Windows repair done."
+        } else { Write-Host "     Windows is healthy." }
+        Lock-Gateway                                                               # router-drop shield (needs rights)
+        Write-Host "   - Recycle Bin"; Set-Status "RUNNING|Emptying Recycle Bin"; Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        Write-Host "   - Flushing DNS"; Set-Status "RUNNING|Flushing DNS"; ipconfig /flushdns | Out-Null
+        Write-Host "   - Updating details"; Set-Status "RUNNING|Updating details"; Send-Details; Send-Connections
+        if (-not $asSystem) {                                                      # restarting Explorer only makes
+            Write-Host "   - Restarting Explorer"                                  # sense in the user's own session
+            Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Sleep 2
+            if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer }
+        }
+        $freed = [math]::Round(((Get-PSDrive C).Free - $before)/1MB); if ($freed -lt 0) { $freed = 0 }
+        $msg = "PC cleaned and optimised. Freed about $freed MB. If it is still slow, tell IT."
+        Write-Host "`n  $msg`n" -ForegroundColor Green
+        Set-Status "DONE|$freed|$(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+        if ($asSystem) { try { & msg.exe * /TIME:30 $msg } catch {} }             # bonus popup where msg.exe exists
+    } catch {
+        Set-Status "FAILED|$($_.Exception.Message)"
+        Write-Host "  Problem while fixing: $($_.Exception.Message)" -ForegroundColor Red
     }
-    $freed = [math]::Round(((Get-PSDrive C).Free - $before)/1MB); if ($freed -lt 0) { $freed = 0 }
-    $msg = "PC cleaned and optimised. Freed about $freed MB. If it is still slow, tell IT."
-    Write-Host "`n  $msg`n" -ForegroundColor Green
-    if ($asSystem) { try { & msg.exe * /TIME:30 $msg } catch {} }                  # pop a note in the user's session
-    Start-Sleep 6
+    Start-Sleep 4
     return
 }
 

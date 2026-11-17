@@ -5,6 +5,9 @@ quietly in the background and feeds Network Doctor.
 
 ## What it does
 **When a user clicks "Fix my PC":**
+- A small window shows **live progress** (which step is running) and the final result — "Done! Freed about N MB."
+  This is read from a status file, so it works on every Windows edition (including Home) and never leaves you
+  guessing whether it is stuck. A Windows repair, when needed, can take 15–30 minutes — the window says so.
 - Cleans junk (temp, caches, prefetch, Delivery-Optimisation cache, Windows Update leftovers, old Windows
   component files via DISM), empties the Recycle Bin, flushes DNS, restarts Explorer, shows space freed.
   **It never touches Documents, Desktop, Downloads or any real file.**
