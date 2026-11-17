@@ -123,26 +123,32 @@ def _run(argv, timeout=40):
         return -1, str(e)
 
 
-def deploy_one(ip, user, pw, central, src_dir, run=_run, copy=None):
-    """Install the agent on one PC. Returns {'ip','ok','step','detail'}.
-    `src_dir` holds networkdoctor-agent.ps1 + fix-launch.cmd. `central` is the share path to write to
-    central.txt. `run`/`copy` are injectable for tests."""
+def _place_files(ip, src_dir, central):
+    """Copy the agent files + central.txt onto the PC's admin share. Windows-only (the \\ip\C$ path is a UNC
+    path); kept separate so tests inject a stub and never touch the real filesystem."""
     import os
     import shutil
-    copy = copy or (lambda s, d: shutil.copy2(s, d))
+    dest = r"\\%s\C$\ProgramData\NetworkDoctor" % ip
+    os.makedirs(dest, exist_ok=True)
+    for fn in ("networkdoctor-agent.ps1", "fix-launch.cmd"):
+        shutil.copy2(os.path.join(src_dir, fn), os.path.join(dest, fn))
+    with open(os.path.join(dest, "central.txt"), "w", encoding="utf-8") as f:
+        f.write(central or "")
+
+
+def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
+    """Install the agent on one PC. Returns {'ip','ok','step','detail'}.
+    `src_dir` holds networkdoctor-agent.ps1 + fix-launch.cmd. `central` is written to central.txt on the PC.
+    `run` and `place` are injectable for tests (place does the file copy, which is Windows-only)."""
+    place = place or _place_files
 
     # 1. authenticate to the admin share
     rc, out = run(net_use_argv(ip, user, pw, True))
     if rc != 0:
         return {"ip": ip, "ok": False, "step": "connect", "detail": _net_hint(out)}
     try:
-        dest = r"\\%s\C$\ProgramData\NetworkDoctor" % ip
         try:
-            os.makedirs(dest, exist_ok=True)
-            for fn in ("networkdoctor-agent.ps1", "fix-launch.cmd"):
-                copy(os.path.join(src_dir, fn), os.path.join(dest, fn))
-            with open(os.path.join(dest, "central.txt"), "w", encoding="utf-8") as f:
-                f.write(central or "")
+            place(ip, src_dir, central)
         except Exception as e:  # noqa: BLE001
             return {"ip": ip, "ok": False, "step": "copy", "detail": "cannot write C$ share: %s" % e}
         # 2. register + start the tasks
@@ -155,7 +161,7 @@ def deploy_one(ip, user, pw, central, src_dir, run=_run, copy=None):
         run(net_use_argv(ip, user, pw, False))
 
 
-def deploy_all(targets, creds, central, src_dir, run=_run, copy=None, progress=None):
+def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=None):
     """Install on every target, trying each saved credential until one works. `creds` is [(label,user,pw)].
     `progress(done, total, result)` is called after each PC. Returns the list of per-PC results."""
     results = []
@@ -163,7 +169,7 @@ def deploy_all(targets, creds, central, src_dir, run=_run, copy=None, progress=N
     for i, t in enumerate(targets, 1):
         res = None
         for _label, user, pw in creds or []:
-            res = deploy_one(t["ip"], user, pw, central, src_dir, run=run, copy=copy)
+            res = deploy_one(t["ip"], user, pw, central, src_dir, run=run, place=place)
             res["name"] = t.get("name", t["ip"])
             if res["ok"] or res["step"] != "connect":
                 break   # a non-auth failure won't be fixed by another credential

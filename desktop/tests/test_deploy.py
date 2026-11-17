@@ -62,7 +62,7 @@ class Sweep(unittest.TestCase):
             calls.append(argv[0] + " " + (argv[1] if len(argv) > 1 else ""))
             return 0, "OK"
         res = D.deploy_one("192.168.0.70", "adm", "pw", r"\\IT\share", "/src",
-                           run=run, copy=lambda s, d: None)
+                           run=run, place=lambda ip, src, central: None)
         self.assertTrue(res["ok"])
         self.assertIn("net use", calls[0])
         self.assertEqual(calls[-1], "net use")                  # always disconnects at the end
@@ -72,7 +72,7 @@ class Sweep(unittest.TestCase):
             if argv[:2] == ["net", "use"] and "/delete" not in argv:
                 return 2, "System error 5 has occurred. Access is denied."
             return 0, ""
-        res = D.deploy_one("192.168.0.71", "adm", "bad", "", "/src", run=run, copy=lambda s, d: None)
+        res = D.deploy_one("192.168.0.71", "adm", "bad", "", "/src", run=run, place=lambda ip, src, central: None)
         self.assertFalse(res["ok"])
         self.assertEqual(res["step"], "connect")
         self.assertIn("refused", res["detail"])
@@ -88,7 +88,7 @@ class Sweep(unittest.TestCase):
             return 0, ""
         targets = [{"ip": "192.168.0.70", "name": "PC1"}]
         creds = [("bad", "bad", "x"), ("good", "good", "y")]
-        res = D.deploy_all(targets, creds, "", "/src", run=run, copy=lambda s, d: None)
+        res = D.deploy_all(targets, creds, "", "/src", run=run, place=lambda ip, src, central: None)
         self.assertTrue(res[0]["ok"])
         self.assertEqual(seen, ["/user:bad", "/user:good"])     # fell through to the working credential
 
