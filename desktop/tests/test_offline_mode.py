@@ -30,6 +30,17 @@ class OnlinePages(unittest.TestCase):
             visible = [p for p, _t in subs if p not in T.ONLINE_PAGES]
             self.assertTrue(visible, "section %s has no offline pages" % key)
 
+    def test_offline_section_set_is_short_and_core(self):
+        # offline keeps the menu to a few sections: cameras, computers, scan, fixes, setup
+        self.assertLessEqual(len(T.OFFLINE_SECTIONS), 5)
+        for key in ("cameras_s", "computers_s", "devices_s", "fix_s"):
+            self.assertIn(key, T.OFFLINE_SECTIONS)
+
+    def test_offline_sections_all_exist(self):
+        real = {s[0] for s in T.SECTIONS}
+        for key in T.OFFLINE_SECTIONS:
+            self.assertIn(key, real, key + " is not a real section")
+
 
 if __name__ == "__main__":
     unittest.main()

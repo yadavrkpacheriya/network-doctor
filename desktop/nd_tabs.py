@@ -2481,6 +2481,11 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
 # file scanner, usage, fixes, firewall, SNMP, ports, Wake-on-LAN, backups, setup) works offline and stays.
 ONLINE_PAGES = {"t_speed", "t_web", "t_dns", "t_remote", "expose", "slow"}
 
+# Offline mode keeps the menu to a handful of sections - the ones you actually use with the internet down:
+# find devices, cameras, PCs, and the offline tools/fixes (incl. "What is missing" to install Npcap). Every
+# other section is hidden to keep it simple; switch back to Online/Auto to see them all again.
+OFFLINE_SECTIONS = ["devices_s", "cameras_s", "computers_s", "fix_s", "setup_s"]
+
 
 class SectionNav:
     """Two rows of coloured buttons (section, then its pages) above one page area. Pages are created up front
@@ -2523,15 +2528,25 @@ class SectionNav:
         self.top.bind("<Configure>", self._reflow)
         self.top.after(80, self._reflow)
 
-    def _reflow(self, _event=None):
+    def _visible_sections(self):
+        """Section keys to show as top buttons - the full list online, a short offline set when offline."""
+        if self._is_offline():
+            return [k for k in OFFLINE_SECTIONS if k in self.sec_btn]
+        return list(self._sec_order)
+
+    def _reflow(self, _event=None, force=False):
         width = self.top.winfo_width()
         if width <= 1:
             return
-        if getattr(self, "_reflow_w", -1) == width:
+        if not force and getattr(self, "_reflow_w", -1) == width:
             return                      # same width - avoid a Configure feedback loop
         self._reflow_w = width
-        row = col = used = 0
+        vis = self._visible_sections()
         for key in self._sec_order:
+            if key not in vis:
+                self.sec_btn[key].grid_remove()      # hidden offline
+        row = col = used = 0
+        for key in vis:
             b = self.sec_btn[key]
             w = b.winfo_reqwidth() + 2
             if used + w > width and col > 0:
@@ -2591,12 +2606,19 @@ class SectionNav:
 
     def apply_mode(self):
         off = self._is_offline()
-        self._mode_lbl.configure(text="offline - internet menus hidden, 'device down' alerts off" if off else "online")
+        self._mode_lbl.configure(
+            text="offline - only Cameras, Computers, Scan & fixes shown" if off else "online")
+        vis_sec = self._visible_sections()
         sec, target = self.cur_sec, self.cur
-        if off and self.cur in ONLINE_PAGES:              # leave a now-hidden page
-            vis = self.visible_subs(sec) if sec else []
-            target = vis[0][0] if vis else self.cur
+        if off and (sec not in vis_sec):                  # whole section is now hidden - jump to the first offline one
+            sec = vis_sec[0] if vis_sec else sec
+            vsubs = self.visible_subs(sec) if sec else []
+            target = vsubs[0][0] if vsubs else self.last.get(sec, self.cur)
+        elif off and self.cur in ONLINE_PAGES:            # leave a now-hidden sub-page
+            vsubs = self.visible_subs(sec) if sec else []
+            target = vsubs[0][0] if vsubs else self.cur
         self.cur_sec = None                               # force the sub-bar to rebuild with the filter
+        self._reflow(force=True)                          # re-lay the section buttons for the new mode
         if target:
             self.select(target)
 
