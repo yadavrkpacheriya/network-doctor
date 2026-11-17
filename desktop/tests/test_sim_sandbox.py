@@ -102,6 +102,22 @@ class Xmeye(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(dev.config["NetWork.RemoteDeviceV3"][0]["IPAddress"], "192.168.0.120")
 
+    def test_set_static_ip_writes_address_and_turns_dhcp_off(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        dev.config["NetWork.NetDHCP"][0]["Enable"] = True
+        dev.config["NetWork.NetCommon"] = {"HostName": "gate", "HostIP": "192.168.1.64",
+                                           "Submask": "255.255.255.0", "GateWay": "192.168.1.1"}
+        note = DV.set_static_ip("192.168.1.64", "admin", "pw", "192.168.1.70", gw="192.168.1.1",
+                                connect=dev.connect())
+        self.assertIn("192.168.1.70", note)
+        self.assertEqual(dev.config["NetWork.NetCommon"]["HostIP"], "192.168.1.70")
+        self.assertFalse(dev.config["NetWork.NetDHCP"][0]["Enable"])        # DHCP turned off so the IP sticks
+
+    def test_set_static_ip_rejects_a_bad_address(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        with self.assertRaises(DV.DvrError):
+            DV.set_static_ip("192.168.1.64", "admin", "pw", "999.1.1.1", connect=dev.connect())
+
 
 # =============================================================== fake HTTP cameras over nd_camline setters
 class HttpCameras(unittest.TestCase):

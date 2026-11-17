@@ -197,6 +197,42 @@ def set_dhcp(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connectio
         return "switched to automatic (DHCP)"
 
 
+def set_static_ip(ip, user, pw, new_ip, mask="255.255.255.0", gw="", port=PORT, timeout=6,
+                  connect=socket.create_connection):
+    """Give the camera a fixed IP directly from the app (no browser): turn DHCP off and write the address,
+    mask and gateway in the device's own format. Returns a note for the person."""
+    for v in (new_ip, mask) + ((gw,) if gw else ()):
+        a = str(v).split(".")
+        if len(a) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in a):
+            raise DvrError("'%s' is not a valid address" % v)
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        dhcp = c.get("NetWork.NetDHCP")                      # turn automatic IP off first, or it overrides us
+        if isinstance(dhcp, list) and dhcp:
+            for x in dhcp:
+                if isinstance(x, dict):
+                    x["Enable"] = False
+            c.set("NetWork.NetDHCP", dhcp)
+        common = c.get("NetWork.NetCommon")
+        if not isinstance(common, dict):
+            raise DvrError("cannot read the camera's network settings")
+
+        def fmt(cur, val):   # match whatever format the camera already uses (hex 0x.. or dotted)
+            return ip_to_hex(val) if isinstance(cur, str) and cur.lower().startswith("0x") else val
+        common["HostIP"] = fmt(common.get("HostIP"), new_ip)
+        if "Submask" in common or "SubMask" in common:
+            key = "Submask" if "Submask" in common else "SubMask"
+            common[key] = fmt(common.get(key), mask)
+        if gw and ("GateWay" in common or "Gateway" in common):
+            key = "GateWay" if "GateWay" in common else "Gateway"
+            common[key] = fmt(common.get(key), gw)
+        restart = c.set("NetWork.NetCommon", common)
+        if restart:
+            c.reboot()
+            return "set fixed IP %s; the camera is restarting (reconnect to it at the new address)" % new_ip
+        return "set fixed IP %s" % new_ip
+
+
 def _replace_ip(node, old, new, hits):
     """Walks a settings tree; an "IPAddress" equal to `old` (dotted or 0x form) becomes `new` in the same form."""
     if isinstance(node, dict):

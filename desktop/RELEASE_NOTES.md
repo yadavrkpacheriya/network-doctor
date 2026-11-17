@@ -1,3 +1,18 @@
+## Network Doctor 3.92.0
+
+### Edit a camera's IP / reboot it directly from the app — no browser
+Cameras tab → "Edit IP / reboot (direct)". For an XMeye / local-brand camera you can now, without opening it
+in a browser:
+- **Set a fixed IP** — and it shows the **free (unused) IPs** on that range first, and refuses an IP already
+  in use, so changing a camera's IP can't create a conflict;
+- **Switch to DHCP**;
+- **Reboot**.
+
+It uses your saved camera login automatically. (Hikvision / Dahua reboot and DHCP are already in "Restart &
+fix camera IPs".)
+
+---
+
 ## Network Doctor 3.91.0
 
 ### New: Camera health report (Cameras tab)

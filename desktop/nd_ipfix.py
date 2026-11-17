@@ -28,6 +28,27 @@ def norm_mac(m):
     return (m or "").upper().replace("-", ":")
 
 
+def free_ips(used, base, want=12, lo=2, hi=254):
+    """Unused addresses in a /24, so a new static IP never clashes. `used` is the IPs already on the network
+    (devices + leases + ARP); `base` is the first three octets, e.g. '192.168.1'. Skips .1 (the gateway) by
+    default (lo=2). Returns up to `want` free IPs in order."""
+    used = {str(u) for u in (used or [])}
+    out = []
+    for n in range(lo, hi + 1):
+        ip = "%s.%d" % (base, n)
+        if ip not in used:
+            out.append(ip)
+            if len(out) >= want:
+                break
+    return out
+
+
+def base24(ip):
+    """'192.168.1.64' -> '192.168.1' (the /24 prefix), or '' if not an IPv4."""
+    p = str(ip).split(".")
+    return ".".join(p[:3]) if len(p) == 4 else ""
+
+
 # --------------------------------------------------------------- router reserve recipe
 def reserve_recipe(ip, mac, name=""):
     """(cmd, undo) that pins `ip` to `mac` permanently on a MikroTik. Idempotent: an existing dynamic lease is

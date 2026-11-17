@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "3.91.0"
+VERSION = "3.92.0"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1026,11 +1026,95 @@ class App(tk.Tk):
             "cameras", "Cameras & DVR / NVR", (core.CAT_CAM,),
             [("Check camera pictures", self._camera_picture_check),
              ("Camera health report", self._camera_health),
+             ("Edit IP / reboot (direct)", self._camera_fix),
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
                   "automatically. Use 'Restart & fix camera IPs' for the restart -> fixed-IP -> bind flow.")
+
+    def _xmeye_cred(self, ip):
+        """A working (user, password) for the XMeye/local camera at `ip`, or None. Tries the device's saved
+        login, then the saved camera vault, then common defaults - using the same read_info the sweep uses."""
+        import nd_dvrip as DV
+        import nd_camhealth as H
+        settings = self._settings()
+        mac = next((d.get("mac", "") for d in (getattr(self, "devices", []) or []) if d.get("ip") == ip), "")
+        tries = []
+        s = SW.saved_get(settings.get("device_logins") or {}, mac)
+        if s:
+            tries.append(s)
+        tries += SW.trylist_pairs(settings.get("cam_logins") or [])
+        tries += list(H.COMMON_DEFAULTS)
+        for u, p in tries:
+            try:
+                DV.read_info(ip, u, p)
+                return (u, p)
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def _camera_fix(self):
+        """Change a camera's IP, switch it to DHCP, or reboot it - directly from the app, no browser. Shows the
+        free (unused) IPs first so a new fixed IP cannot clash. For XMeye / local-brand cameras (port 34567)."""
+        from tkinter import simpledialog
+        import nd_dvrip as DV
+        ip = simpledialog.askstring(APP, "Camera to manage - type its current IP (e.g. 192.168.1.64):",
+                                    parent=self)
+        if not ip:
+            return
+        ip = ip.strip()
+        used = {d.get("ip") for d in (getattr(self, "devices", []) or []) if d.get("ip")}
+        free = IPFIX.free_ips(used, IPFIX.base24(ip)) if IPFIX.base24(ip) else []
+        suggest = next((f for f in free if f != ip), ip)
+
+        win = tk.Toplevel(self)
+        win.title("Camera tools - " + ip)
+        win.transient(self)
+        win.resizable(False, False)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=f"Camera {ip}   (uses your saved camera login)").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 2))
+        ttk.Label(frm, text=("Free IPs on this range: " + ", ".join(free[:10])) if free else
+                  "Run a scan to list free IPs on this range.",
+                  foreground="#0f766e", wraplength=360).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(frm, text="New fixed IP:").grid(row=2, column=0, sticky="e")
+        v_new = tk.StringVar(value=suggest)
+        ttk.Entry(frm, textvariable=v_new, width=16).grid(row=2, column=1, sticky="w")
+        status = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=status, foreground="#b45309", wraplength=360).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        def run(fn, desc):
+            status.set(desc + "...")
+
+            def work():
+                cred = self._xmeye_cred(ip)
+                if not cred:
+                    msg = "No working login for this camera. Add it in Setup > Camera/NVR/DVR logins."
+                else:
+                    try:
+                        msg = fn(cred) or (desc + " done")
+                    except Exception as e:  # noqa: BLE001
+                        msg = "Failed: " + str(e)
+                self.q.put(("call", lambda: status.set(msg)))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def set_ip(cred):
+            new = v_new.get().strip()
+            if new in used and new != ip:
+                return "That IP is already used by another device - pick a free one from the list above."
+            return DV.set_static_ip(ip, cred[0], cred[1], new)
+
+        ttk.Button(frm, text="Set fixed IP", command=lambda: run(set_ip, "Setting IP")).grid(
+            row=3, column=0, pady=6, padx=2)
+        ttk.Button(frm, text="Switch to DHCP", command=lambda: run(
+            lambda c: DV.set_dhcp(ip, c[0], c[1]), "Switching to DHCP")).grid(row=3, column=1, pady=6, padx=2)
+        ttk.Button(frm, text="Reboot", command=lambda: run(
+            lambda c: DV.reboot(ip, c[0], c[1]) or "reboot sent", "Rebooting")).grid(row=3, column=2, pady=6, padx=2)
+        ttk.Button(frm, text="Close", command=win.destroy).grid(row=4, column=2, sticky="e", pady=(4, 0))
 
     def _camera_health(self):
         """Fault report for every camera: reachable? login still works? default password? model + firmware.

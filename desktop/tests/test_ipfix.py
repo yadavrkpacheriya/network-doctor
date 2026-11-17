@@ -57,6 +57,18 @@ class PermanentPlan(unittest.TestCase):
         self.assertIsNone(plan["reserve"])
 
 
+class FreeIps(unittest.TestCase):
+    def test_lists_unused_ips_skipping_the_gateway(self):
+        used = ["192.168.1.1", "192.168.1.2", "192.168.1.64"]
+        free = F.free_ips(used, "192.168.1", want=3)
+        self.assertEqual(free, ["192.168.1.3", "192.168.1.4", "192.168.1.5"])   # .1/.2 used, .1 gateway skipped
+        self.assertNotIn("192.168.1.64", free)
+
+    def test_base24(self):
+        self.assertEqual(F.base24("192.168.1.64"), "192.168.1")
+        self.assertEqual(F.base24("not-an-ip"), "")
+
+
 class ReserveAgainstFakeRouter(unittest.TestCase):
     def test_reserve_makes_the_lease_static_on_the_router(self):
         fr = FakeRouter()
