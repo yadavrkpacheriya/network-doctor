@@ -1343,6 +1343,94 @@ def slowdown_screen(rep, stopped=False):
     return out
 
 
+def slowdown_view(rep):
+    """Pure: everything the picture needs -> dict(verdict, level, cards, fixes[(fix, why)], lines[(name, series, level)])."""
+    verdict, finds = _judge(rep)
+    level = "ok" if verdict.startswith("ALL OK") else ("bad" if any(sv == "critical" for sv, _, _ in finds) else "warn")
+    LV = {"OK": "ok", "WARN": "warn", "BAD": "bad"}
+    cards, lines = [], []
+    cur = rep.get("wifi") or {}
+    if cur.get("ssid"):
+        sg = cur.get("signal")
+        cards.append(("Wi-Fi", f"{sg}%" if sg is not None else "?", f"{cur['ssid'][:20]} - {signal_label(sg)[0]}",
+                      "ok" if (sg or 0) >= 60 else "warn" if (sg or 0) >= 40 else "bad"))
+    for key, title, strict, ip in (("gw", "Router", True, rep.get("gw_ip", "")), ("inet", "Internet", False, "1.1.1.1")):
+        st = rep.get(key)
+        if not st:
+            continue
+        lvl = LV.get(link_status(st, strict), "")
+        if not st["recv"]:
+            cards.append((title, "NO ANSWER", f"{ip} - 0 of {st['sent']} replied", "bad"))
+        else:
+            cards.append((title, f"{st['median']:.0f} ms", f"{st['loss']:.0f}% lost - {st['spikes']} slow spikes", lvl))
+        if rep.get(key + "_series"):
+            lines.append((title.lower(), rep[key + "_series"], lvl or "info"))
+    dns = rep.get("dns")
+    if dns is not None:
+        cards.append(("DNS", f"{dns:.0f} ms", "website names" , "ok" if dns <= 150 else "warn"))
+    elif rep.get("inet"):
+        cards.append(("DNS", "FAILED", "website names", "bad"))
+    if rep.get("devices"):
+        cards.append(("Devices", str(rep["devices"]), "online now", "info"))
+    fixes = []
+    for _, prob, fix in finds:
+        if fix not in [x for x, _ in fixes]:
+            fixes.append((fix, prob))
+    return {"verdict": verdict, "level": level, "cards": cards, "fixes": fixes, "lines": lines}
+
+
+def wifi_view(cur, nets, lines):
+    """Pure: Wi-Fi scan -> dict(cards, signal, bars24[(label, n, level, text)], bars5, fixes[(fix, why)])."""
+    counts = {}
+    for n in nets:
+        if n.get("channel"):
+            counts[n["channel"]] = counts.get(n["channel"], 0) + 1
+    mine = (cur or {}).get("channel")
+    sg = (cur or {}).get("signal")
+    cards = []
+    if cur and cur.get("ssid"):
+        cards.append(("Connected to", cur["ssid"][:22], f"{signal_label(sg)[0]} signal" + (f" - link {cur['tx']} Mbps" if cur.get("tx") else ""),
+                      "ok" if (sg or 0) >= 60 else "warn" if (sg or 0) >= 40 else "bad"))
+    if mine:
+        near = sum(v for c, v in counts.items() if abs(c - mine) < (5 if mine <= 14 else 1) and c != mine) + counts.get(mine, 1) - 1
+        cards.append(("Channel", f"{mine}", f"{chan_to_band(mine)} - {near} other network(s) near",
+                      "ok" if near <= 2 else "warn" if near <= 5 else "bad"))
+    cards.append(("Networks seen", str(len(nets)), "access points in range", "info"))
+    for ln in lines:
+        if ln.startswith("Best 2.4 GHz"):
+            cards.append(("Best 2.4 GHz", ln.split(":")[1].split()[0], "least busy channel", "info"))
+        elif ln.startswith("Least used 5 GHz"):
+            cards.append(("Best 5 GHz", ln.split(":")[1].split()[0], "least busy channel", "info"))
+    mx = max(counts.values()) if counts else 1
+
+    def bars(chs):
+        return [(f"ch {c}", counts.get(c, 0), "bad" if c == mine else ("warn" if counts.get(c, 0) >= 4 else "ok"),
+                 f"{counts.get(c, 0)}" + (" - you" if c == mine else "")) for c in chs]
+    b24 = bars([c for c in range(1, 14) if counts.get(c) or c in CH24_BEST])
+    b5 = bars(sorted(c for c in counts if c > 14))
+    fixes = [(ln.strip().lstrip("! ").strip(), "") for ln in lines if ln.strip().startswith("!")]
+    return {"cards": cards, "signal": sg, "bars24": b24, "bars5": b5, "fixes": fixes}
+
+
+def adapter_cards(ads):
+    """Pure: one card per working adapter -> [(name, speed, note, level)]."""
+    out = []
+    for a in ads:
+        if str(a.get("status")).lower() != "up" or a.get("virtual"):
+            continue
+        bps = int(a.get("bps") or 0)
+        errs = int(a.get("rxerr") or 0) + int(a.get("txerr") or 0)
+        lvl = "ok"
+        if a.get("duplex") is False and not a.get("wifi"):
+            lvl = "bad"
+        elif (not a.get("wifi") and 0 < bps <= 100_000_000) or errs > 100:
+            lvl = "warn"
+        note = ("Wi-Fi" if a.get("wifi") else "cable") + (", HALF duplex" if a.get("duplex") is False else "") + \
+            f" - {errs:,} errors" + (f" - IP {a['ip']}" if a.get("ip") else "")
+        out.append(((a.get("name") or "adapter")[:20], a.get("speed") or "?", note, lvl))
+    return out
+
+
 def slowdown_check(gw, devices=0, count=100, out=lambda s, tag="": None, stop=None):
     """Runs the whole check (about count seconds on Windows). Returns (verdict, findings, rep)."""
     rep = {"devices": devices, "gw_ip": gw or "", "wifi": {}, "wifi_lines": [], "gw": None, "inet": None, "dns": None, "adapters": []}
@@ -1366,8 +1454,10 @@ def slowdown_check(gw, devices=0, count=100, out=lambda s, tag="": None, stop=No
         if not ip or (stop and stop.is_set()):
             continue
         ser = ping_series(ip, count, stop, lambda d, label=label: out(f"{label}: {d}/{count}", "status"))
+        rep[key + "_series"] = ser
         if key == "inet" and ser and not any(x is not None for x in ser) and not (stop and stop.is_set()):
             ser = ping_series("8.8.8.8", 10, stop)
+            rep[key + "_series"] = ser
         rep[key] = series_stats(ser) if ser else None
     out("5/5  Name lookup (DNS)...", "status")
     rep["dns"] = dns_ms()

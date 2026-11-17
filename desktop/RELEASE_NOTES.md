@@ -9,6 +9,14 @@ the internet line/ISP -> DNS. Has a Stop button, sends only tiny pings, and chan
 The result is compact like a command prompt: one line per check (wifi / router / internet / dns) with OK, WARN or BAD,
 then the PROBLEM in one sentence and numbered FIX steps at the very bottom.
 
+### New look for the Tools menu (round 1 of the whole-app redesign)
+- Every Tools page now starts with a small **how-to strip**: what it does / use it when / 1-2-3 steps ("? how to use" hides it).
+- **Pictures first, text under "Show details"** for Wi-Fi analyzer, Why-is-it-slow, Adapters and Speed test: status cards
+  (green / yellow / red), signal and speed dials, channel bars, a reply-time line chart, and a **WHAT TO DO** list with
+  numbered fixes at the bottom.
+- **Website firewall is now a tile grid**: click a tile to block (red) or allow it; same settings as before underneath.
+- New shared module `nd_ui.py` (cards, dials, bars, line chart, tile grid) for the next pages.
+
 ### Upgraded
 - **Ping statistics** everywhere now also give median, 95th percentile, spike count and longest loss streak
   (old fields unchanged). Lost pings are now counted in the right place, on Windows, Linux and Mac.

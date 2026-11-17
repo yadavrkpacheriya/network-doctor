@@ -22,6 +22,7 @@ import nd_snmp
 import nd_tabs
 import nd_tools as T
 import nd_endpoint as EP
+import nd_ui as UI
 
 APP = "Network Doctor"
 
@@ -119,6 +120,50 @@ TOOLS = [
 ]
 
 
+# Short, plain how-to for every tool: (what it does, use it when, steps). Shown in the strip at the top of each page.
+HOWTO = {
+    "login": ("Lists failed logins on every PC that runs the agent: account, tries, inside or outside.",
+              "Someone keeps typing wrong passwords, or you suspect hacking.", ["Press Check now", "Outside (internet) source = most dangerous", "Block that IP on the router"]),
+    "watch": ("Pings your must-have devices every 30 s and alerts when one stops answering.",
+              "Router, server, ERP PC or DVR must never go down unnoticed.", ["Pick a device", "Press Watch this device (or Watch router + all network equipment)", "Keep Network Doctor running - pop-up + sound on failure"]),
+    "speed": ("Measures real download, upload and delay of the internet line, and finds who is at fault.",
+              "Internet feels slow, or before calling the ISP.", ["Close big downloads", "Press Run speed test (about 30 s)", "Read the dials and the advice"]),
+    "switch": ("Reads ports, traffic and errors from the switch/router (any brand) with SNMP.",
+               "You want port speed, errors or which port is busy.", ["Enter the switch/router IP and SNMP key", "Press Read", "Ports with errors need a cable check"]),
+    "website": ("Blocks websites for the whole office: ads, adult, gambling, social and your own list.",
+                "Staff waste time, or you want safe browsing.", ["Click a tile to block / allow it", "Add your own sites in the lists", "Press Block on the router now"]),
+    "guard": ("Watches for a fake router, changed DNS and random-MAC devices.",
+              "New unknown device or sudden strange internet behaviour.", ["Press Refresh list", "Read the warnings", "Press Turn on protection (apply on router)"]),
+    "ports": ("Checks which doors (ports) are open on a device.",
+              "Check a camera/PC/router is not exposed.", ["Pick the device", "Pick a port set", "Press Scan"]),
+    "dns": ("Looks up a name, or tests whether DNS servers answer fast.",
+            "Websites do not open but internet works.", ["Type a site name and press Look up", "Or press Test DNS servers", "Slow server? change DNS to 1.1.1.1"]),
+    "web": ("Checks if a website or server answers and how fast, step by step.",
+            "One site/ERP is slow or down.", ["Type the address", "Press Check", "See which step is slow"]),
+    "remote": ("Checks whether the office has its own public IP or shares one (CGNAT).",
+               "Remote access / VPN is slow or cannot connect.", ["Press Check", "CGNAT = only the ISP can fix it"]),
+    "lan": ("Real speed between this PC and another PC through the cables and switches.",
+            "File copy inside the office is slow.", ["Run Network Doctor on both PCs", "Tick Receiver ON on the other PC", "Press Test speed"]),
+    "wifi": ("Shows nearby Wi-Fi, signal, crowded channels - and a full check of why the network is slow.",
+             "Wi-Fi is slow or drops on one PC/laptop.", ["Stand where the problem is", "Press Scan Wi-Fi or Why is it slow?", "Do the numbered fixes at the bottom"]),
+    "nic": ("Shows cable speed (1 Gbps / 100 Mbps), duplex and errors of every network card in this PC.",
+            "One PC is slower than the others.", ["Press Check adapters", "Yellow / red card = cable or port problem"]),
+    "mtu": ("Finds the biggest packet that passes without splitting.",
+            "Some sites or VPN hang while others work.", ["Pick target", "Press Find MTU", "Use the MTU it gives"]),
+    "subnet": ("Network math: range, mask, how many devices, same network or not.",
+               "Planning IPs or checking two IPs can talk.", ["Type address/prefix", "Press Calculate"]),
+    "wol": ("Switches on a sleeping PC over the network.", "You need a PC on without walking to it.", ["Pick the PC", "Press Wake up"]),
+    "mac": ("Tells the maker of a device from its MAC address.", "Unknown device on the network.", ["Type the MAC", "Press Look up"]),
+    "ready": ("Shows what the app still needs (Npcap, router login, firewall) and fixes it.",
+              "A feature says it is not available.", ["Press Check now", "Fix each red item shown"]),
+    "backup": ("Saves the router config and shows what changed since last time.",
+               "Before any router change, or after something broke.", ["Press Backup now", "Press Show diff (last two backups) to see changes"]),
+}
+
+
+VISUAL = {"wifi", "nic", "speed"}   # pages whose result is a picture first (text under 'Show details')
+
+
 class ToolsTab:
     def __init__(self, app, parent=None):
         """Every tool is its own page in the section it belongs to (app.nav pages 't_<key>'), built the first
@@ -126,6 +171,7 @@ class ToolsTab:
         self.app = app
         self.q = queue.Queue()
         self.frames, self.texts, self.status, self.stops, self.btns = {}, {}, {}, {}, {}
+        self.panels = {}
         self.lan_server = None
         self.live = set()
         self.current = None
@@ -149,9 +195,8 @@ class ToolsTab:
             self.frames[key] = f
             name, desc = next((n, d) for k, n, d in TOOLS if k == key)
             col = nd_tabs.PAGE_COLOR.get("t_" + key, "#334155")
-            tk.Label(f, text=name, bg=col, fg="white", font=("Segoe UI", 12, "bold"),
-                     anchor="w", padx=10, pady=5).pack(fill="x")
-            ttk.Label(f, text=desc, foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", pady=(3, 6))
+            what, when, steps = HOWTO.get(key, (desc, "", []))
+            UI.HowTo(f, col, name, what, when, steps).pack(fill="x", pady=(0, 6))
             getattr(self, "_build_" + key)(f)
         self.current = key
         if key == "watch":
@@ -188,7 +233,21 @@ class ToolsTab:
         t = nd_tabs.UI["text_box"](f)
         t.configure(state="disabled", font=("Consolas", 10))
         self.texts[key] = t
+        panel = UI.Panel(f)
+        panel.pack(fill="x", before=t.master)
+        self.panels[key] = panel
+        if key in VISUAL:   # picture first; the full text is one click away
+            show = tk.BooleanVar(value=False)
+
+            def tog():
+                t.master.pack(fill="both", expand=True) if show.get() else t.master.pack_forget()
+            ttk.Checkbutton(bar, text="Show details", variable=show, command=tog).pack(side="right", padx=8)
+            tog()
         return t
+
+    def _ui(self, key, out, fn):
+        """Draw a picture in the page's result area (runs in the window thread)."""
+        out(lambda: fn(self.panels[key]), "call")
 
     def _copy(self, key):
         self.app.clipboard_clear()
@@ -213,6 +272,8 @@ class ToolsTab:
         t.configure(state="normal")
         t.delete("1.0", "end")
         t.configure(state="disabled")
+        if key in self.panels:
+            self.panels[key].clear()
         for b in self.btns.get(key, []):
             b.configure(state="disabled")
         self.status[key].set("working...")
@@ -440,6 +501,28 @@ class ToolsTab:
             out("  ! " + tline, "warn")
         if not tips and down:
             out("  Line looks healthy.", "ok")
+        def draw(panel):
+            r = panel.row()
+            for val, cap in ((down, "Download"), (up, "Upload")):
+                g = UI.Gauge(r)
+                g.pack(side="left", padx=(0, 12))
+                top = max(100, (val or 0) * 1.25)
+                g.set(val, top, "Mbit/s", cap, "ok" if val else "bad")
+            cards = []
+            if idle is not None:
+                cards.append(("Ping (idle)", f"{idle:.0f} ms", "reply time", "ok" if idle < 60 else "warn"))
+            if loaded is not None:
+                bloat = idle is not None and loaded > idle + 100
+                cards.append(("Ping (busy)", f"{loaded:.0f} ms", "while downloading", "warn" if bloat else "ok"))
+            for lab, st in (("Router", gwr), ("Internet", inet[0] if inet else None)):
+                if st:
+                    cards.append((lab + " loss", f"{st['loss']:.0f}%", f"{st['recv']} of {st['sent']} replied",
+                                  "ok" if st["loss"] == 0 else "warn" if st["loss"] < 10 else "bad"))
+            if cards:
+                panel.cards(cards)
+            panel.verdict("Line looks healthy" if not tips and down else "Check these", "ok" if not tips and down else "warn",
+                          [(t, "") for t in tips])
+        self._ui("speed", out, draw)
         out("Speed test", "status")
         out(("Speed test", "info", f"down {down or 0:.1f} Mbit/s, up {up or 0:.1f} Mbit/s, ping {idle or 0:.0f} ms, "
                                    f"loaded {loaded or 0:.0f} ms, ISP {info.get('isp', '')}"), "log")
@@ -810,35 +893,41 @@ class ToolsTab:
         cfg = self._fw_load()
         top = ttk.Frame(f)
         top.pack(fill="x")
-        left = ttk.LabelFrame(top, text=" Block ", padding=6)
-        left.pack(side="left", fill="y")
         self.fw_cats = {}
-        for key, (label, _, _) in DF.CATEGORIES.items():
-            v = tk.BooleanVar(value=key in cfg.get("categories", ["ads", "adult", "gambling"]))
-            ttk.Checkbutton(left, text=label, variable=v).pack(anchor="w")
-            self.fw_cats[key] = v
         self.fw_safe = tk.BooleanVar(value=cfg.get("safe_search", True))
-        ttk.Checkbutton(left, text="Safe search (Google, Bing, YouTube, DuckDuckGo)", variable=self.fw_safe).pack(
-            anchor="w", pady=(6, 0))
+        items = []
+        for key, (label, _, names) in DF.CATEGORIES.items():
+            v = tk.BooleanVar(value=key in cfg.get("categories", ["ads", "adult", "gambling"]))
+            self.fw_cats[key] = v
+            items.append(dict(title=label, sub=f"e.g. {', '.join(names[:2])}", var=v))
+        items.append(dict(title="Safe search", sub="Google, Bing, YouTube, DuckDuckGo", var=self.fw_safe,
+                          on_text="ON", off_text="off"))
+        ttk.Label(f, text="1. Click a tile to block it (red) or allow it. These use THIS PC as the DNS server.",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 2), before=top)
+        tiles = UI.Tiles(f, height=150)
+        tiles.pack(fill="x", before=top)
+        tiles.set(items)
         self.fw_lists = {}
         for key, label in (("blocked", "Also block (one site per line)"), ("allowed", "Always allow (one per line)")):
             lf = ttk.LabelFrame(top, text=f" {label} ", padding=4)
-            lf.pack(side="left", fill="both", expand=True, padx=(8, 0))
-            t = tk.Text(lf, height=7, width=28, font=("Consolas", 10))
+            lf.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            t = tk.Text(lf, height=4, width=28, font=("Consolas", 10))
             t.pack(fill="both", expand=True)
             t.insert("1.0", "\n".join(cfg.get(key, [])))
             self.fw_lists[key] = t
         # Router-native block: works for the WHOLE Wi-Fi with no PC kept on (DNS static on the router).
-        rb = ttk.LabelFrame(f, text=" Block for the whole network on the router (no PC needed) ", padding=6)
+        rb = ttk.LabelFrame(f, text=" 2. Block for the whole Wi-Fi on the router (no PC needed) - click tiles, then press the button ", padding=6)
         rb.pack(fill="x", pady=(8, 0))
         self.fw_router = {}
-        gr = ttk.Frame(rb)
-        gr.pack(fill="x")
         rcfg = (self.app._settings().get("blocked_sites") or {}).get("groups", [])
+        ritems = []
         for key, (label, _sites) in T.SITE_GROUPS.items():
             v = tk.BooleanVar(value=key in rcfg)
-            ttk.Checkbutton(gr, text=label, variable=v).pack(side="left", padx=(0, 10))
             self.fw_router[key] = v
+            ritems.append(dict(title=label, sub=f"{len(_sites)} sites", var=v))
+        rt = UI.Tiles(rb, height=110)
+        rt.pack(fill="x")
+        rt.set(ritems)
         ttk.Label(rb, text="Also uses the 'Also block' list above. Blocks these for every device that uses the "
                            "router's DNS (the normal setup) - you do NOT need to keep this PC on.",
                   foreground="#667085", wraplength=900, justify="left").pack(anchor="w", pady=(4, 4))
@@ -1331,8 +1420,18 @@ class ToolsTab:
     def _slowcheck(self, out, stop):
         n = sum(1 for d in self.app.devices if d.get("online"))
         verdict, finds, rep = NT.slowdown_check(self.app.gw, n, 100, out, stop)
-        for text, tag in NT.slowdown_screen(rep, stop.is_set()):
+        for text, tag in NT.slowdown_screen(rep, stop.is_set()):   # same result as text, under 'Show details'
             out(text, tag)
+        v = NT.slowdown_view(rep)
+
+        def draw(panel):
+            panel.cards(v["cards"])
+            if v["lines"]:
+                ln = UI.Lines(panel.row(), width=700)
+                ln.pack(side="left")
+                ln.set(v["lines"], "Reply time of every ping (red tick = lost)")
+            panel.verdict(v["verdict"], v["level"], v["fixes"])
+        self._ui("wifi", out, draw)
         out(("Slowdown check", "info", verdict), "log")
 
     def _wifi(self, out, stop):
@@ -1342,6 +1441,23 @@ class ToolsTab:
         if not nets and not cur:
             return
         lines, counts = NT.wifi_analyse(nets, cur)
+        view = NT.wifi_view(cur, nets, lines)
+
+        def draw(panel):
+            panel.cards(view["cards"])
+            r = panel.row(pady=(8, 2))
+            if view["signal"] is not None:
+                g = UI.Gauge(r)
+                g.pack(side="left", padx=(0, 14))
+                g.set(view["signal"], 100, "%", "Wi-Fi signal", "ok" if view["signal"] >= 60 else "warn" if view["signal"] >= 40 else "bad")
+            for key, title in (("bars24", "2.4 GHz - networks per channel"), ("bars5", "5 GHz - networks per channel")):
+                if view[key]:
+                    bb = UI.Bars(r, width=330)
+                    bb.pack(side="left", padx=(0, 14), anchor="n")
+                    bb.set(view[key], title)
+            fx = view["fixes"]
+            panel.verdict("Wi-Fi needs attention" if fx else "Wi-Fi looks fine here", "warn" if fx else "ok", fx)
+        self._ui("wifi", out, draw)
         out("Advice", "h")
         for ln in lines:
             out(ln, "warn" if "!" in ln else "")
@@ -1376,8 +1492,16 @@ class ToolsTab:
         if not ads:
             out("Could not read the network adapters.", "crit")
             return
+        finds = NT.adapter_findings(ads)
+        bad = [(t, "") for sv, t in finds if sv != "ok"]
+
+        def draw(panel):
+            panel.cards(NT.adapter_cards(ads)[:5])
+            panel.verdict("Cable / adapter problem found" if bad else "Adapters look healthy",
+                          "bad" if any(sv == "critical" for sv, _ in finds) else "warn" if bad else "ok", bad)
+        self._ui("nic", out, draw)
         out("Findings", "h")
-        for sev, text in NT.adapter_findings(ads):
+        for sev, text in finds:
             out(("  ! " if sev != "ok" else "  ") + text, {"critical": "crit", "warning": "warn", "ok": "ok"}.get(sev, ""))
         out("\nAdapters", "h")
         for a in sorted(ads, key=lambda a: (str(a.get("status")).lower() != "up", bool(a.get("virtual")))):
