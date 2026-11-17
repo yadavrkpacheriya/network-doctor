@@ -35,6 +35,7 @@ import nd_defense as DF
 import nd_arpblock as AB
 import nd_autofix as AF
 import nd_brain as BR
+import nd_ipfix as IPFIX
 import nd_protab
 import nd_tabs
 import nd_tools as T
@@ -2866,11 +2867,17 @@ class App(tk.Tk):
         ip = e.get("ip") or (AL.IP_RE.search(e["text"]).group(0) if AL.IP_RE.search(e["text"]) else "")
         if not macs or not ip:
             return
-        pmac = T.priority_mac_for(T.tags_of(self.db), [m.upper() for m in macs])
-        if not pmac:
-            return
+        umacs = [m.upper() for m in macs]
+        pmac = T.priority_mac_for(T.tags_of(self.db), umacs)
         c = self.router_client(ask=False)
         if not c:
+            return
+        if not pmac:
+            # No device tagged 'Default': instead of doing nothing (which let the clash return every day),
+            # reserve the IP for whoever the router ALREADY leases it to - a principled choice, not a guess.
+            if not e.get("_ipfix_tried"):
+                e["_ipfix_tried"] = True
+                self._reserve_lease_holder_async(e, ip, umacs, c)
             return
         name = T.tags_of(self.db).get(pmac, {}).get("name") or pmac
         cmd = (f':do {{remove [find where mac-address="{pmac}"]}} on-error={{}}; '
@@ -2879,6 +2886,33 @@ class App(tk.Tk):
         undo = f':do {{remove [find where mac-address="{pmac}" and comment~"^ND: priority binding"]}} on-error={{}}'
         e["autofix"] = "trying"
         self._apply_router_fix(e, "ip_conflict", f"Give {ip} permanently to {name}", cmd, undo, c, mac=pmac, ip=ip)
+
+    def _reserve_lease_holder_async(self, e, ip, umacs, c):
+        """Untagged IP conflict: read the router's DHCP leases off-thread, let nd_ipfix pick the keeper (the
+        MAC the router already leases this IP to), then reserve it. This is the permanent fix that stops the
+        daily recurrence without guessing or touching any camera. Safe: router-only, undoable, regression-checked."""
+        def work():
+            try:
+                with c:
+                    leases = c.leases()
+            except Exception:
+                leases = []
+            try:
+                keeper, reason = IPFIX.choose_keeper(ip, umacs, leases, T.tags_of(self.db))
+            except Exception:
+                keeper, reason = None, ""
+            self.q.put(("call", lambda: self._reserve_lease_holder_done(e, ip, keeper, reason, c)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _reserve_lease_holder_done(self, e, ip, keeper, reason, c):
+        if not keeper or e.get("autofix") or e.get("status") == "fixed":
+            return
+        name = (T.tags_of(self.db).get(keeper) or {}).get("name") or ""
+        cmd, undo = IPFIX.reserve_recipe(ip, keeper, name)
+        e["autofix"] = "trying"
+        self._apply_router_fix(e, "ip_conflict", f"Reserve {ip} for {name or keeper} ({reason})",
+                               cmd, undo, c, mac=keeper, ip=ip)
 
     def _apply_router_fix(self, e, kind, label, cmd, undo_cmd, c, mac=None, ip=None):
         before_ids = {a["id"] for a in self.alert_log.items}

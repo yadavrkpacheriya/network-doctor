@@ -50,3 +50,4 @@ nd_poe.py
 nd_livecheck.py
 nd_access.py
 nd_snmpcfg.py
+nd_ipfix.py
