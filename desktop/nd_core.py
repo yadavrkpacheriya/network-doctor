@@ -1338,6 +1338,23 @@ def scan(subnet, opts, progress, stop):
                         raw["arp"][ip].add(mac)
             except Exception:  # noqa: BLE001
                 continue
+    # Broadcast discovery - works with NO Npcap: ask cameras to announce themselves (ONVIF multicast, XMeye /
+    # Hikvision SADP / Dahua broadcast). These replies cross subnets on one switch, so a camera on any IP
+    # range answers. We list it by its real IP (and MAC when the reply carries one) even without a route to it.
+    if opts.get("l2_discover"):
+        progress(34, "Direct link: asking cameras to announce themselves (ONVIF / XMeye / SADP)...")
+        try:
+            import nd_poecheck as _PC
+            for cam in _PC.discover(timeout=3.0):
+                cip = cam.get("ip")
+                if not cip or cip == lip:
+                    continue
+                mac = (cam.get("mac") or "").upper()
+                if mac:
+                    raw["arp"][cip].add(mac)
+                raw["ping"].setdefault(cip, 1)       # ensure it is listed even when the reply gave no MAC
+        except Exception:  # noqa: BLE001
+            pass
     # The router knows every device that talked in the last minutes, on every network it routes - including
     # phones that sleep and cameras on another range. Read its ARP table over SNMP when it allows it.
     if gw:
