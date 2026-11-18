@@ -33,7 +33,20 @@ class HomeTab:
         tk.Label(b, text="Your network", font=(FONT, 18, "bold"), bg=BG, fg=INK).pack(anchor="w")
         tk.Label(b, textvariable=self.var_head, font=(FONT, 10), bg=BG, fg=MUTE).pack(anchor="w", pady=(0, 10))
 
+        # A banner that only appears when some problem recurs and the app can't fix it - one click packages the
+        # whole thing (issue + history + code) for Claude. No hunting through tabs.
+        self.claude_bar = tk.Frame(b, bg="#fff4e5", highlightbackground="#f0a040", highlightthickness=1,
+                                   padx=14, pady=10)
+        self.var_claude = tk.StringVar(value="")
+        tk.Label(self.claude_bar, textvariable=self.var_claude, font=(FONT, 11, "bold"), bg="#fff4e5",
+                 fg="#b35c00", justify="left", wraplength=620).pack(side="left", anchor="w")
+        tk.Button(self.claude_bar, text="Send to Claude", font=(FONT, 10, "bold"), bg="#b35c00", fg="white",
+                  relief="flat", padx=14, pady=4, cursor="hand2",
+                  command=self._send_to_claude).pack(side="right")
+        # packed/unpacked in refresh() depending on whether anything needs Claude
+
         cards = tk.Frame(b, bg=BG)
+        self.cards_frame = cards
         cards.pack(fill="x")
         self.cards = {}
         for i, (key, title, tab) in enumerate((("devices", "Devices online", "devices"),
@@ -172,8 +185,81 @@ class HomeTab:
         return out
 
     # ------------------------------------------------------------------ drawing
+    def _needs_claude_rows(self):
+        import nd_issues as ISS
+        items = list(getattr(self.app.alert_log, "items", []))
+        return [r for r in ISS.top_issues(items, days=1, n=20) if ISS.needs_claude(r)], items
+
+    def _send_to_claude(self):
+        """One click: package every recurring problem the app couldn't fix (issue + history + code) and put it
+        on the clipboard, save a copy, and open Claude - ready to paste. The app can't post to your Claude
+        account by itself, so the last step is a paste."""
+        import os
+        import webbrowser
+        from tkinter import messagebox
+        import nd_issues as ISS
+        rows, items = self._needs_claude_rows()
+        if not rows:
+            messagebox.showinfo("Send to Claude", "Nothing needs Claude right now - the app is handling "
+                                                  "everything. This button lights up only when a problem "
+                                                  "recurs and the app can't fix it itself.")
+            return
+        code = ""
+        try:
+            import inspect
+            import nd_alerts as AL
+            code = inspect.getsource(AL.recipe)
+        except Exception:  # noqa: BLE001
+            pass
+        parts = ["# Network Doctor - %d recurring issue(s) needing a permanent fix\n" % len(rows)]
+        for r in rows:
+            note = ""
+            try:
+                import nd_brain as BR
+                note = "; ".join(BR.decide(self.app._brain(), r["title"], r["kind"]).get("why", []))
+            except Exception:  # noqa: BLE001
+                pass
+            parts.append(ISS.claude_report(r, items, code=code, brain_note=note))
+            parts.append("\n---\n")
+        pkg = "\n".join(parts)
+        saved = ""
+        try:
+            path = os.path.join(core.DATA_DIR, "issues-for-claude.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(pkg)
+            saved = path
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.app.clipboard_clear()
+            self.app.clipboard_append(pkg)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            webbrowser.open("https://claude.ai/new")
+        except Exception:  # noqa: BLE001
+            pass
+        messagebox.showinfo("Send to Claude",
+                            "Packaged %d issue(s) with full history and code.\n\n"
+                            "- Copied to the clipboard\n"
+                            "%s"
+                            "- Claude opened in your browser\n\n"
+                            "Just paste (Ctrl+V) into Claude and send - it has everything to give a permanent fix."
+                            % (len(rows), ("- Saved: %s\n" % saved) if saved else ""))
+
     def refresh(self):
         app = self.app
+        try:
+            rows, _ = self._needs_claude_rows()
+        except Exception:  # noqa: BLE001
+            rows = []
+        if rows:
+            top = ", ".join((r["title"] or r["kind"]) for r in rows[:3])
+            self.var_claude.set("%d problem(s) keep coming back and need a permanent fix: %s%s"
+                                % (len(rows), top, "..." if len(rows) > 3 else ""))
+            self.claude_bar.pack(fill="x", pady=(0, 10), before=self.cards_frame)
+        else:
+            self.claude_bar.pack_forget()
         on = [d for d in app.devices if d.get("online")]
         meta = (app.raw or {}).get("meta", {}) if app.raw else {}
         new = len(meta.get("new_macs") or [])
