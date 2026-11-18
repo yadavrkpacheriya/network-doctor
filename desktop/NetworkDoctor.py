@@ -2347,7 +2347,9 @@ class App(tk.Tk):
         self.btn_stop.configure(state="normal")
         opts = {"deep": self.var_deep.get(), "fast": self.var_fast.get(),
                 "auto_ranges": self.var_allranges.get(),
-                "l2_discover": self._offline_mode(),   # direct switch / no router: find off-subnet devices by MAC
+                # find off-subnet wired devices by MAC (Layer-2 ARP) when offline OR when 'All IP ranges' is on,
+                # so a camera on a factory-default subnet (e.g. 192.168.1.x) is found even in online mode
+                "l2_discover": self._offline_mode() or self.var_allranges.get(),
                 "router_snmp": self._settings().get("router_snmp") or None,
                 "router_fetch": self._router_fetch if RO.from_settings(self._settings(), self.gw) else None}
         threading.Thread(target=self._worker, args=(net, opts), daemon=True).start()

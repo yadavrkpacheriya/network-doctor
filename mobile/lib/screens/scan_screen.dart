@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
+import '../net/known_devices.dart';
 import '../net/model.dart';
 import '../net/probe.dart';
 import '../net/scanner.dart';
@@ -29,6 +30,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   double _pct = 0;
   String _progress = '';
   ScanResult? _result;
+  int _newCount = 0;
   String _query = '';
   WifiSecurity? _security;
   final List<double?> _gwPing = [];
@@ -156,6 +158,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
     setState(() {
       _scanner = s;
       _pct = 0;
+      _newCount = 0;
       _progress = 'Starting...';
     });
     try {
@@ -172,6 +175,7 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
           }
         },
       );
+      _newCount = await KnownDevices.markAndRemember(r.network, r.devices);
       if (mounted) setState(() => _result = r);
     } on ScanCancelled {
       // stopped by the user
@@ -293,6 +297,35 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
                     'that is why only the router shows up here, not a scan problem'
                 : '${r.devices.length} devices on ${r.network}  ·  scan took ${r.seconds} s',
             style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      if (r != null && _newCount > 0)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.green.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green.shade600),
+            ),
+            child: Row(children: [
+              Icon(Icons.fiber_new, color: Colors.green.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$_newCount new device${_newCount == 1 ? '' : 's'} since the last scan - shown first, marked NEW',
+                  style: TextStyle(color: Colors.green.shade800, fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  await KnownDevices.reset(r.network, r.devices);
+                  if (mounted) setState(() => _newCount = 0);
+                },
+                child: const Text('Mark all known'),
+              ),
+            ]),
           ),
         ),
       if (r != null)

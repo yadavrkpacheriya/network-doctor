@@ -69,6 +69,7 @@ class Device {
   double? upBps;
   List<String> notes = [];
   int? webPortHint;
+  bool isNew = false; // first time this MAC is seen on this network (set after a scan, see KnownDevices)
 
   String get displayName => name.isNotEmpty ? name : (isSelf ? 'This phone' : '-');
 

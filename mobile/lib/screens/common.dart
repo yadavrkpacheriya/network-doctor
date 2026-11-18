@@ -100,6 +100,10 @@ class DeviceList extends StatelessWidget {
     for (final d in shown) {
       groups.putIfAbsent(d.category, () => []).add(d);
     }
+    // show freshly-connected devices first inside each group so a new camera/PC is easy to spot
+    for (final list in groups.values) {
+      list.sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0));
+    }
     final cats = Cat.order.where(groups.containsKey).toList();
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -138,18 +142,32 @@ class DeviceTile extends StatelessWidget {
       if (d.downBps != null) '↓ ${fmtRate(d.downBps)}  ↑ ${fmtRate(d.upBps)}',
       if (!d.fromPc && d.services.isNotEmpty) d.services.take(3).join(', '),
     ];
-    return ListTile(
-      dense: true,
-      enabled: d.online,
-      leading: CircleAvatar(
-        radius: 16,
-        backgroundColor: d.online ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).disabledColor,
-        child: Icon(catIcon(d.category), size: 18),
+    final newBadge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(color: Colors.green.shade600, borderRadius: BorderRadius.circular(4)),
+      child: const Text('NEW', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+    return Container(
+      // a green tint + left bar makes a freshly-connected device stand out at a glance
+      color: d.isNew ? Colors.green.withValues(alpha: 0.10) : null,
+      child: ListTile(
+        dense: true,
+        enabled: d.online,
+        leading: CircleAvatar(
+          radius: 16,
+          backgroundColor: d.isNew
+              ? Colors.green.shade600
+              : (d.online ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).disabledColor),
+          child: Icon(catIcon(d.category), size: 18, color: d.isNew ? Colors.white : null),
+        ),
+        title: Row(children: [
+          Flexible(child: Text(d.displayName, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          if (d.isNew) ...[const SizedBox(width: 8), newBadge],
+        ]),
+        subtitle: Text(sub.join('  ·  '), maxLines: 2, overflow: TextOverflow.ellipsis),
+        trailing: d.safetyNotes.isNotEmpty ? Icon(Icons.warning_amber, color: Colors.orange.shade800) : null,
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => DeviceScreen(device: d))),
       ),
-      title: Text(d.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(sub.join('  ·  '), maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: d.safetyNotes.isNotEmpty ? Icon(Icons.warning_amber, color: Colors.orange.shade800) : null,
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => DeviceScreen(device: d))),
     );
   }
 }
