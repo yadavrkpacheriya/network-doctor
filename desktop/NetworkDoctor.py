@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.18"
+VERSION = "4.19"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1094,6 +1094,7 @@ class App(tk.Tk):
              ("Edit IP / reboot (direct)", self._camera_fix),
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Cameras in this NVR / DVR", self._nvr_cameras),
+             ("Check NVRs for duplicate cameras", self._nvr_dupes),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
@@ -1184,6 +1185,102 @@ class App(tk.Tk):
                 status.set(msg)
             self.q.put(("call", show))
 
+        threading.Thread(target=work, daemon=True).start()
+
+    def _nvr_dupes(self):
+        """Read every NVR/DVR on the network and find cameras added twice: within one recorder (offer to switch
+        the duplicate channel off - confirmed) or across two recorders (notify only - deleting the wrong copy
+        would lose a feed). Read-only except the confirmed channel-off."""
+        import nd_dvrip as DV
+        import nd_nvrdup as NDUP
+        nvrs = [d for d in (getattr(self, "devices", []) or [])
+                if d.get("ip") and core.CAT_CAM in str(d.get("category", "")) and core.cctv_role(d) == "nvr"]
+        if not nvrs:
+            messagebox.showinfo(APP, "No NVR/DVR found on the network yet. Run a Scan first.")
+            return
+        win = tk.Toplevel(self)
+        win.title("Duplicate cameras across NVRs")
+        win.transient(self)
+        fr = ttk.Frame(win, padding=12)
+        fr.pack(fill="both", expand=True)
+        status = tk.StringVar(value="Reading %d recorder(s)..." % len(nvrs))
+        ttk.Label(fr, textvariable=status, foreground="#0f766e", wraplength=560, justify="left").pack(anchor="w")
+        body = ttk.Frame(fr)
+        body.pack(fill="both", expand=True, pady=(8, 0))
+
+        def work():
+            recs = []
+            for d in nvrs:
+                cred = self._xmeye_cred(d["ip"])
+                if not cred:
+                    continue
+                try:
+                    chans = DV.list_channels(d["ip"], cred[0], cred[1])
+                except Exception:  # noqa: BLE001
+                    continue
+                recs.append({"nvr": d["ip"], "name": d.get("name") or d["ip"], "channels": chans})
+            dups = NDUP.find_duplicates(recs)
+            self.q.put(("call", lambda: show(recs, dups)))
+
+        def show(recs, dups):
+            for w in body.winfo_children():
+                w.destroy()
+            within, cross = dups["within"], dups["cross"]
+            if not recs:
+                status.set("Couldn't read any recorder - add the NVR/DVR login in Setup > Camera/NVR/DVR logins.")
+                return
+            if not within and not cross:
+                status.set("Read %d recorder(s). No duplicate cameras - every camera is on exactly one channel "
+                           "of one NVR." % len(recs))
+                return
+            status.set("Read %d recorder(s): %d duplicate within an NVR, %d camera(s) on more than one NVR."
+                       % (len(recs), len(within), len(cross)))
+            if cross:
+                self._record_alert("warning", "%d camera(s) recorded by more than one NVR: %s"
+                                   % (len(cross), ", ".join(x["camera"] for x in cross[:6])), "NVR check")
+                ttk.Label(body, text="On more than one NVR (notify only - you choose which to keep):",
+                          font=("", 9, "bold")).pack(anchor="w", pady=(4, 2))
+                for x in cross:
+                    where = "  +  ".join("%s ch%s" % (o["name"], o["chan"]) for o in x["on"])
+                    ttk.Label(body, wraplength=560, justify="left",
+                              text="  %s  ->  %s" % (x["camera"], where)).pack(anchor="w")
+            if within:
+                ttk.Label(body, text="Same camera twice in ONE NVR (safe to switch the extra channel off):",
+                          font=("", 9, "bold")).pack(anchor="w", pady=(10, 2))
+                for x in within:
+                    row = ttk.Frame(body)
+                    row.pack(fill="x", pady=1)
+                    extra = x["channels"][1]            # keep the first channel, drop the later one
+                    ttk.Label(row, wraplength=380, justify="left",
+                              text="  %s on %s channels %s" % (x["camera"], x["name"],
+                                                               ", ".join(map(str, x["channels"])))).pack(side="left")
+                    ttk.Button(row, text="Switch off ch %d" % extra,
+                               command=lambda nv=x["nvr"], nm=x["name"], ch=extra, cam=x["camera"]:
+                               self._nvr_drop_dup(nv, nm, ch, cam)).pack(side="right")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _nvr_drop_dup(self, nvr_ip, nvr_name, chan, cam):
+        if not messagebox.askyesno(APP, "Switch OFF channel %d on '%s'?\n\nThat channel is a DUPLICATE of camera "
+                                   "%s (already on another channel of the same NVR). The channel slot stays - it "
+                                   "just stops pulling this camera, and you can turn it back on in the NVR. "
+                                   "Continue?" % (chan, nvr_name, cam)):
+            return
+        cred = self._xmeye_cred(nvr_ip)
+        if not cred:
+            messagebox.showinfo(APP, "No working login for this NVR.")
+            return
+
+        def work():
+            try:
+                ok = DV.disable_channel(nvr_ip, cred[0], cred[1], chan - 1)   # chan is 1-based
+                msg = ("Channel %d switched off on %s." % (chan, nvr_name) if ok
+                       else "Couldn't change channel %d on %s (its firmware didn't accept it)." % (chan, nvr_name))
+            except Exception as e:  # noqa: BLE001
+                msg = "Couldn't switch off channel %d: %s" % (chan, e)
+            self.q.put(("call", lambda: messagebox.showinfo(APP, msg)))
+
+        import nd_dvrip as DV
         threading.Thread(target=work, daemon=True).start()
 
     def _camera_fix(self):

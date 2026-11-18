@@ -194,6 +194,46 @@ def _ip_in(node):
     return ""
 
 
+def disable_channel(ip, user, pw, chan_index, port=PORT, timeout=6, connect=socket.create_connection):
+    """Turn OFF one digital channel on a recorder (the reversible way to remove a duplicate - the channel's
+    slot stays, it just stops pulling that camera). chan_index is 0-based. Returns True if it wrote the change.
+    Best-effort: the config layout varies by firmware, so it finds the channel list, clears its Enable, and
+    writes it back; raises DvrError if it can't read/find the channel."""
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital"):
+            try:
+                dig = c.get(node)
+            except DvrError:
+                continue
+            arr = _channel_list(dig)
+            if not arr or chan_index >= len(arr):
+                continue
+            entry = arr[chan_index]
+            if not _set_enable_off(entry):
+                continue
+            c.set(node, dig)
+            return True
+        raise DvrError("could not find a changeable channel %d on this recorder" % (chan_index + 1))
+
+
+def _set_enable_off(node):
+    """Set the first Enable-like flag found inside a channel entry to 0/False. Returns True if one was set."""
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            if k in ("Enable", "enable"):
+                node[k] = False
+                return True
+        for v in node.values():
+            if _set_enable_off(v):
+                return True
+    elif isinstance(node, list):
+        for v in node:
+            if _set_enable_off(v):
+                return True
+    return False
+
+
 def _channel_list(node):
     """Find the per-channel list inside a digital-channel config, however it's wrapped: the node may be the
     list itself, or a dict holding the list under some key (DigitalChannel / Channels / ...). Returns [] if none."""
