@@ -58,3 +58,4 @@ nd_camhealth.py
 nd_camreg.py
 nd_secscan.py
 nd_nvrdup.py
+nd_issues.py

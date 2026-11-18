@@ -1876,6 +1876,7 @@ class AlertsTab:
         ttk.Button(act, text="Re-open", command=lambda: self.mark("open")).pack(side="left")
         ttk.Button(act, text="Copy", command=self.copy).pack(side="left", padx=6)
         ttk.Button(act, text="Auto-fixes...", command=self.open_autofixes).pack(side="left", padx=6)
+        ttk.Button(act, text="Top daily issues", command=self.open_daily_issues).pack(side="left", padx=6)
         ttk.Button(act, text="Clear all alerts", command=self.app.clear_all_alerts).pack(side="left", padx=6)
         ttk.Label(act, text="Double-click an alert to troubleshoot it", foreground="#667085").pack(side="left", padx=8)
         cols = ("prio", "device", "alert", "fix", "times", "status")
@@ -1990,6 +1991,89 @@ class AlertsTab:
 
     def open_autofixes(self):
         AutoFixWindow(self.app)
+
+    def open_daily_issues(self):
+        """Top recurring problems of the last 24 h (same kind + device, seen most often). The app keeps
+        auto-fixing some; the ones it can't are flagged 'needs Claude' with a one-click package - the issue,
+        its history, the app's reasoning and the exact code - to hand to Claude for a permanent root-cause fix."""
+        import nd_issues as ISS
+        app = self.app
+        items = list(getattr(app.alert_log, "items", []))
+        rows = ISS.top_issues(items, days=1, n=10)
+        w = tk.Toplevel(app)
+        w.title("Top daily issues")
+        w.geometry("900x460")
+        w.transient(app)
+        top = ttk.Frame(w, padding=10)
+        top.pack(fill="both", expand=True)
+        rec = [r for r in rows if ISS.needs_claude(r)]
+        ttk.Label(top, justify="left", foreground="#0f766e", wraplength=860,
+                  text=("Most frequent problems in the last 24 hours. %d need a permanent fix (recurring and the "
+                        "app couldn't solve them) - select one and 'Copy for Claude' to get the full issue + code "
+                        "to paste to Claude." % len(rec))).pack(anchor="w")
+        cols = ("device", "count", "status", "claude")
+        tvw = UI["make_tree"](top, cols, ("Device", "Times today", "Status", "Needs Claude"),
+                              (150, 90, 110, 100), first=("Issue", 300), height=12, sr=True)
+        rowmap = {}
+        for r in rows:
+            iid = tvw.insert("", "end", text=r["title"] or r["kind"],
+                             tags=("new",) if ISS.needs_claude(r) else (),
+                             values=(r["ip"] or "(network)", r["count"], r["status"],
+                                     "YES" if ISS.needs_claude(r) else "-"))
+            rowmap[iid] = r
+
+        def code_for(kind):
+            try:
+                import inspect
+                import nd_alerts as AL
+                return inspect.getsource(AL.recipe)
+            except Exception:  # noqa: BLE001
+                return ""
+
+        def copy_for_claude():
+            sel = tvw.selection()
+            r = rowmap.get(sel[0]) if sel else None
+            if not r:
+                messagebox.showinfo("Top daily issues", "Select an issue first.")
+                return
+            note = ""
+            try:
+                import nd_brain as BR
+                note = "; ".join(BR.decide(app._brain(), r["title"], r["kind"]).get("why", []))
+            except Exception:  # noqa: BLE001
+                pass
+            md = ISS.claude_report(r, items, code=code_for(r["kind"]), brain_note=note)
+            try:
+                app.clipboard_clear()
+                app.clipboard_append(md)
+                messagebox.showinfo("Top daily issues",
+                                    "Copied the full issue + history + code to the clipboard.\n\nPaste it to "
+                                    "Claude (in this app's chat or claude.ai) and ask for a permanent fix.")
+            except Exception:  # noqa: BLE001
+                messagebox.showinfo("Top daily issues", md[:1500])
+
+        def save_report():
+            path = filedialog.asksaveasfilename(defaultextension=".md",
+                                                filetypes=[("Markdown", "*.md"), ("Text", "*.txt")],
+                                                initialfile="daily-issues.md")
+            if not path:
+                return
+            parts = ["# Top daily issues (last 24 h)\n"]
+            for i, r in enumerate(rows, 1):
+                parts.append("%d. **%s** - %s - %d times - %s%s" %
+                             (i, r["title"] or r["kind"], r["ip"] or "(network)", r["count"], r["status"],
+                              "  **[needs Claude]**" if ISS.needs_claude(r) else ""))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(parts))
+            messagebox.showinfo("Top daily issues", "Saved: " + path)
+
+        bar = ttk.Frame(top)
+        bar.pack(fill="x", pady=(8, 0))
+        ttk.Button(bar, text="Copy for Claude", command=copy_for_claude).pack(side="left")
+        ttk.Button(bar, text="Save report", command=save_report).pack(side="left", padx=6)
+        ttk.Button(bar, text="Close", command=w.destroy).pack(side="right")
+        if not rows:
+            ttk.Label(top, text="No issues logged in the last 24 hours.").pack(anchor="w", pady=8)
 
 
 class HistoryTab:
