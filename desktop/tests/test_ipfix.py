@@ -126,6 +126,18 @@ class ReserveAgainstFakeRouter(unittest.TestCase):
         self.assertIn("192.168.1.134", g)
         self.assertIn("192.168.1.250", g)
 
+    def test_gen_unique_mac_is_valid_local_and_deterministic(self):
+        m1 = F.gen_unique_mac("192.168.0.92")
+        m2 = F.gen_unique_mac("192.168.0.92")
+        self.assertEqual(m1, m2)                          # idempotent
+        first = int(m1.split(":")[0], 16)
+        self.assertTrue(first & 0x02)                     # locally administered
+        self.assertFalse(first & 0x01)                    # unicast
+        self.assertEqual(len(m1.split(":")), 6)
+
+    def test_gen_unique_mac_differs_per_seed(self):
+        self.assertNotEqual(F.gen_unique_mac("192.168.0.92"), F.gen_unique_mac("192.168.0.123"))
+
 
 if __name__ == "__main__":
     unittest.main()

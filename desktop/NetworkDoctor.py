@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.5"
+VERSION = "4.6"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1139,12 +1139,21 @@ class App(tk.Tk):
                 return "That IP is already used by another device - pick a free one from the list above."
             return DV.set_static_ip(ip, cred[0], cred[1], new)
 
+        def set_mac(cred):
+            mac_now = next((d.get("mac") for d in (getattr(self, "devices", []) or [])
+                            if d.get("ip") == ip and d.get("mac")), ip)
+            r = DV.set_mac(ip, cred[0], cred[1], IPFIX.gen_unique_mac(mac_now))
+            return r.get("note") if isinstance(r, dict) else str(r)
+
         ttk.Button(frm, text="Set fixed IP", command=lambda: run(set_ip, "Setting IP")).grid(
             row=3, column=0, pady=6, padx=2)
         ttk.Button(frm, text="Switch to DHCP", command=lambda: run(
             lambda c: DV.set_dhcp(ip, c[0], c[1]), "Switching to DHCP")).grid(row=3, column=1, pady=6, padx=2)
         ttk.Button(frm, text="Reboot", command=lambda: run(
             lambda c: DV.reboot(ip, c[0], c[1]) or "reboot sent", "Rebooting")).grid(row=3, column=2, pady=6, padx=2)
+        ttk.Button(frm, text="Set unique MAC (if supported)",
+                   command=lambda: run(set_mac, "Setting MAC")).grid(row=6, column=0, columnspan=2, pady=(2, 0),
+                                                                     padx=2, sticky="w")
         # Reach a camera on another subnet (can't open in browser / fixes fail): borrow a temp IP on its range.
         off = IPFIX.base24(ip) and IPFIX.base24(ip) != IPFIX.base24(self.lip or "")
         ttk.Button(frm, text=("Reach / open (other subnet)" if off else "Open in browser"),

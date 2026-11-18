@@ -49,6 +49,18 @@ def base24(ip):
     return ".".join(p[:3]) if len(p) == 4 else ""
 
 
+def gen_unique_mac(seed):
+    """A valid, unique, locally-administered unicast MAC for a camera whose placeholder MAC we want to replace.
+    Deterministic from `seed` (its IP or old MAC), so re-running gives the same address - idempotent. The first
+    octet has the locally-administered bit set and the multicast bit clear, so it is a legal device MAC that
+    won't collide with a real manufacturer OUI."""
+    import hashlib
+    h = hashlib.sha1(("ND-cam-" + str(seed)).encode()).digest()
+    o = list(h[:6])
+    o[0] = (o[0] & 0xFE) | 0x02           # locally administered (0x02), unicast (clear 0x01)
+    return ":".join("%02X" % b for b in o)
+
+
 # --------------------------------------------------------------- reach an off-subnet camera
 def reach_ip(cam_ip, used=None):
     """Pick a free address on the CAMERA's /24 for the PC to borrow temporarily, so it can reach a camera on

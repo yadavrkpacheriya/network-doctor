@@ -118,6 +118,31 @@ class Xmeye(unittest.TestCase):
         with self.assertRaises(DV.DvrError):
             DV.set_static_ip("192.168.1.64", "admin", "pw", "999.1.1.1", connect=dev.connect())
 
+    def test_set_mac_writes_when_a_mac_field_exists(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        dev.config["NetWork.NetCommon"] = {"HostIP": "192.168.0.92", "MAC": "A0:00:00:01:7F:F0"}
+        r = DV.set_mac("192.168.0.92", "admin", "pw", "02:11:22:33:44:55", connect=dev.connect())
+        self.assertTrue(r["ok"])
+        self.assertEqual(dev.config["NetWork.NetCommon"]["MAC"], "02:11:22:33:44:55")
+
+    def test_set_mac_keeps_dash_format(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        dev.config["NetWork.NetCommon"] = {"MAC": "A0-00-00-01-7F-F0"}
+        DV.set_mac("192.168.0.92", "admin", "pw", "02:11:22:33:44:55", connect=dev.connect())
+        self.assertEqual(dev.config["NetWork.NetCommon"]["MAC"], "02-11-22-33-44-55")
+
+    def test_set_mac_honest_when_no_mac_field(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        dev.config["NetWork.NetCommon"] = {"HostIP": "192.168.0.92"}      # no MAC setting - fixed in firmware
+        r = DV.set_mac("192.168.0.92", "admin", "pw", "02:11:22:33:44:55", connect=dev.connect())
+        self.assertFalse(r["ok"])
+        self.assertIn("fixed in firmware", r["note"])
+
+    def test_set_mac_rejects_bad_mac(self):
+        dev = FakeXmeye(user="admin", pw="pw")
+        with self.assertRaises(DV.DvrError):
+            DV.set_mac("192.168.0.92", "admin", "pw", "not-a-mac", connect=dev.connect())
+
 
 # =============================================================== fake HTTP cameras over nd_camline setters
 class HttpCameras(unittest.TestCase):

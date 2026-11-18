@@ -9,6 +9,7 @@ ending in "\\n\\0". Every request is answered by ONE reply; "Ret": 100 means don
 """
 import hashlib
 import json
+import re
 import socket
 import string
 import struct
@@ -231,6 +232,49 @@ def set_static_ip(ip, user, pw, new_ip, mask="255.255.255.0", gw="", port=PORT, 
             c.reboot()
             return "set fixed IP %s; the camera is restarting (reconnect to it at the new address)" % new_ip
         return "set fixed IP %s" % new_ip
+
+
+_MAC_FIELD_NAMES = ("mac", "macaddress", "physicaladdress", "hostmac", "ethernetaddress")
+
+
+def _norm_mac(m):
+    """'a0-00-00-01-7f-f0' / 'a00000017ff0' -> 'A0:00:00:01:7F:F0'. Raises on anything not 6 bytes."""
+    hexd = re.sub(r"[^0-9A-Fa-f]", "", str(m or ""))
+    if len(hexd) != 12:
+        raise DvrError("'%s' is not a valid MAC address" % m)
+    return ":".join(hexd[i:i + 2].upper() for i in range(0, 12, 2))
+
+
+def set_mac(ip, user, pw, new_mac, port=PORT, timeout=6, connect=socket.create_connection):
+    """Best-effort: give a camera a unique MAC where its firmware exposes a writable MAC field (many cheap
+    A0:00:00 cameras do NOT - their MAC is fixed in firmware). Returns a dict:
+    {"ok": bool, "note": str, "old": ..., "new": ...}. Never flashes firmware; only writes the network config.
+    On cameras without a MAC setting it changes nothing and says so, so a unique fixed IP is the real fix."""
+    nm = _norm_mac(new_mac)
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        common = c.get("NetWork.NetCommon")
+        if not isinstance(common, dict):
+            raise DvrError("cannot read the camera's network settings")
+        key = next((k for k in common if k.lower() in _MAC_FIELD_NAMES), "")
+        if not key:
+            return {"ok": False, "old": "", "new": nm,
+                    "note": "this camera has no changeable MAC setting - its MAC is fixed in firmware, so a "
+                            "unique fixed IP is the permanent fix (already set above)."}
+        old = common[key]
+        # keep the camera's own separator style (colon / dash / none)
+        if isinstance(old, str) and "-" in old:
+            common[key] = nm.replace(":", "-")
+        elif isinstance(old, str) and ":" not in old and "-" not in old:
+            common[key] = nm.replace(":", "")
+        else:
+            common[key] = nm
+        restart = c.set("NetWork.NetCommon", common)
+        if restart:
+            c.reboot()
+        return {"ok": True, "old": old, "new": nm,
+                "note": "sent unique MAC %s%s - re-scan to confirm the camera took it (some models ignore it)"
+                        % (nm, "; camera is restarting" if restart else "")}
 
 
 def _replace_ip(node, old, new, hits):
