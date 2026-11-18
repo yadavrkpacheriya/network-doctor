@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.6"
+VERSION = "4.7"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -685,11 +685,11 @@ class App(tk.Tk):
                          ("Tag...", lambda: self.act("label")), ("Show on map", lambda: self.act("map")),
                          ("Commands", lambda: self.act("cmds"))):
             ttk.Button(act, text=txt, command=cmd).pack(side="left", padx=3)
-        cols = ("status", "dept", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
-        heads = ("Status", "Department", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services",
+        cols = ("sr", "status", "dept", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
+        heads = ("Sr", "Status", "Department", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services",
                  "Why this category", "Notes")
-        widths = (100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
-        self.tv = make_tree(f, cols, heads, widths, first=("Name", 210), selectmode="extended")
+        widths = (45, 100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
+        self.tv = make_tree(f, cols, heads, widths, first=("Name", 300), selectmode="extended")
         ttk.Label(sf2, text="   Ctrl / Shift + click several devices, then Tag... to tag them all at once",
                   foreground="#667085").pack(side="left", padx=8)
         self.tv.bind("<Button-3>", self._menu)
@@ -2496,14 +2496,15 @@ class App(tk.Tk):
             if flat:
                 parent = ""
             else:
+                # count first and short, so it is never cut off by the column width
                 parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
-                    f"   -   {n_recent} new / changed this week (green)" if n_recent else "") + (
-                    f"   -   {n_unchk} not read by the Login sweep yet (blue)" if n_unchk else "")
-                    + ("   - listed first" if n_recent or n_unchk else ""))
+                    f"  -  {n_recent} new" if n_recent else "") + (f"  -  {n_unchk} unchecked" if n_unchk else ""))
             if (n_recent or n_unchk) and not self.var_sort_bw.get() and not flat:
                 # stable: the rest keeps its order
                 ds.sort(key=lambda d: not ((d.get("recent") and d["online"]) or d.get("mac") in unchecked))
+            sr = 0
             for d in ds:
+                sr += 1
                 svc = ", ".join(core.PORTS.get(p, str(p)) for p in d["ports"])
                 up = d.get("upnp") or {}
                 if up.get("modelName"):
@@ -2523,13 +2524,21 @@ class App(tk.Tk):
                 recent = d.get("recent") if d["online"] else ""
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
                        or ("new" if (d.get("mac") in new_macs or recent) else ""))
-                name = (d["name"] or "-") + (f"  ({recent})" if recent else "  (new)" if tag == "new" else "")
+                # keep the NAME clean and fully visible - a short mark only; the full note goes to Notes below
+                short = ("new" if recent.startswith("new since") else "moved" if recent.startswith("was under")
+                         else "") if recent else ("new" if tag == "new" else "")
+                name = (d["name"] or "-") + (f"  ({short})" if short else "")
+                notes = list(d["notes"])
+                if recent:
+                    notes.insert(0, recent)            # full "new since .." / "was under '..' until .." lives here
                 if not tag and d.get("mac") in unchecked:
-                    tag, name = "unchecked", name + "  (not read by the Login sweep yet)"
+                    tag = "unchecked"
+                    notes.append("not read by the Login sweep yet")
                 iid = tv.insert(parent, "end", text=name, tags=(tag,) if tag else (),
-                                values=(d["status"], d.get("dept", ""), ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
+                                values=(sr, d["status"], d.get("dept", ""),
+                                        ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
                                         d["mac"] or "-",
-                                        d["vendor"], bw, svc, d["reason"], "; ".join(d["notes"])))
+                                        d["vendor"], bw, svc, d["reason"], "; ".join(notes)))
                 self.row_dev[iid] = d
         tree_resort(tv)        # a column the user sorted by (IP, name...) stays sorted after every redraw
         for k in getattr(self, "_cat", {}):   # keep the Cameras / Computers pages in sync with each scan
