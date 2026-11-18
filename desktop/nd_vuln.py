@@ -87,8 +87,17 @@ def llmnr_probe(lip, timeout=2.0):
     return responders
 
 
-def assess(devices, db, mon=None, lip="", active=True, progress=lambda p, t: None):
-    """All findings for the current network, most serious first. active=True does the light TLS / LLMNR probes."""
+def assess(devices, db, mon=None, lip="", active=True, progress=lambda p, t: None, cam_login=None):
+    """All findings for the current network, most serious first. active=True does the light TLS / LLMNR probes
+    and, for devices that can't be locked out (cameras, recorders, routers, printers), really tries the common
+    factory logins so 'default password' is a confirmed fact, not a guess. PCs and phones are never tried -
+    guessing their passwords could lock out a real Windows/AD account - so they are judged on exposure only.
+    cam_login: injectable (ip, defaults, ports=, ssl_on=) -> (user,pw)|None, defaults to the real HTTP tester."""
+    import nd_camhealth as _H
+    import nd_secscan as _SEC
+    if cam_login is None:
+        import nd_camline as _CL
+        cam_login = _CL.default_login_http
     out = []
     alive = [d for d in devices if d.get("online")]
     exposed = mon.traffic.all_exposed() if (mon and getattr(mon, "traffic", None)) else {}
@@ -113,11 +122,34 @@ def assess(devices, db, mon=None, lip="", active=True, progress=lambda p, t: Non
                 sev = "warning" if p in (3389,) else "critical" if p in (23, 21) else "warning"
                 out.append(_f(sev, f"{nm} is open", name, f"{nm} (port {p}) is reachable.", fix))
         brand = next((b for b in DEFAULT_LOGINS if b in vend or b in web), None)
-        if brand and (80 in ports or 8080 in ports or 443 in ports or 37777 in ports or 34567 in ports):
-            out.append(_f("warning", "May still use its default password", name,
-                          f"This looks like a {brand.title()} device. Default logins ({DEFAULT_LOGINS[brand]}) are "
-                          "the first thing attackers try.",
-                          "Log in and set a strong, unique password; update the firmware."))
+        http_ports = [p for p in (80, 8080, 8000, 443, 8443) if p in ports]
+        cat = d.get("category", "")
+        if brand and (http_ports or 37777 in ports or 34567 in ports):
+            tested = False
+            if active and _SEC.may_test_default(cat) and http_ports:
+                # really try the factory logins - safe on these device kinds (they don't lock out)
+                try:
+                    hit = cam_login(ip, list(_H.COMMON_DEFAULTS), ports=tuple(http_ports),
+                                    ssl_on=http_ports[0] in (443, 8443))
+                except Exception:  # noqa: BLE001
+                    hit = None
+                    tested = False
+                else:
+                    tested = True
+                if hit:
+                    out.append(_f("critical", "Default password works", name,
+                                  f"The factory login {hit[0]}/{hit[1] or '(blank)'} opened this {brand.title()} "
+                                  "device - anyone on the network can log in.",
+                                  "Log in and set a strong, unique password now; update the firmware."))
+                # tested and no hit -> confirmed NOT default, so say nothing (no false warning)
+            if not tested:
+                # couldn't verify (PC/phone, no web port, or passive run) - a soft reminder, not a false alarm
+                out.append(_f("warning", "May still use its default password", name,
+                              f"This looks like a {brand.title()} device. Default logins ({DEFAULT_LOGINS[brand]}) "
+                              "are the first thing attackers try (not verified)."
+                              + ("" if _SEC.may_test_default(cat) else
+                                 " Not tested automatically to avoid locking out a real account."),
+                              "Log in and set a strong, unique password; update the firmware."))
         if 445 in ports and re.search(r"\bsmb(v)?1\b", web):
             out.append(_f("critical", "Old file sharing (SMBv1)", name,
                           "SMBv1 is the protocol WannaCry spread through.",
