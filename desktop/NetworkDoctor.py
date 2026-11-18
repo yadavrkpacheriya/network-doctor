@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.15"
+VERSION = "4.16"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1007,13 +1007,22 @@ class App(tk.Tk):
         tv.delete(*tv.get_children())
         info["rows"] = {}
         devs = [d for d in self.devices if d.get("category") in info["cats"]]
-        for d in sorted(devs, key=lambda x: core.ip_key(x.get("ip", ""))):
-            name = d.get("name") or core.auto_name(d)
+
+        def is_new(d):
+            return bool(d.get("recent")) and d.get("online")
+        # newest first, then by IP - so a camera you just added jumps to the top with a NEW mark
+        for d in sorted(devs, key=lambda x: (not is_new(x), core.ip_key(x.get("ip", "")))):
+            new = is_new(d)
+            name = (d.get("name") or core.auto_name(d)) + ("  (NEW)" if new else "")
             kind = "DVR / NVR" if core.cctv_role(d) == "nvr" else core.AUTO_KIND.get(d.get("category"), "")
             status = "online" if d.get("online") else "offline"
-            note = "; ".join(d.get("notes") or [])[:70]
-            iid = tv.insert("", "end", text=name, values=(d.get("ip", ""), d.get("mac", ""), d.get("vendor", ""),
-                                                           kind, status, note))
+            notes = list(d.get("notes") or [])
+            if d.get("recent"):
+                notes.insert(0, d["recent"])          # "new since .." shown in Notes
+            note = "; ".join(notes)[:70]
+            iid = tv.insert("", "end", text=name, tags=("new",) if new else (),
+                            values=(d.get("ip", ""), d.get("mac", ""), d.get("vendor", ""),
+                                    kind, status, note))
             info["rows"][iid] = d
 
     def _cat_open_web(self, key):
