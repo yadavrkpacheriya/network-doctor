@@ -2031,11 +2031,8 @@ def analyse(raw, devices, db):
                        "device name (phones, TVs, laptops)"))
 
     # ---- info
-    rnd = [d for d in online if d["random"]]
-    if rnd:
-        add("info", f"{len(rnd)} device(s) use randomized MACs",
-            "These change MAC per network or over time, so other scanners show them as new devices again and again.",
-            "For office laptops switch random MAC off for the office Wi-Fi.", [label_of(d) for d in rnd])
+    # (Randomized MACs are no longer reported: every modern phone uses a private Wi-Fi MAC by design - it is
+    #  normal, nothing to fix, and it only filled the Problems list every scan.)
     unk = [d for d in online if d["category"] == CAT_UNK]
     if unk:
         add("info", f"{len(unk)} device(s) could not be identified", "No name, no known brand, no open services.",
@@ -2053,17 +2050,24 @@ def analyse(raw, devices, db):
     # drops off the network is silent until someone notices the total device count is lower.
     online_macs_now = {d["mac"] for d in online if d["mac"]}
     missing_macs = (set(db.get("last_online_macs") or []) - online_macs_now) if db["scans"] else set()
-    missingd = [d for d in devices if d.get("mac") in missing_macs]
+    # Only infrastructure that should NOT just vanish counts here (cameras, NVR/DVR, network gear, router,
+    # printers, biometric). Phones roam off Wi-Fi and PCs/TVs sleep all the time - flagging those every scan
+    # was pure noise, so they are left out and this stops repeating for normal churn.
+    infra_missing = {mac for mac in missing_macs
+                     if (db["devices"].get(mac) or {}).get("category") in FIXED_MAC_CATS}
+    missingd = [d for d in devices if d.get("mac") in infra_missing]
     if missingd:
         # the offline stub build_devices() makes for these carries category CAT_OFF ("not online now"), not
         # what the device actually was - look that up from its history so "2 missing" says "2 CCTV cameras",
         # not "2 Not online now".
-        by = breakdown_text([{"category": (db["devices"].get(mac) or {}).get("category", "")} for mac in missing_macs])
-        add("warning", f"{len(missingd)} device(s) stopped answering since the last scan" + (f" ({by})" if by else ""),
-            "Answered in the previous scan but not this one - could be powered off, unplugged, moved out of "
-            "range, or a real fault (a camera/NVR losing power is common; a PC or phone asleep is normal).",
-            "Check the ones that matter first (cameras, NVRs, servers). The 'Devices' tab filter 'Stopped "
-            "answering since last scan' lists exactly these.", [label_of(d) for d in missingd])
+        by = breakdown_text([{"category": (db["devices"].get(mac) or {}).get("category", "")} for mac in infra_missing])
+        add("warning", f"{len(missingd)} camera/network device(s) stopped answering since the last scan"
+            + (f" ({by})" if by else ""),
+            "A camera, recorder, switch, router or printer that answered in the previous scan is silent now - "
+            "powered off, unplugged, or a real fault (a camera/NVR losing power is common). Phones and PCs are "
+            "not listed here because they normally sleep or leave Wi-Fi.",
+            "Check its power and cable. The 'Devices' tab filter 'Stopped answering since last scan' lists these.",
+            [label_of(d) for d in missingd])
     order = {"critical": 0, "warning": 1, "info": 2}
     issues.sort(key=lambda i: order[i["sev"]])
     return issues, checks

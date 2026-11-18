@@ -90,9 +90,20 @@ class MissingDeviceIssue(unittest.TestCase):
         issues, _ = core.analyse(raw_with(), devices, db)
         missing = [i for i in issues if "stopped answering" in i["title"]]
         self.assertEqual(len(missing), 1)
-        self.assertIn("2 device(s) stopped answering since the last scan", missing[0]["title"])
+        self.assertIn("2 camera/network device(s) stopped answering since the last scan", missing[0]["title"])
         self.assertIn("CCTV cameras", missing[0]["title"])
         self.assertEqual(len(missing[0]["items"]), 2)
+
+    def test_phones_and_pcs_dropping_off_do_not_flag(self):
+        # normal churn: a phone leaves Wi-Fi, a PC sleeps - neither should raise a 'stopped answering' problem
+        db = fresh_db(scans=3, last_online_macs=["ph1", "pc1"])
+        db["devices"] = {
+            "ph1": {"category": core.CAT_PHONE, "names": ["iPhone"], "ip": "192.168.0.40", "vendor": "Apple"},
+            "pc1": {"category": core.CAT_PC, "names": ["Desk PC"], "ip": "192.168.0.21", "vendor": "Dell"},
+        }
+        stubs = [dev("ph1", core.CAT_OFF, online=False), dev("pc1", core.CAT_OFF, online=False)]
+        issues, _ = core.analyse(raw_with(), stubs, db)
+        self.assertFalse([i for i in issues if "stopped answering" in i["title"]])
 
     def test_no_issue_when_nothing_dropped_off(self):
         db = fresh_db(scans=2, last_online_macs=["pc1"])
