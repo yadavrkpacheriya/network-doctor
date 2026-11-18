@@ -90,14 +90,21 @@ class Device {
     return Uri.parse('${https ? 'https' : 'http'}://$ip${(p == 80 || p == 443) ? '' : ':$p'}');
   }
 
-  /// Simple safety notes based on what the device exposes on the LAN.
+  /// Real, actionable exposures only - these drive the warning icon in the list. A clean device shows none.
   List<String> get safetyNotes {
     final out = <String>[];
     if (ports.contains(23)) out.add('Telnet is open - old and unencrypted; often used by malware. Turn it off.');
     if (ports.contains(21)) out.add('FTP is open - passwords travel unencrypted.');
     if (ports.contains(5900)) out.add('VNC remote control is open - make sure it has a strong password.');
+    return out;
+  }
+
+  /// Gentle one-time advice (not a fault) - shown on the device page, never as a list warning. The camera
+  /// login reminder lives here so it doesn't flag every single camera as an "error".
+  List<String> get safetyTips {
+    final out = <String>[];
     if (category == Cat.cam && (ports.contains(80) || ports.contains(8000))) {
-      out.add('Camera / DVR web login - make sure the default password was changed.');
+      out.add('Camera / DVR web login - if you never changed the default password, change it once.');
     }
     return out;
   }

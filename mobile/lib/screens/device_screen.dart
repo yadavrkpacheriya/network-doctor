@@ -80,6 +80,17 @@ class DeviceScreen extends StatelessWidget {
               title: Text(n),
             ),
         ],
+        if (d.safetyTips.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('Tips', style: t.titleSmall),
+          for (final n in d.safetyTips)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.lightbulb_outline, color: Colors.blueGrey.shade400),
+              title: Text(n, style: t.bodySmall),
+            ),
+        ],
         if (d.fromPc) ...[
           const SizedBox(height: 12),
           Text('Bandwidth, apps and dangerous-site details for this device are shown in the PC app '
