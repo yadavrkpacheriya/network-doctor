@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.17"
+VERSION = "4.18"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -4409,6 +4409,7 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- critical-device watch
     WATCH_EVERY = 30   # seconds between pings
     WATCH_FAILS = 3    # missed rounds before "down" (about 1.5 minutes)
+    CAM_DOWN_MINS = 15  # a camera / NVR must be silent this long before we cry wolf (survives reboots/blips)
     WATCH_LATENCY_MS = 150    # a LAN device answers in a few ms; sustained triple digits means real trouble
     WATCH_LATENCY_STREAK = 10  # consecutive slow rounds (5 min) before "high latency" fires - ignores one slow reply
 
@@ -4424,6 +4425,16 @@ class App(tk.Tk):
             ip = d.get("ip") or (hist.get(mac) or {}).get("ip")
             if ip:
                 out[mac] = (t.get("name") or d.get("name") or ip, ip, t.get("parent", ""))
+        # Auto-watch every camera / NVR / DVR that's online (on by default), so any one going offline for
+        # 15+ min raises a critical alert - the "all cameras live 24x7" check. Explicit watches keep priority.
+        self._auto_cam = set()
+        if self._settings().get("watch_cameras", True) and not self._offline_mode():
+            for mac, d in by_mac.items():
+                if mac in out or not d.get("online") or not d.get("ip"):
+                    continue
+                if core.CAT_CAM in str(d.get("category", "")):   # covers both cameras and NVR/DVR
+                    out[mac] = (d.get("name") or d["ip"], d["ip"], "")
+                    self._auto_cam.add(mac)
         return out
 
     @staticmethod
@@ -4433,6 +4444,52 @@ class App(tk.Tk):
             if t:
                 return t[0]
         return None
+
+    def _camera_selfheal(self, mac, old_ip, name):
+        """A watched camera stopped answering. Before alerting, check whether it simply changed IP (same MAC):
+        find that MAC on the network again (ARP table, then broadcast discovery) and, if it's at a new IP, move
+        the watch there silently. Only if the MAC can't be found anywhere does the 15-min alert go ahead."""
+        macU = (mac or "").upper()
+
+        def work():
+            found = ""
+            try:
+                for ip, m in core.os_arp_table().items():
+                    if (m or "").upper() == macU and ip != old_ip:
+                        found = ip
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+            if not found:
+                try:
+                    import nd_poecheck as _PC
+                    for cam in _PC.discover(timeout=3.0):
+                        if (cam.get("mac") or "").upper() == macU and cam.get("ip"):
+                            found = cam["ip"]
+                            break
+                except Exception:  # noqa: BLE001
+                    pass
+            self.q.put(("call", lambda: self._selfheal_done(mac, old_ip, found, name)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _selfheal_done(self, mac, old_ip, new_ip, name):
+        st = self.watch_state.get(mac)
+        if st is not None:
+            st["healing"] = False
+        if not new_ip or new_ip == old_ip:
+            return                                  # truly unreachable - let the 15-min timer alert
+        for d in self.devices:                      # camera just moved IP: update it everywhere, reconnect quietly
+            if d.get("mac") == mac:
+                d["ip"] = new_ip
+        h = (self.db.get("devices") or {}).get(mac)
+        if h:
+            h["ip"] = new_ip
+        if st is not None:
+            st["ip"], st["fails"], st["down_since"] = new_ip, 0, None
+        self.alerts_active.pop(f"watch:{mac}", None)
+        self._log_event("info", f"Self-healed: {name} changed IP {old_ip} -> {new_ip}, reconnected - no alert",
+                        "Device watch")
 
     def _watch_loop(self):
         """Background thread: pings the watched devices and hands the results to the window."""
@@ -4493,10 +4550,19 @@ class App(tk.Tk):
                                       "Device watch")
             else:
                 st["fails"] += 1
-                if st["fails"] >= self.WATCH_FAILS and not st["down_since"] and not self._offline_mode():
-                    st["down_since"] = now - (self.WATCH_FAILS - 1) * self.WATCH_EVERY
+                is_cam = mac in getattr(self, "_auto_cam", set())
+                need = max(self.WATCH_FAILS, int(self.CAM_DOWN_MINS * 60 / self.WATCH_EVERY)) if is_cam \
+                    else self.WATCH_FAILS
+                # SELF-HEAL first: a camera that stops answering has usually just changed IP. Early in the
+                # outage, re-find it by MAC and move the watch to its new IP silently - only alert if that fails.
+                if is_cam and st["fails"] == 3 and not st.get("healing") and not st["down_since"]:
+                    st["healing"] = True
+                    self._camera_selfheal(mac, ip, name)
+                if st["fails"] >= need and not st["down_since"] and not self._offline_mode():
+                    st["down_since"] = now - (need - 1) * self.WATCH_EVERY
                     st["downs"] += 1
-                    title = f"Critical device not answering: {name} ({ip})"
+                    title = (f"Camera/NVR OFFLINE {self.CAM_DOWN_MINS}+ min: {name} ({ip}) - not recording!"
+                             if is_cam else f"Critical device not answering: {name} ({ip})")
                     pname = (tags.get(parent, {}).get("name") or names.get(parent)) if parent else ""
                     same = [v["name"] for m, v in self.watch_state.items() if m != mac and v.get("down_since")
                             and parent and (tags.get(m, {}).get("parent") == parent)]
