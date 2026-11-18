@@ -589,6 +589,28 @@ def cache_pairs(rows):
     return out
 
 
+def displaydns_rows(text):
+    """Parse Windows `ipconfig /displaydns` into the same {name,type,data} rows cache_pairs() takes, so this
+    PC's own look-ups name its live traffic exactly (Instagram vs WhatsApp, Sheets vs Search) with no router
+    login needed. Handles the 'Record Name' / 'A (Host) Record' / 'CNAME Record' layout."""
+    rows, name = [], None
+    for line in (text or "").splitlines():
+        s = line.strip()
+        low = s.lower()
+        if ":" not in s:
+            continue
+        val = s.split(":", 1)[1].strip()
+        if low.startswith("record name"):
+            name = val.rstrip(".").lower() or None
+        elif name and ("a (host) record" in low or "aaaa record" in low):
+            if re.fullmatch(r"[\d.]+", val):
+                rows.append({"name": name, "type": "A", "data": val})
+        elif name and "cname record" in low:
+            if val:
+                rows.append({"name": name, "type": "CNAME", "data": val.rstrip(".").lower()})
+    return rows
+
+
 def group_of(app):
     return APP_INFO.get(app, (NEUTRAL, "Other"))[1]
 

@@ -36,6 +36,28 @@ class Sites(unittest.TestCase):
                 {"type": "A", "name": "googlehosted.l.googleusercontent.com", "data": "142.250.1.1"}]
         self.assertEqual(US.cache_pairs(rows), [("142.250.1.1", "docs.google.com")])
 
+    def test_local_dns_cache_parse(self):
+        text = (
+            "    Record Name . . . . . : sheets.google.com\r\n"
+            "    Record Type . . . . . : 5\r\n"
+            "    CNAME Record  . . . . : googlehosted.l.googleusercontent.com\r\n"
+            "    Record Name . . . . . : googlehosted.l.googleusercontent.com\r\n"
+            "    Record Type . . . . . : 1\r\n"
+            "    A (Host) Record . . . : 142.250.77.14\r\n"
+            "    Record Name . . . . . : instagram.com\r\n"
+            "    A (Host) Record . . . : 157.240.1.1\r\n")
+        rows = US.displaydns_rows(text)
+        pairs = dict(US.cache_pairs(rows))
+        self.assertEqual(pairs["142.250.77.14"], "sheets.google.com")   # CNAME chain resolved
+        self.assertEqual(pairs["157.240.1.1"], "instagram.com")
+        # and the names classify to the exact apps
+        self.assertEqual(US.app_of_name("sheets.google.com"), "Google Drive / Docs")
+        self.assertEqual(US.app_of_name("instagram.com"), "Instagram")
+
+    def test_meta_ptr_split_in_live_classify(self):
+        self.assertEqual(M.classify("157.240.1.1", 443, 6, {"ptr": "instagram-p42-1.fbcdn.net"})[0], "Instagram")
+        self.assertEqual(M.classify("157.240.1.2", 443, 6, {"ptr": "whatsapp-cdn-shv.fbcdn.net"})[0], "WhatsApp")
+
     def test_ptr_names_the_app(self):
         st = US.UsageStore(":memory:") if False else None  # store needs a file; the helpers are enough here
         self.assertEqual(US.ptr_of("whatsapp-cdn-shv-01-del3.fbcdn.net Facebook"), "whatsapp-cdn-shv-01-del3.fbcdn.net")

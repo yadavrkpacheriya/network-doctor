@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.8"
+VERSION = "4.9"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2116,16 +2116,25 @@ class App(tk.Tk):
             return
         self._dns_poll_t = time.time()
         c = RO.from_settings(self._settings(), self.gw)
-        if not c:
-            return
 
         def work():
-            try:
-                with c:
-                    rows = c.cmd("/ip/dns/cache/all/print")
-                self.usage.learn_names(US.cache_pairs(rows))
-            except Exception:
-                pass
+            # this PC's own DNS cache - names ITS live traffic exactly, with no router login needed
+            if core.IS_WIN and self.lip:
+                try:
+                    out = core.run(["ipconfig", "/displaydns"], 8) or ""
+                    pairs = US.cache_pairs(US.displaydns_rows(out))
+                    if pairs:
+                        self.usage.learn_names(pairs, self.lip)
+                except Exception:
+                    pass
+            # the router's DNS cache - names every device's traffic (needs the router login saved)
+            if c:
+                try:
+                    with c:
+                        rows = c.cmd("/ip/dns/cache/all/print")
+                    self.usage.learn_names(US.cache_pairs(rows))
+                except Exception:
+                    pass
         threading.Thread(target=work, daemon=True).start()
 
     def _tick_once(self):

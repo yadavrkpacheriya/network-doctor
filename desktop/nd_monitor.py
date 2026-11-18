@@ -364,7 +364,9 @@ APP_HINTS = [
     (("nflx", "netflix"), "Netflix (video)"),
     (("hotstar", "jiocinema", "sonyliv", "zee5", "mxplayer"), "Indian OTT video"),
     (("aiv-cdn", "primevideo", "pv-cdn"), "Amazon Prime Video"),
-    (("fbcdn", "facebook", "instagram", "whatsapp", "meta platforms"), "Facebook / Instagram / WhatsApp"),
+    # Meta: split by the server's own name (PTR) when it reveals the app, e.g. instagram-p42.fbcdn.net
+    (("instagram",), "Instagram"), (("whatsapp",), "WhatsApp"), (("messenger",), "Messenger"),
+    (("fbcdn", "facebook", "meta platforms"), "Facebook / Instagram / WhatsApp"),
     (("tiktok", "bytedance", "byteoversea"), "TikTok"),
     (("snapchat",), "Snapchat"), (("telegram",), "Telegram"), (("twitter", "x corp", "twimg"), "X / Twitter"),
     (("windowsupdate", "delivery.mp.microsoft", "dl.delivery"), "Windows Update"),
