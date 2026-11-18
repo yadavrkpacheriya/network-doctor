@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.7"
+VERSION = "4.8"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -159,7 +159,11 @@ def _wire_search(tv):
     tv.insert, tv.delete = _insert, _delete
 
 
-def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse", search=False):
+def make_tree(parent, cols, heads, widths, first, height=None, selectmode="browse", search=False, sr=False):
+    if sr:   # a serial-number column that numbers rows per group automatically (devices / sites lists)
+        cols = ("sr",) + tuple(cols)
+        heads = ("Sr",) + tuple(heads)
+        widths = (44,) + tuple(widths)
     if search:
         bar = ttk.Frame(parent)
         bar.pack(fill="x")
@@ -191,6 +195,27 @@ def make_tree(parent, cols, heads, widths, first, height=None, selectmode="brows
     fr.rowconfigure(0, weight=1)
     fr.columnconfigure(0, weight=1)
     setup_tags(tv)
+    if sr:
+        # auto-number leaf rows per parent; group headers (inserted without values) get a blank Sr and reset
+        # nothing. The counters clear whenever the list is cleared (delete), so every refill starts at 1.
+        tv._sr = {}
+        _ins, _del = tv.insert, tv.delete
+
+        def _ins_sr(parent, index="end", *args, **kw):
+            vals = kw.get("values")
+            if vals:
+                n = tv._sr.get(parent, 0) + 1
+                tv._sr[parent] = n
+                kw["values"] = (n,) + tuple(vals)
+            else:
+                kw["values"] = ("",) + tuple(vals or ())
+            return _ins(parent, index, *args, **kw)
+
+        def _del_sr(*items):
+            tv._sr.clear()
+            return _del(*items)
+
+        tv.insert, tv.delete = _ins_sr, _del_sr
     if search:
         _wire_search(tv)
         var_q.trace_add("write", lambda *_a: tree_filter(tv, var_q.get()))
@@ -685,11 +710,11 @@ class App(tk.Tk):
                          ("Tag...", lambda: self.act("label")), ("Show on map", lambda: self.act("map")),
                          ("Commands", lambda: self.act("cmds"))):
             ttk.Button(act, text=txt, command=cmd).pack(side="left", padx=3)
-        cols = ("sr", "status", "dept", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
-        heads = ("Sr", "Status", "Department", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services",
+        cols = ("status", "dept", "ip", "iptype", "mac", "vendor", "bw", "services", "why", "notes")
+        heads = ("Status", "Department", "IP", "IP type", "MAC address", "Vendor", "Bandwidth now", "Services",
                  "Why this category", "Notes")
-        widths = (45, 100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
-        self.tv = make_tree(f, cols, heads, widths, first=("Name", 300), selectmode="extended")
+        widths = (100, 110, 115, 105, 140, 170, 150, 200, 240, 220)
+        self.tv = make_tree(f, cols, heads, widths, first=("Name", 300), selectmode="extended", sr=True)
         ttk.Label(sf2, text="   Ctrl / Shift + click several devices, then Tag... to tag them all at once",
                   foreground="#667085").pack(side="left", padx=8)
         self.tv.bind("<Button-3>", self._menu)
@@ -912,7 +937,7 @@ class App(tk.Tk):
         ttk.Label(a, text="Top bandwidth users (double-click to analyse)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.tt = make_tree(a, ("ip", "down", "up", "ten", "app", "site", "risk"),
                             ("IP", "Download", "Upload", "Last 10 min", "Main app", "Main website", "Risk"),
-                            (105, 80, 80, 85, 150, 170, 150), first=("Device", 150))
+                            (105, 80, 80, 85, 150, 170, 150), first=("Device", 150), sr=True)
         self.tt.bind("<Double-1>", self._talker_open)
         ttk.Label(b, text="Events timeline (newest first)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
         self.te = make_tree(b, ("sev", "src", "ev"), ("Level", "Source", "Event"), (70, 110, 520), first=("Time", 80))
@@ -969,7 +994,7 @@ class App(tk.Tk):
         ttk.Button(act, text="Refresh", command=lambda k=key: self._fill_category(k)).pack(side="left", padx=3)
         tv = make_tree(f, ("ip", "mac", "vendor", "kind", "status", "notes"),
                        ("IP", "MAC address", "Vendor", "Kind", "Status", "Notes"),
-                       (120, 150, 180, 120, 100, 260), first=("Name", 230), selectmode="extended")
+                       (120, 150, 180, 120, 100, 260), first=("Name", 230), selectmode="extended", sr=True)
         tv.bind("<Double-1>", lambda e, k=key: self._cat_tag(k))
         self._cat = getattr(self, "_cat", {})
         self._cat[key] = {"tv": tv, "cats": cats, "rows": {}}
@@ -2268,7 +2293,7 @@ class App(tk.Tk):
         sel = self.tt.selection()
         if not sel:
             return
-        ip = self.tt.item(sel[0], "values")[0]
+        ip = self.tt.set(sel[0], "ip")            # by column name (robust to the Sr column)
         d = next((x for x in self.devices if x.get("ip") == ip), None)
         if d is None:
             d = {"ip": ip, "mac": "", "name": "", "category": core.CAT_UNK, "reason": "seen only in traffic data",
@@ -2502,9 +2527,7 @@ class App(tk.Tk):
             if (n_recent or n_unchk) and not self.var_sort_bw.get() and not flat:
                 # stable: the rest keeps its order
                 ds.sort(key=lambda d: not ((d.get("recent") and d["online"]) or d.get("mac") in unchecked))
-            sr = 0
             for d in ds:
-                sr += 1
                 svc = ", ".join(core.PORTS.get(p, str(p)) for p in d["ports"])
                 up = d.get("upnp") or {}
                 if up.get("modelName"):
@@ -2535,7 +2558,7 @@ class App(tk.Tk):
                     tag = "unchecked"
                     notes.append("not read by the Login sweep yet")
                 iid = tv.insert(parent, "end", text=name, tags=(tag,) if tag else (),
-                                values=(sr, d["status"], d.get("dept", ""),
+                                values=(d["status"], d.get("dept", ""),
                                         ", ".join(sorted(d["ips"], key=core.ip_key)), typ,
                                         d["mac"] or "-",
                                         d["vendor"], bw, svc, d["reason"], "; ".join(notes)))

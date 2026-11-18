@@ -107,7 +107,7 @@ class SweepPage:
                      "missing", "detail"),
             ("Name", "IP", "MAC", "Type", "Checked as", "Result", "Login #", "Name on the device", "Model",
              "Serial", "Missing data", "Detail"),
-            (150, 110, 140, 150, 130, 100, 60, 170, 130, 120, 140, 300), None, selectmode="extended")
+            (150, 110, 140, 150, 130, 100, 60, 170, 130, 120, 140, 300), None, selectmode="extended", sr=True)
         self.tv.bind("<Double-1>", self.open_selected_web)
         self.menu = tk.Menu(self.tv, tearoff=False)
         self.menu.add_command(label="Open in browser (web login)", command=self.open_selected_web)
@@ -475,7 +475,7 @@ class CamLineWindow(tk.Toplevel):
         self.tv = nd_tabs.UI["make_tree"](
             f, ("name", "now", "new", "brand", "action", "note"),
             ("Name", "IP now", "IP after", "Brand", "What happens", "Note / result"),
-            (170, 110, 110, 90, 110, 360), None)
+            (170, 110, 110, 90, 110, 360), None, sr=True)
         self.protocol("WM_DELETE_WINDOW", lambda: None if self.busy else self.destroy())
         self.var_msg = tk.StringVar(value="Run the Login sweep for cameras first, then press 'Make the list'.")
         ttk.Label(f, textvariable=self.var_msg, wraplength=940, justify="left").pack(anchor="w", pady=(6, 0))

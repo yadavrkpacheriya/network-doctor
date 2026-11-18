@@ -1259,13 +1259,14 @@ class UsageTab:
         down.add(d, weight=1)
         self.tv_apps = UI["make_tree"](a, ("group", "cat", "bytes", "mins", "devs"),
                                        ("Group", "Category", "Traffic", "Active time", "Devices"),
-                                       (120, 95, 85, 80, 55), first=("App", 190))
+                                       (120, 95, 85, 80, 55), first=("App", 190), sr=True)
         self.tv_devs = UI["make_tree"](b, ("dept", "bytes", "work", "personal", "score", "top"),
                                        ("Dept", "Traffic", "Productive", "Unproductive", "Productivity",
-                                        "Top unproductive"), (90, 80, 85, 90, 80, 150), first=("Device / user", 170))
+                                        "Top unproductive"), (90, 80, 85, 90, 80, 150), first=("Device / user", 170),
+                                       sr=True)
         self.tv_devs.bind("<Double-1>", self._pick_dev)
         self.tv_sites = UI["make_tree"](c, ("app", "cat", "bytes", "visits"), ("App", "Category", "Traffic", "Visits"),
-                                        (150, 100, 85, 60), first=("Website", 210))
+                                        (150, 100, 85, 60), first=("Website", 210), sr=True)
         self.txt = UI["text_box"](d)
         for tv in (self.tv_apps, self.tv_devs, self.tv_sites):
             sortable(tv)
