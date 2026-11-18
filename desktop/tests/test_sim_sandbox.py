@@ -160,6 +160,15 @@ class Xmeye(unittest.TestCase):
         self.assertEqual(chans[0]["online"], True)
         self.assertEqual(chans[3]["name"], "CAM4")
 
+    def test_list_channels_dict_wrapped_digital(self):
+        # some firmwares wrap the channel list inside a dict instead of returning a bare list
+        nvr = FakeXmeye(user="admin", pw="pw", channel_names=["Gate", "Lobby"],
+                        digital={"DigitalChannel": [{"Enable": True, "DeviceInfo": {"HostIP": "192.168.0.31"}},
+                                                    {"Enable": True, "DeviceInfo": {"HostIP": "192.168.0.32"}}]})
+        chans = DV.list_channels("192.168.0.74", "admin", "pw", connect=nvr.connect())
+        self.assertEqual(chans[0]["ip"], "192.168.0.31")
+        self.assertEqual(chans[1]["ip"], "192.168.0.32")
+
     def test_list_channels_single_camera_box(self):
         cam = FakeXmeye(user="admin", pw="pw", name="front-gate")
         chans = DV.list_channels("192.168.0.64", "admin", "pw", connect=cam.connect())

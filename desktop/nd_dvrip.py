@@ -194,6 +194,40 @@ def _ip_in(node):
     return ""
 
 
+def _channel_list(node):
+    """Find the per-channel list inside a digital-channel config, however it's wrapped: the node may be the
+    list itself, or a dict holding the list under some key (DigitalChannel / Channels / ...). Returns [] if none."""
+    if isinstance(node, list):
+        return node
+    if isinstance(node, dict):
+        for v in node.values():                           # a dict wrapping the list, e.g. {"DigitalChannel":[...]}
+            if isinstance(v, list) and v:
+                return v
+        for v in node.values():                           # one level deeper
+            got = _channel_list(v)
+            if got:
+                return got
+    return []
+
+
+def _find_key(node, keys):
+    """First value for any of `keys` found anywhere inside a nested entry, else None."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in keys:
+                return v
+        for v in node.values():
+            got = _find_key(v, keys)
+            if got is not None:
+                return got
+    elif isinstance(node, list):
+        for v in node:
+            got = _find_key(v, keys)
+            if got is not None:
+                return got
+    return None
+
+
 def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
     """List the channels configured on a recorder (NVR/DVR) - i.e. the cameras already added to it. Returns a
     list of {"chan": 1-based, "name": str, "ip": str, "online": bool|None}. The channel names come straight
@@ -209,18 +243,20 @@ def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_conn
         except DvrError:
             pass
         ips, online = {}, {}
-        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel"):   # best-effort: whichever the box has
+        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital"):
             try:
                 dig = c.get(node)
             except DvrError:
                 continue
-            if isinstance(dig, list):
-                for i, entry in enumerate(dig):
+            arr = _channel_list(dig)                       # a list of per-channel entries, however it's nested
+            if arr:
+                for i, entry in enumerate(arr):
                     got = _ip_in(entry)
                     if got:
                         ips[i] = got
-                    if isinstance(entry, dict) and "Enable" in entry:
-                        online[i] = bool(entry.get("Enable"))
+                    en = _find_key(entry, ("Enable", "enable"))
+                    if en is not None:
+                        online[i] = bool(en)
                 if ips:
                     break
         try:

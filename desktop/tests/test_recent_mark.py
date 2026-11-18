@@ -19,11 +19,10 @@ class Mark(unittest.TestCase):
         self.assertEqual(core.recent_mark(BASE, None, BASE, "2026-11-01 09:30"), "")
         self.assertEqual(core.recent_mark("2026-11-01 09:40", None, BASE, "2026-11-01 10:00"), "")
 
-    def test_a_device_that_moved_to_another_group_says_where_it_was(self):
+    def test_category_change_is_not_marked(self):
+        # re-classifying a randomized-MAC camera is NOT reported as "moved" - it flagged nearly every camera
         ch = {"from": core.CAT_UNK, "time": "2026-11-13 23:10"}
-        self.assertEqual(core.recent_mark(BASE, ch, BASE, "2026-11-14 14:45"),
-                         f"was under '{core.CAT_UNK}' until 13-Nov 23:10")
-        self.assertEqual(core.recent_mark(BASE, dict(ch, time="2026-11-02 10:00"), BASE, "2026-11-14 14:45"), "")
+        self.assertEqual(core.recent_mark(BASE, ch, BASE, "2026-11-14 14:45"), "")
 
     def test_bad_dates_never_raise(self):
         self.assertEqual(core.recent_mark("", {}, "", "2026-11-14 14:45"), "")

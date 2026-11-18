@@ -1597,10 +1597,8 @@ def recent_mark(first_seen, cat_changed, baseline, now, days=RECENT_DAYS):
     if first_t and base_t and first_t - base_t > dt.timedelta(hours=1) \
             and now_t - first_t <= dt.timedelta(days=days):
         return "new since " + first_t.strftime("%d-%b %H:%M")
-    ch = cat_changed if isinstance(cat_changed, dict) else {}
-    ch_t = _when(ch.get("time"))
-    if ch_t and ch.get("from") and now_t - ch_t <= dt.timedelta(days=days):
-        return f"was under '{ch['from']}' until {ch_t.strftime('%d-%b %H:%M')}"
+    # (A category change is NOT reported as "moved" any more: cameras with a randomized/placeholder MAC get
+    #  re-classified between scans, which flagged nearly every camera as "moved" - pure noise.)
     return ""
 
 

@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.13"
+VERSION = "4.14"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1146,15 +1146,33 @@ class App(tk.Tk):
                 self.q.put(("call", lambda: status.set("Could not read channels: " + str(e))))
                 return
 
+            # which live cameras on the network are NOT added to this NVR?
+            nvr_ips = {ch.get("ip") for ch in chans if ch.get("ip")}
+            live_cams = [d for d in (getattr(self, "devices", []) or [])
+                         if d.get("online") and d.get("ip") and d.get("ip") != ip
+                         and core.CAT_CAM in str(d.get("category", ""))]
+            not_added = [d for d in live_cams if d.get("ip") not in nvr_ips] if nvr_ips else []
+
             def show():
                 for ch in chans:
                     st = "online" if ch.get("online") else ("offline" if ch.get("online") is False else "-")
                     tv.insert("", "end", text=str(ch["chan"]),
                               values=(ch["name"], ch.get("ip") or "-", st))
-                added = sum(1 for ch in chans if ch.get("ip") or (ch.get("name") and ch.get("online")))
-                status.set("%d channel(s) on this recorder%s. Channel names come from the NVR; camera IP/state "
-                           "are shown where it reports them." % (len(chans),
-                           (" - %d with a camera" % added) if added else ""))
+                added = len(nvr_ips)
+                msg = "%d channel(s) on this recorder. " % len(chans)
+                if nvr_ips:
+                    msg += "%d have a camera IP. " % added
+                    if not_added:
+                        names = ", ".join((d.get("name") or d.get("ip")) + " (" + d["ip"] + ")"
+                                          for d in not_added[:12])
+                        msg += "\nLIVE cameras NOT added to this NVR (%d): %s" % (len(not_added), names)
+                    else:
+                        msg += "\nEvery live camera on the network is added to this NVR."
+                else:
+                    msg += ("Channel names are read from the NVR, but it didn't report each channel's camera "
+                            "IP in a format I can match, so I can't yet say which live cameras are missing. "
+                            "Tell me the NVR brand/model and I'll tune it.")
+                status.set(msg)
             self.q.put(("call", show))
 
         threading.Thread(target=work, daemon=True).start()
@@ -2615,10 +2633,9 @@ class App(tk.Tk):
                 recent = d.get("recent") if d["online"] else ""
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
                        or ("new" if (d.get("mac") in new_macs or recent) else ""))
-                # keep the NAME clean and fully visible - a short mark only; the full note goes to Notes below
-                short = ("new" if recent.startswith("new since") else "moved" if recent.startswith("was under")
-                         else "") if recent else ("new" if tag == "new" else "")
-                name = (d["name"] or "-") + (f"  ({short})" if short else "")
+                # keep the NAME clean and fully visible - a short "(new)" mark only; full note goes to Notes
+                show_new = bool(recent) or tag == "new"
+                name = (d["name"] or "-") + ("  (new)" if show_new else "")
                 notes = list(d["notes"])
                 if recent:
                     notes.insert(0, recent)            # full "new since .." / "was under '..' until .." lives here
