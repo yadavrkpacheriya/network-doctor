@@ -1739,16 +1739,25 @@ def build_devices(raw, oui, db):
         if mac in online_macs:
             continue
         try:
-            age = (dt.datetime.now() - dt.datetime.strptime(h["last_seen"], "%Y-%m-%d %H:%M")).days
+            gone_h = (dt.datetime.now() - dt.datetime.strptime(h["last_seen"], "%Y-%m-%d %H:%M")).total_seconds() / 3600
         except Exception:
-            age = 0
+            gone_h = 0
+        age = gone_h / 24
         if age > 60:
             continue
         name = db["labels"].get(mac) or (h.get("names") or [""])[-1]
+        prev_cat = h.get("category", "")
+        notes = [f"was: {prev_cat}"]
+        # a camera / PC / recorder / printer / network box gone for 2+ days is a real problem (dead, unplugged
+        # or removed), not just asleep - flag it so it can be surfaced at the top of the lists and in alerts.
+        stale = gone_h >= 48 and prev_cat in FIXED_MAC_CATS + (CAT_PC,)
+        if stale:
+            notes.insert(0, "OFFLINE 2+ days")
         out.append({"mac": mac, "ips": {h.get("ip", "")}, "ip": h.get("ip", ""), "names": {"label": name},
                     "name": name, "ports": [], "http": {}, "upnp": {}, "ttl": None, "random": is_random_mac(mac),
-                    "vendor": vendor_of(mac, oui), "notes": [f"was: {h.get('category', '')}"], "online": False,
-                    "status": f"Last seen {h['last_seen']}", "category": CAT_OFF,
+                    "vendor": vendor_of(mac, oui), "notes": notes, "online": False,
+                    "status": f"Last seen {h['last_seen']}", "category": CAT_OFF, "prev_cat": prev_cat,
+                    "gone_hours": round(gone_h, 1), "stale_gone": stale,
                     "reason": "not answering now (off, asleep or left)", "first_seen": h.get("first_seen", "")})
     out.sort(key=lambda d: (CAT_ORDER.index(d["category"]), ip_key(d["ip"])))
     return out
@@ -2083,6 +2092,17 @@ def analyse(raw, devices, db):
             "not listed here because they normally sleep or leave Wi-Fi.",
             "Check its power and cable. The 'Devices' tab filter 'Stopped answering since last scan' lists these.",
             [label_of(d) for d in missingd])
+    # devices that matter and have been OFFLINE for 2+ days - likely dead, unplugged or removed, not just asleep
+    stale = [d for d in devices if d.get("stale_gone")]
+    if stale:
+        def _days(d):
+            return max(1, int((d.get("gone_hours") or 48) // 24))
+        by = breakdown_text([{"category": d.get("prev_cat", "")} for d in stale])
+        add("warning", f"{len(stale)} device(s) offline for 2+ days" + (f" ({by})" if by else ""),
+            "These answered before but have been silent for over 2 days - usually a dead or unplugged camera, "
+            "a PC that was moved or decommissioned, or a fault. Not normal sleep/roaming.",
+            "Check each one's power and cable; if it was removed on purpose, use 'Forget offline devices'.",
+            [f"{d.get('name') or d.get('ip')} ({d.get('ip')}) - gone {_days(d)}d" for d in stale])
     order = {"critical": 0, "warning": 1, "info": 2}
     issues.sort(key=lambda i: order[i["sev"]])
     return issues, checks
