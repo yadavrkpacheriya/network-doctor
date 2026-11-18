@@ -83,6 +83,37 @@ def old_new_csv(rows, tags=None):
 
 
 # ------------------------------------------------------------------------------------------- device switches
+# Protected read-only endpoints that answer 200 only with a valid login - used to TEST a default password.
+HIK_CHECK = "/ISAPI/System/Network/interfaces/1/ipAddress"
+DAHUA_CHECK = "/cgi-bin/configManager.cgi?action=getConfig&name=Network"
+
+
+def default_login_http(ip, defaults, ports=(80, 8000, 8080), ssl_on=False, send=None):
+    """Try common factory logins against a camera's web API (Hikvision ISAPI / Dahua CGI). Returns the first
+    (user, pw) that actually authenticates (HTTP 200), else None - so a warning is raised only when a default
+    password really works, never as a blanket reminder. Read-only GETs; nothing on the camera is changed."""
+    send = send or S.http_request
+    for port in ports:
+        reachable = False
+        for path in (HIK_CHECK, DAHUA_CHECK):
+            for (u, p) in defaults:
+                try:
+                    code, _, _ = send(ip, port, "GET", path, u, p, ssl_on=ssl_on)
+                except Exception:  # noqa: BLE001
+                    code = None
+                if code is None:
+                    break                       # port not answering HTTP - give up on this path
+                reachable = True
+                if code == 200:
+                    return (u, p)
+                if code in (401, 403):
+                    continue                     # path needs a login, this one was wrong - try the next default
+                break                            # 404/other on this brand's path - try the other brand
+        if not reachable:
+            break                                # this port isn't a web server - stop trying ports
+    return None
+
+
 def reboot_camera(ip, user, pw, ports=(80, 8000, 8899), ssl_on=False, send=None):
     """Restart one IP camera, trying the brands this app knows over HTTP (Hikvision ISAPI, Dahua CGI) on the
     usual web ports. Returns a short note, or raises CamError if nothing answered / the login was refused. XMeye /

@@ -7,6 +7,7 @@ would have misbehaved on a real router or camera is caught here first.
 import unittest
 
 import nd_camline as CL
+import nd_camhealth as H
 import nd_dvrip as DV
 import nd_routeros as RO
 from sim import FakeRouter, FakeXmeye, FakeHttpCam, FakeOnvifCam, router_socket, RouterOS_against
@@ -191,6 +192,23 @@ class HttpCameras(unittest.TestCase):
         note = CL.reboot_camera("192.168.0.64", "admin", "pw", ports=(80,), send=cam)
         self.assertIn("Hikvision", note)
         self.assertTrue(cam.rebooted)
+
+    def test_default_password_detected_on_hik(self):
+        # a camera still on a factory login (admin/12345) IS flagged
+        cam = FakeHttpCam(brand="hik", user="admin", pw="12345")
+        hit = CL.default_login_http("192.168.0.64", list(H.COMMON_DEFAULTS), ports=(80,), send=cam)
+        self.assertEqual(hit, ("admin", "12345"))
+
+    def test_strong_password_not_flagged(self):
+        # a camera with a real password is NOT flagged (no false "error")
+        cam = FakeHttpCam(brand="hik", user="admin", pw="S7rong!pass")
+        hit = CL.default_login_http("192.168.0.64", list(H.COMMON_DEFAULTS), ports=(80,), send=cam)
+        self.assertIsNone(hit)
+
+    def test_default_password_detected_on_dahua(self):
+        cam = FakeHttpCam(brand="dahua", user="admin", pw="admin")
+        hit = CL.default_login_http("192.168.0.65", list(H.COMMON_DEFAULTS), ports=(80,), send=cam)
+        self.assertEqual(hit, ("admin", "admin"))
 
 
 # =============================================================== fake ONVIF camera over nd_camline setter

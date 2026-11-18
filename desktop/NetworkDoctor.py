@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.10"
+VERSION = "4.11"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1331,22 +1331,30 @@ class App(tk.Tk):
         def ports_of(c):
             return PC.camera_ports_open(c["ip"])
 
+        import nd_camline as CL
+
         def probe_login(c):
-            if not PC._tcp_open(c["ip"], DV.PORT, 0.6):     # login check only for XMeye/local (port 34567)
-                return None, False
-            tries = []
-            s = SW.saved_get(saved_store, c.get("mac", ""))
-            if s:
-                tries.append((s, False))
-            tries += [((u, p), False) for u, p in vault]
-            tries += [((u, p), True) for u, p in H.COMMON_DEFAULTS]
-            for (u, p), isdef in tries:
-                try:
-                    info = DV.read_info(c["ip"], u, p)      # raises on a refused login
-                    return info, {"user": u, "default": isdef or H.is_default(u, p)}
-                except Exception:  # noqa: BLE001
-                    continue
-            return None, None                                # reachable on 34567 but no login worked
+            if PC._tcp_open(c["ip"], DV.PORT, 0.6):          # XMeye / local cameras (port 34567)
+                tries = []
+                s = SW.saved_get(saved_store, c.get("mac", ""))
+                if s:
+                    tries.append((s, False))
+                tries += [((u, p), False) for u, p in vault]
+                tries += [((u, p), True) for u, p in H.COMMON_DEFAULTS]
+                for (u, p), isdef in tries:
+                    try:
+                        info = DV.read_info(c["ip"], u, p)   # raises on a refused login
+                        return info, {"user": u, "default": isdef or H.is_default(u, p)}
+                    except Exception:  # noqa: BLE001
+                        continue
+                return None, None                            # reachable on 34567 but no login worked
+            # Hikvision / Dahua HTTP cameras: flag ONLY if a common default password actually logs in
+            if PC._tcp_open(c["ip"], 80, 0.5) or PC._tcp_open(c["ip"], 8000, 0.5):
+                hit = CL.default_login_http(c["ip"], list(H.COMMON_DEFAULTS))
+                if hit:
+                    return None, {"user": hit[0], "default": True}
+                return None, None
+            return None, False
 
         def work():
             recs = H.report(cams, ports_of, probe_login)
