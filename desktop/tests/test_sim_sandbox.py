@@ -143,6 +143,28 @@ class Xmeye(unittest.TestCase):
         with self.assertRaises(DV.DvrError):
             DV.set_mac("192.168.0.92", "admin", "pw", "not-a-mac", connect=dev.connect())
 
+    def test_list_channels_on_an_nvr(self):
+        nvr = FakeXmeye(user="admin", pw="pw",
+                        channel_names=["Gate", "Lobby", "Parking", "CAM4"],
+                        digital=[{"Enable": True, "DeviceInfo": {"HostIP": "192.168.0.31"}},
+                                 {"Enable": True, "DeviceInfo": {"HostIP": "192.168.0.32"}},
+                                 {"Enable": False, "DeviceInfo": {"HostIP": "0.0.0.0"}},
+                                 {"Enable": False}])
+        chans = DV.list_channels("192.168.0.74", "admin", "pw", connect=nvr.connect())
+        self.assertEqual(len(chans), 4)
+        self.assertEqual(chans[0]["name"], "Gate")
+        self.assertEqual(chans[0]["ip"], "192.168.0.31")
+        self.assertEqual(chans[1]["ip"], "192.168.0.32")
+        self.assertEqual(chans[2]["ip"], "")            # 0.0.0.0 is not a real camera IP
+        self.assertEqual(chans[0]["online"], True)
+        self.assertEqual(chans[3]["name"], "CAM4")
+
+    def test_list_channels_single_camera_box(self):
+        cam = FakeXmeye(user="admin", pw="pw", name="front-gate")
+        chans = DV.list_channels("192.168.0.64", "admin", "pw", connect=cam.connect())
+        self.assertEqual(len(chans), 1)
+        self.assertEqual(chans[0]["name"], "front-gate")
+
 
 # =============================================================== fake HTTP cameras over nd_camline setters
 class HttpCameras(unittest.TestCase):

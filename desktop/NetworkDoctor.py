@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.9"
+VERSION = "4.10"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1084,6 +1084,7 @@ class App(tk.Tk):
              ("Firmware & versions", self._camera_firmware),
              ("Edit IP / reboot (direct)", self._camera_fix),
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
+             ("Cameras in this NVR / DVR", self._nvr_cameras),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
@@ -1109,6 +1110,54 @@ class App(tk.Tk):
             except Exception:  # noqa: BLE001
                 continue
         return None
+
+    def _nvr_cameras(self):
+        """List the cameras already added to a recorder (NVR/DVR) - its channel names, each channel's camera
+        IP and online state where the recorder reports them. Read-only; uses the saved NVR login."""
+        from tkinter import simpledialog
+        import nd_dvrip as DV
+        # offer the recorders we already know about as a hint
+        nvrs = [d.get("ip") for d in (getattr(self, "devices", []) or [])
+                if d.get("ip") and "dvr" in str(d.get("category", "")).lower() + str(d.get("reason", "")).lower()]
+        hint = ("  Known recorders: " + ", ".join(nvrs[:4])) if nvrs else ""
+        ip = simpledialog.askstring(APP, "NVR / DVR to read - type its IP (e.g. 192.168.0.74):" + hint, parent=self)
+        if not ip:
+            return
+        ip = ip.strip()
+        win = tk.Toplevel(self)
+        win.title("Cameras in NVR " + ip)
+        win.transient(self)
+        fr = ttk.Frame(win, padding=12)
+        fr.pack(fill="both", expand=True)
+        status = tk.StringVar(value="Reading channels from " + ip + "...")
+        ttk.Label(fr, textvariable=status, foreground="#0f766e", wraplength=420).pack(anchor="w")
+        tv = make_tree(fr, ("name", "camip", "state"), ("Channel name", "Camera IP", "State"),
+                       (220, 140, 90), first=("Ch", 50), height=14, sr=False)
+
+        def work():
+            cred = self._xmeye_cred(ip)
+            if not cred:
+                self.q.put(("call", lambda: status.set(
+                    "No working login for this recorder. Add it in Setup > Camera/NVR/DVR logins.")))
+                return
+            try:
+                chans = DV.list_channels(ip, cred[0], cred[1])
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("call", lambda: status.set("Could not read channels: " + str(e))))
+                return
+
+            def show():
+                for ch in chans:
+                    st = "online" if ch.get("online") else ("offline" if ch.get("online") is False else "-")
+                    tv.insert("", "end", text=str(ch["chan"]),
+                              values=(ch["name"], ch.get("ip") or "-", st))
+                added = sum(1 for ch in chans if ch.get("ip") or (ch.get("name") and ch.get("online")))
+                status.set("%d channel(s) on this recorder%s. Channel names come from the NVR; camera IP/state "
+                           "are shown where it reports them." % (len(chans),
+                           (" - %d with a camera" % added) if added else ""))
+            self.q.put(("call", show))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _camera_fix(self):
         """Change a camera's IP, switch it to DHCP, or reboot it - directly from the app, no browser. Shows the

@@ -15,15 +15,19 @@ import nd_dvrip as DV
 # --------------------------------------------------------------- XMeye / DVRIP
 class FakeXmeye:
     """In-memory XMeye device. Seed credentials and config; get a `connect` callable for nd_dvrip."""
-    def __init__(self, user="admin", pw="", model="HB-X", serial="SN123", name="front-gate"):
+    def __init__(self, user="admin", pw="", model="HB-X", serial="SN123", name="front-gate",
+                 channel_names=None, digital=None):
         self.user, self.pw = user, pw
         self.info = {"SerialNo": serial, "HardWare": model, "SoftWareVersion": "V5.00"}
         self.name = name
+        self.channel_names = channel_names            # NVR: list of channel names; None = single-camera box
         self.config = {
             "NetWork.NetDHCP": [{"Interface": "eth0", "Enable": False}],
             "NetWork.NetCommon": {"HostName": name},
             "NetWork.RemoteDeviceV3": [],
         }
+        if digital is not None:
+            self.config["Digital"] = digital          # NVR: per-channel added-camera entries
         self.rebooted = False
 
     def connect(self):
@@ -66,7 +70,7 @@ class _XmeyeSock:
         if msg == DV.INFO:
             return self._named(DV.INFO + 100, "SystemInfo", d.info)
         if msg == DV.TITLES:
-            return self._named(DV.TITLES + 100, "ChannelTitle", [d.name])
+            return self._named(DV.TITLES + 100, "ChannelTitle", d.channel_names or [d.name])
         if msg == DV.CONFIG_GET:
             name = req.get("Name", "")
             return self._named(DV.CONFIG_GET + 100, name, d.config.get(name))

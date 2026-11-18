@@ -176,6 +176,68 @@ def read_info(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connecti
         return out
 
 
+def _ip_in(node):
+    """Find an IPv4 address anywhere inside a nested digital-channel config entry (field names vary by
+    firmware: DevIP / HostIP / IPAddress / Address ...). Returns '' if none."""
+    if isinstance(node, str):
+        return node if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", node) and node != "0.0.0.0" else ""
+    if isinstance(node, dict):
+        for v in node.values():
+            got = _ip_in(v)
+            if got:
+                return got
+    elif isinstance(node, list):
+        for v in node:
+            got = _ip_in(v)
+            if got:
+                return got
+    return ""
+
+
+def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
+    """List the channels configured on a recorder (NVR/DVR) - i.e. the cameras already added to it. Returns a
+    list of {"chan": 1-based, "name": str, "ip": str, "online": bool|None}. The channel names come straight
+    from the recorder (reliable); the per-channel camera IP and online flag are best-effort (the config layout
+    differs by firmware), so they can be blank/None on some models."""
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        names = []
+        try:
+            t = c.get("ChannelTitle", TITLES) or []
+            if isinstance(t, list):
+                names = [str(x).strip() for x in t]
+        except DvrError:
+            pass
+        ips, online = {}, {}
+        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel"):   # best-effort: whichever the box has
+            try:
+                dig = c.get(node)
+            except DvrError:
+                continue
+            if isinstance(dig, list):
+                for i, entry in enumerate(dig):
+                    got = _ip_in(entry)
+                    if got:
+                        ips[i] = got
+                    if isinstance(entry, dict) and "Enable" in entry:
+                        online[i] = bool(entry.get("Enable"))
+                if ips:
+                    break
+        try:
+            st = c.get("OnlineDigitalChannel")
+            if isinstance(st, list):
+                for i, e in enumerate(st):
+                    if isinstance(e, dict):
+                        online[i] = bool(e.get("Online", e.get("Status", online.get(i))))
+        except DvrError:
+            pass
+        out = []
+        for i in range(max(len(names), len(ips))):
+            nm = names[i].strip() if i < len(names) and names[i] else "CAM%d" % (i + 1)
+            out.append({"chan": i + 1, "name": nm, "ip": ips.get(i, ""), "online": online.get(i)})
+        return out
+
+
 def set_dhcp(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
     """Switches the device's wired interface to automatic IP (DHCP). Returns a note for the person."""
     with DvrIp(ip, port, timeout, connect) as c:
