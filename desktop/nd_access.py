@@ -64,10 +64,10 @@ def assess(blockers, pool):
                 "text": f"{names} is set to ARP 'reply-only', so only bound devices can connect - unbound phones "
                         f"and new devices are being blocked. One click sets it back to 'enabled'."}
     if pool and pool.get("tight"):
-        w = pool.get("waiting") or 0
+        # stable text (no fluctuating count) so it de-dupes to one alert, not a new one every scan
         return {"kind": "dhcp_full", "sev": "warning",
-                "text": f"The DHCP pool is almost full ({pool.get('used')} in use"
-                        + (f", {w} waiting" if w else "") + ") - new devices may get no address. Widen the range."}
+                "text": "The DHCP pool is almost full - new devices may get no address. Widen the range in "
+                        "the router, or free up addresses by giving fixed devices a reservation."}
     return None
 
 

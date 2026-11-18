@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.14"
+VERSION = "4.15"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -4520,11 +4520,15 @@ class App(tk.Tk):
         Named per category too ('6 CCTV cameras, 2 Phones') so a count change is explained, not just a number."""
         if not macs:
             return
-        news = [d for d in self.devices if d.get("mac") in set(macs)]
+        allnew = [d for d in self.devices if d.get("mac") in set(macs)]
+        for d in allnew:
+            d.setdefault("notes", []).append("NEW on the network")      # note on every new device (shown in list)
+        # but only ALERT for devices worth noticing - a new phone joining the Wi-Fi is normal and was noise.
+        news = [d for d in allnew if d.get("category") not in (core.CAT_PHONE, core.CAT_IOT)]
+        if not news:
+            return
         items = [f"{d.get('name') or '-'}  {d.get('ip')}  {d.get('mac')}  {d.get('vendor') or ''}  ({d.get('category')})"
                  + ("  random MAC" if d.get("random") else "") for d in news]
-        for d in news:
-            d.setdefault("notes", []).append("NEW on the network")
         by = core.breakdown_text(news)
         txt = f"{len(news)} new device(s) on the network" + (f" ({by})" if by else "") + ": " + \
             "; ".join(i.split("  (")[0] for i in items[:4]) + (f" and {len(items) - 4} more" if len(items) > 4 else "")
@@ -4607,15 +4611,23 @@ class App(tk.Tk):
         gone = []
         for mac in macs:
             h = hist.get(mac) or {}
+            # only infrastructure that shouldn't just vanish (cameras, NVR/DVR, switches, router, printers).
+            # Phones roam off Wi-Fi and PCs/TVs sleep all the time - alerting on those was pure noise.
+            if h.get("category") not in core.FIXED_MAC_CATS:
+                continue
             name = self.db.get("labels", {}).get(mac) or (h.get("names") or [""])[-1] or "-"
             gone.append({"category": h.get("category", ""), "name": name, "ip": h.get("ip", ""), "mac": mac,
                          "vendor": h.get("vendor", "")})
+        if not gone:
+            return
+        gmacs = {g["mac"] for g in gone}
         for d in self.devices:
-            if d.get("mac") in set(macs):
+            if d.get("mac") in gmacs:
                 d.setdefault("notes", []).append("STOPPED ANSWERING since last scan")
         items = [f"{g['name']}  {g['ip']}  {g['mac']}  {g['vendor']}" for g in gone]
         by = core.breakdown_text(gone)
-        txt = f"{len(gone)} device(s) stopped answering since the last scan" + (f" ({by})" if by else "") + \
+        txt = f"{len(gone)} camera/network device(s) stopped answering since the last scan" \
+            + (f" ({by})" if by else "") + \
             ": " + "; ".join(items[:4]) + (f" and {len(items) - 4} more" if len(items) > 4 else "")
         self._health_log("Full scan", "info", txt)
         self._record_alert("warning", txt, "Full scan")
