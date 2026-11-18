@@ -4,6 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import nd_assistant as A
+import nd_alerts as AL
 
 
 class Plan(unittest.TestCase):
@@ -45,6 +46,24 @@ class Plan(unittest.TestCase):
         p = A.plan("192.168.0.203 can be opened from the internet")
         self.assertEqual(p["kind"], "recipe")
         self.assertIn("192.168.0.203", p["recipe_text"])
+
+    def test_dhcp_offer_loop_router_text(self):
+        p = A.plan("dhcp1 offering lease 192.168.0.38 for FE:EA:4C:27:3C:36 without success")
+        self.assertEqual(p["kind"], "recipe")
+        self.assertTrue(p["understood"])
+
+    def test_dhcp_plain_phrasings(self):
+        for txt in ("dhcp offering lease failed", "dhcp lease failed"):
+            p = A.plan(txt)
+            self.assertTrue(p["understood"], txt)
+            self.assertEqual(p["kind"], "recipe", txt)
+
+    def test_dhcp_recipe_offers_reserve(self):
+        r = AL.recipe("dhcp1 offering lease 192.168.0.38 for FE:EA:4C:27:3C:36 without success")
+        self.assertEqual(r["kind"], "dhcp_fail")
+        self.assertTrue(r["auto"])                     # a one-click reserve is offered
+        self.assertIn("192.168.0.38", r["auto"][0]["cmd"])
+        self.assertIn("FE:EA:4C:27:3C:36", r["auto"][0]["cmd"])
 
     def test_unknown(self):
         p = A.plan("make me a sandwich")

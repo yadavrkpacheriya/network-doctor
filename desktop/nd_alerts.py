@@ -145,6 +145,42 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            f':do {{/ip dhcp-server lease remove [find where mac-address={cmac} and '
                            f'comment~"^ND: fixed IP"]}} on-error={{}}')])
 
+    # DHCP offer loop: the router keeps offering a lease but the device never accepts it (MikroTik:
+    # "offering lease X for MAC without success"). Floods the log; the real fix is to pin that MAC to an IP.
+    md = re.search(r"offering lease ((?:\d{1,3}\.){3}\d{1,3}) for ([0-9a-f:]{17}) without success", low)
+    if md or (("dhcp" in low or "lease" in low) and ("without success" in low or "offering lease" in low
+              or "lease fail" in low or "dhcp fail" in low or "never takes" in low or "not accept" in low)):
+        oip = (md.group(1) if md else ip)
+        omac = (md.group(2).upper() if md else mac)
+        auto = ()
+        if oip and omac:
+            auto = [(f"Reserve {oip} for this device", "router",
+                     f':local l [/ip dhcp-server lease find where mac-address={omac}]\n'
+                     f':if ([:len $l] > 0) do={{ :do {{ /ip dhcp-server lease make-static $l }} on-error={{}}; '
+                     f'/ip dhcp-server lease set $l address={oip} comment="ND: fixed IP (dhcp loop)" }} '
+                     f'else={{ /ip dhcp-server lease add address={oip} mac-address={omac} '
+                     f'comment="ND: fixed IP (dhcp loop)" }}',
+                     f':do {{/ip dhcp-server lease remove [find where mac-address={omac} and '
+                     f'comment~"^ND: fixed IP"]}} on-error={{}}')]
+        return _fix(3, "dhcp_fail",
+                    "A device keeps asking for an IP but never takes it" + (f" ({omac})" if omac else ""),
+                    "The router offers " + (oip or "an address") + " to " + (omac or "a device")
+                    + " again and again, but the device never says yes, so the router logs it every few seconds. "
+                    "Usual causes: a half-connected cable or weak Wi-Fi (the handshake starts but a packet is "
+                    "lost), a device set to a hand-typed IP that still boots DHCP, or the offered IP is already "
+                    "taken. It rarely breaks anything, but it fills the log.",
+                    "Reserve that IP for the device (button below) so the offer always completes - or fix its "
+                    "cable / Wi-Fi, or set it to automatic IP.",
+                    ["Find the device from its MAC " + (omac or "(in the alert)") + " in Inventory / Devices "
+                     "(the vendor usually shows who it is).",
+                     "If it should have a fixed IP: press 'Reserve " + (oip or "its IP") + " for this device' - "
+                     "the router keeps that IP only for it and the loop stops.",
+                     "If it is on weak Wi-Fi or a loose cable: fix the link - a half-up connection makes the "
+                     "DHCP handshake fail midway.",
+                     "If it is set to a static IP by hand but still asks: set it to automatic, or reserve it.",
+                     "Re-check after a few minutes: the repeated line should stop."],
+                    auto=auto)
+
     if "ip conflict" in low or "conflict on" in low or "used by another device" in low:
         return _fix(1, "ip_conflict", f"Two devices use the same IP {ip}",
                     "Two devices answer for one IP. Both get cut off at random; printers and ERP sessions drop.",
