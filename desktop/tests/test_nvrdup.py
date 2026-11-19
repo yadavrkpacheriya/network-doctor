@@ -42,6 +42,21 @@ class NvrDup(unittest.TestCase):
         self.assertEqual(d["within"], [])
         self.assertEqual(d["cross"], [])
 
+    def test_find_orphans(self):
+        # a camera live on the network but on no recorder (and not a recorder itself) is an orphan
+        nvrs = [{"nvr": "192.168.0.22", "name": "A", "channels": [ch(1, "192.168.0.31")]}]
+        live = [{"ip": "192.168.0.31", "name": "in nvr"},   # already on NVR-A -> not orphan
+                {"ip": "192.168.0.22", "name": "the NVR"},   # the recorder itself -> not orphan
+                {"ip": "192.168.0.99", "name": "Gate"}]      # live, in no recorder -> ORPHAN
+        o = ND.find_orphans(nvrs, live)
+        self.assertEqual(len(o), 1)
+        self.assertEqual(o[0]["ip"], "192.168.0.99")
+        self.assertEqual(o[0]["name"], "Gate")
+
+    def test_orphans_deduped_and_empty_safe(self):
+        self.assertEqual(ND.find_orphans([], [{"ip": "1.1.1.1"}, {"ip": "1.1.1.1"}]), [{"ip": "1.1.1.1", "name": ""}])
+        self.assertEqual(ND.find_orphans([], []), [])
+
 
 if __name__ == "__main__":
     unittest.main()

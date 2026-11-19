@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.27"
+VERSION = "4.28"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1199,7 +1199,7 @@ class App(tk.Tk):
             messagebox.showinfo(APP, "No NVR/DVR found on the network yet. Run a Scan first.")
             return
         win = tk.Toplevel(self)
-        win.title("Duplicate cameras across NVRs")
+        win.title("NVR/DVR cameras - duplicates & cameras not recorded")
         win.transient(self)
         fr = ttk.Frame(win, padding=12)
         fr.pack(fill="both", expand=True)
@@ -1220,21 +1220,35 @@ class App(tk.Tk):
                     continue
                 recs.append({"nvr": d["ip"], "name": d.get("name") or d["ip"], "channels": chans})
             dups = NDUP.find_duplicates(recs)
-            self.q.put(("call", lambda: show(recs, dups)))
+            # live cameras that are NOT recorders - to find any connected to the network but in no NVR/DVR
+            live = [{"ip": d.get("ip"), "name": d.get("name") or d.get("ip")}
+                    for d in (getattr(self, "devices", []) or [])
+                    if d.get("ip") and d.get("online") and core.CAT_CAM in str(d.get("category", ""))
+                    and core.cctv_role(d) != "nvr"]
+            orphans = NDUP.find_orphans(recs, live)
+            self.q.put(("call", lambda: show(recs, dups, orphans)))
 
-        def show(recs, dups):
+        def show(recs, dups, orphans):
             for w in body.winfo_children():
                 w.destroy()
             within, cross = dups["within"], dups["cross"]
             if not recs:
                 status.set("Couldn't read any recorder - add the NVR/DVR login in Setup > Camera/NVR/DVR logins.")
                 return
-            if not within and not cross:
-                status.set("Read %d recorder(s). No duplicate cameras - every camera is on exactly one channel "
-                           "of one NVR." % len(recs))
+            if not within and not cross and not orphans:
+                status.set("Read %d recorder(s). No duplicate cameras, and every live camera is on a recorder."
+                           % len(recs))
                 return
-            status.set("Read %d recorder(s): %d duplicate within an NVR, %d camera(s) on more than one NVR."
-                       % (len(recs), len(within), len(cross)))
+            if orphans:
+                self._record_alert("warning", "%d camera(s) live on the network but in NO NVR/DVR (not recorded): %s"
+                                   % (len(orphans), ", ".join(o["ip"] for o in orphans[:6])), "NVR check")
+                ttk.Label(body, text="Live but NOT in any recorder (not being recorded):",
+                          font=("", 9, "bold"), foreground="#b91c1c").pack(anchor="w", pady=(4, 2))
+                for o in orphans:
+                    ttk.Label(body, wraplength=560, justify="left",
+                              text="  %s  %s" % (o["ip"], ("- " + o["name"]) if o["name"] else "")).pack(anchor="w")
+            status.set("Read %d recorder(s): %d duplicate within an NVR, %d on more than one NVR, "
+                       "%d live camera(s) in no recorder." % (len(recs), len(within), len(cross), len(orphans)))
             if cross:
                 self._record_alert("warning", "%d camera(s) recorded by more than one NVR: %s"
                                    % (len(cross), ", ".join(x["camera"] for x in cross[:6])), "NVR check")

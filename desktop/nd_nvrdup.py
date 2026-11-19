@@ -50,6 +50,27 @@ def find_duplicates(nvrs):
     return {"within": within, "cross": cross}
 
 
+def find_orphans(nvrs, live_cameras):
+    """Cameras live on the network but on NO recorder - i.e. not being recorded. `live_cameras` is a list of
+    {"ip","name"} (the scanned cameras that are not themselves recorders). Any whose IP is not a channel IP on
+    any recorder, and is not a recorder's own IP, is an orphan. Returns [{"ip","name"}]."""
+    in_nvr, recorder_ips = set(), set()
+    for rec in nvrs:
+        recorder_ips.add((rec.get("nvr") or "").strip())
+        for ch in rec.get("channels", []):
+            ip = (ch.get("ip") or "").strip()
+            if ip:
+                in_nvr.add(ip)
+    out, done = [], set()
+    for c in live_cameras or []:
+        ip = (c.get("ip") or "").strip()
+        if not ip or ip in done or ip in in_nvr or ip in recorder_ips:
+            continue
+        done.add(ip)
+        out.append({"ip": ip, "name": c.get("name") or ""})
+    return out
+
+
 def summary(dups):
     w, c = len(dups.get("within", [])), len(dups.get("cross", []))
     return w, c
