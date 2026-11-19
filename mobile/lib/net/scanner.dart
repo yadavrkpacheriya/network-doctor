@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'default_login.dart';
 import 'model.dart';
 import 'probe.dart';
 
@@ -111,6 +112,24 @@ class Scanner {
       final (c, why) = categorize(d, gateway);
       d.category = c;
       d.reason = why;
+    }
+
+    // Default-password check (cameras/DVR/NVR, routers, printers, biometric only - NEVER PCs/phones, which can
+    // lock out). Only devices with a web port are worth trying. Confirmed hits become a critical safetyNote.
+    final webDefault = found.values
+        .where((d) => !d.isSelf && mayTestDefault(d.category) &&
+            (d.ports.contains(80) || d.ports.contains(8000) || d.ports.contains(8080)))
+        .toList();
+    if (webDefault.isNotEmpty) {
+      var m = 0;
+      onProgress(0.95, 'Checking device passwords... 0/${webDefault.length}');
+      await pool<Device>(webDefault, 8, (d) async {
+        final webPorts = [80, 8000, 8080].where((p) => d.ports.contains(p)).toList();
+        final hit = await probeDefaultLogin(d.ip, d.category, ports: webPorts);
+        if (hit != null) d.defaultLoginUser = hit.user;
+        m++;
+        onProgress(0.95 + 0.04 * m / webDefault.length, 'Checking device passwords... $m/${webDefault.length}');
+      }, cancelled: () => _cancel);
     }
     final list = found.values.toList()
       ..sort((a, b) {

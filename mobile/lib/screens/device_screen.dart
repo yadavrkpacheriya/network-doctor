@@ -76,7 +76,8 @@ class DeviceScreen extends StatelessWidget {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.warning_amber, color: Colors.orange.shade800),
+              leading: Icon(n.contains('password') ? Icons.error : Icons.warning_amber,
+                  color: n.contains('password') ? Colors.red.shade700 : Colors.orange.shade800),
               title: Text(n),
             ),
         ],

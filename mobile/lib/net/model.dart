@@ -70,6 +70,7 @@ class Device {
   List<String> notes = [];
   int? webPortHint;
   bool isNew = false; // first time this MAC is seen on this network (set after a scan, see KnownDevices)
+  String defaultLoginUser = ''; // set (e.g. 'admin') when a common factory login was CONFIRMED to work - see default_login.dart
 
   String get displayName => name.isNotEmpty ? name : (isSelf ? 'This phone' : '-');
 
@@ -93,6 +94,10 @@ class Device {
   /// Real, actionable exposures only - these drive the warning icon in the list. A clean device shows none.
   List<String> get safetyNotes {
     final out = <String>[];
+    // Most severe first: a factory login that ACTUALLY works - anyone on the network can open this device.
+    if (defaultLoginUser.isNotEmpty) {
+      out.add("Default / weak password works (login '$defaultLoginUser') - anyone can open this device. Change it now.");
+    }
     if (ports.contains(23)) out.add('Telnet is open - old and unencrypted; often used by malware. Turn it off.');
     if (ports.contains(21)) out.add('FTP is open - passwords travel unencrypted.');
     if (ports.contains(5900)) out.add('VNC remote control is open - make sure it has a strong password.');
@@ -103,8 +108,13 @@ class Device {
   /// login reminder lives here so it doesn't flag every single camera as an "error".
   List<String> get safetyTips {
     final out = <String>[];
-    if (category == Cat.cam && (ports.contains(80) || ports.contains(8000))) {
-      out.add('Camera / DVR web login - if you never changed the default password, change it once.');
+    // The active default-password check (default_login.dart) now confirms this directly: a working factory login
+    // shows as a critical safetyNote instead. Only fall back to the gentle reminder for a camera we could NOT
+    // test (no web port to try), so a camera is never both "looks fine" and nagged at the same time.
+    if (category == Cat.cam &&
+        defaultLoginUser.isEmpty &&
+        !(ports.contains(80) || ports.contains(8000) || ports.contains(8080))) {
+      out.add('Camera / DVR login - if you never changed the default password, change it once.');
     }
     return out;
   }
