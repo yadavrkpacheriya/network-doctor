@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.23"
+VERSION = "4.24"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1893,7 +1893,9 @@ class App(tk.Tk):
         self.var_dep_info.set(f"deploying to {len(targets)} PC(s)... (this can take a minute)")
 
         def work():
-            results = DP.deploy_all(targets, creds, central, src)
+            def prog(i, total, res):   # called from worker threads - marshal the label to the Tk thread
+                self.q.put(("call", lambda: self.var_dep_info.set(f"deploying... {i} of {total} done")))
+            results = DP.deploy_all(targets, creds, central, src, progress=prog)
             self.q.put(("call", lambda: done(results)))
 
         def done(results):

@@ -115,16 +115,23 @@ def deploy_plan(ip, user, pw):
 
 
 # ------------------------------------------------------------------ runner
+# Hide the console window each schtasks/net-use would otherwise pop up during a deploy (Rakesh, 19 Nov: a black
+# schtasks.exe window sat on top and the batch looked frozen). CREATE_NO_WINDOW is Windows-only; 0 elsewhere.
+_NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _run(argv, timeout=40):
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, creationflags=_NOWIN)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return -1, "timed out after %ss (PC offline or very slow)" % timeout
     except Exception as e:  # noqa: BLE001
         return -1, str(e)
 
 
 def _place_files(ip, src_dir, central):
-    """Copy the agent files + central.txt onto the PC's admin share. Windows-only (the \\ip\C$ path is a UNC
+    r"""Copy the agent files + central.txt onto the PC's admin share. Windows-only (the \\ip\C$ path is a UNC
     path); kept separate so tests inject a stub and never touch the real filesystem."""
     import os
     import shutil
@@ -161,24 +168,44 @@ def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
         run(net_use_argv(ip, user, pw, False))
 
 
-def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=None):
+def _deploy_target(t, creds, central, src_dir, run, place):
+    """One PC: try each saved credential until one connects. Pulled out so deploy_all can run PCs in parallel."""
+    res = None
+    for _label, user, pw in creds or []:
+        res = deploy_one(t["ip"], user, pw, central, src_dir, run=run, place=place)
+        res["name"] = t.get("name", t["ip"])
+        if res["ok"] or res["step"] != "connect":
+            break   # a non-auth failure won't be fixed by another credential
+    if res is None:
+        res = {"ip": t["ip"], "name": t.get("name", t["ip"]), "ok": False,
+               "step": "connect", "detail": "no admin credential saved"}
+    return res
+
+
+def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=None, workers=8):
     """Install on every target, trying each saved credential until one works. `creds` is [(label,user,pw)].
-    `progress(done, total, result)` is called after each PC. Returns the list of per-PC results."""
-    results = []
+    PCs run in parallel (default 8 at a time) so a few offline machines - each capped at the per-command
+    timeout - no longer stall the whole batch (Rakesh, 19 Nov: deploy to 22 PCs sat for 10+ minutes).
+    `progress(done, total, result)` is called as each PC finishes. Returns the list of per-PC results."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     total = len(targets)
-    for i, t in enumerate(targets, 1):
-        res = None
-        for _label, user, pw in creds or []:
-            res = deploy_one(t["ip"], user, pw, central, src_dir, run=run, place=place)
-            res["name"] = t.get("name", t["ip"])
-            if res["ok"] or res["step"] != "connect":
-                break   # a non-auth failure won't be fixed by another credential
-        if res is None:
-            res = {"ip": t["ip"], "name": t.get("name", t["ip"]), "ok": False,
-                   "step": "connect", "detail": "no admin credential saved"}
-        results.append(res)
-        if progress:
-            progress(i, total, res)
+    if total == 0:
+        return []
+    results = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, total))) as ex:
+        futs = {ex.submit(_deploy_target, t, creds, central, src_dir, run, place): t for t in targets}
+        for fut in as_completed(futs):
+            t = futs[fut]
+            try:
+                res = fut.result()
+            except Exception as e:  # noqa: BLE001
+                res = {"ip": t["ip"], "name": t.get("name", t["ip"]), "ok": False,
+                       "step": "error", "detail": str(e)}
+            results.append(res)
+            done += 1
+            if progress:
+                progress(done, total, res)
     return results
 
 
