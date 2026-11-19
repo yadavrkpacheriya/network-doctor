@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.30"
+VERSION = "4.31"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1121,6 +1121,62 @@ class App(tk.Tk):
                 continue
         return None
 
+    def _ask_nvr_login(self, ip):
+        """Ask for an NVR/DVR login (used when the saved one doesn't work, e.g. the recorder refuses config to a
+        limited user - code 607). A 'Save for future use' box adds it to the camera/NVR login vault so it isn't
+        typed again. Returns (user, pw) or None. The login is verified before it's accepted/saved."""
+        import nd_dvrip as DV
+        dlg = tk.Toplevel(self)
+        dlg.title("NVR / DVR login - " + ip)
+        dlg.transient(self)
+        dlg.grab_set()
+        f = ttk.Frame(dlg, padding=14)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text="This recorder (%s) didn't accept the saved login.\nEnter an admin login for it:" % ip,
+                  justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(f, text="User").grid(row=1, column=0, sticky="w")
+        uv = tk.StringVar(value="admin")
+        ttk.Entry(f, textvariable=uv, width=24).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(f, text="Password").grid(row=2, column=0, sticky="w")
+        pv = tk.StringVar()
+        ttk.Entry(f, textvariable=pv, show="*", width=24).grid(row=2, column=1, sticky="w", pady=2)
+        save = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f, text="Save this login for future use", variable=save).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 4))
+        msg = tk.StringVar()
+        ttk.Label(f, textvariable=msg, foreground="#b91c1c", wraplength=300).grid(
+            row=4, column=0, columnspan=2, sticky="w")
+        out = {}
+
+        def ok():
+            u, p = uv.get().strip(), pv.get()
+            if not u:
+                msg.set("Enter the user name.")
+                return
+            msg.set("Checking...")
+            dlg.update_idletasks()
+            try:
+                DV.read_info(ip, u, p)                 # verify it actually logs in before saving
+            except Exception as e:  # noqa: BLE001
+                msg.set("Login failed: " + str(e))
+                return
+            if save.get():
+                SW.trylist_add(self._settings().setdefault("cam_logins", []), u, p)
+                self._save_settings()
+            out["cred"] = (u, p)
+            dlg.destroy()
+
+        bar = ttk.Frame(f)
+        bar.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(bar, text="Cancel", command=dlg.destroy).pack(side="right", padx=4)
+        ttk.Button(bar, text="Use login", command=ok).pack(side="right")
+        self.wait_window(dlg)
+        return out.get("cred")
+
+    def _nvr_cred_or_ask(self, ip):
+        """The saved working login for `ip`, or - if none works - prompt for one (with save). None if cancelled."""
+        return self._xmeye_cred(ip) or self._ask_nvr_login(ip)
+
     def _nvr_cameras(self):
         """List the cameras already added to a recorder (NVR/DVR) - its channel names, each channel's camera
         IP and online state where the recorder reports them. Read-only; uses the saved NVR login."""
@@ -1134,6 +1190,9 @@ class App(tk.Tk):
         if not ip:
             return
         ip = ip.strip()
+        cred = self._nvr_cred_or_ask(ip)                 # prompt for a login (with save) if the saved one fails
+        if not cred:
+            return
         win = tk.Toplevel(self)
         win.title("Cameras in NVR " + ip)
         win.transient(self)
@@ -1146,10 +1205,6 @@ class App(tk.Tk):
 
         def copy_raw():
             def w2():
-                cred = self._xmeye_cred(ip)
-                if not cred:
-                    self.q.put(("call", lambda: status.set("No working login for this recorder.")))
-                    return
                 try:
                     txt = DV.raw_config(ip, cred[0], cred[1])
                 except Exception as e:  # noqa: BLE001
@@ -1166,16 +1221,18 @@ class App(tk.Tk):
         ttk.Button(fr, text="Copy raw NVR info (if Camera IP is blank)", command=copy_raw).pack(anchor="w", pady=(6, 0))
 
         def work():
-            cred = self._xmeye_cred(ip)
-            if not cred:
-                self.q.put(("call", lambda: status.set(
-                    "No working login for this recorder. Add it in Setup > Camera/NVR/DVR logins.")))
-                return
             try:
                 chans = DV.list_channels(ip, cred[0], cred[1])
             except Exception as e:  # noqa: BLE001
                 self.q.put(("call", lambda: status.set("Could not read channels: " + str(e))))
                 return
+
+            # fill blank channel IPs by matching the channel NAME to a scanned camera (for recorders that report
+            # only names, e.g. code 607 on the config read)
+            import nd_nvrdup as _NDUP
+            scanned = [{"ip": d.get("ip"), "mac": d.get("mac"), "name": d.get("name")}
+                       for d in (getattr(self, "devices", []) or []) if d.get("ip")]
+            _NDUP.enrich_from_scan([{"nvr": ip, "name": ip, "channels": chans}], scanned)
 
             # which live cameras on the network are NOT added to this NVR?
             nvr_ips = {ch.get("ip") for ch in chans if ch.get("ip")}
@@ -1219,6 +1276,14 @@ class App(tk.Tk):
         if not nvrs:
             messagebox.showinfo(APP, "No NVR/DVR found on the network yet. Run a Scan first.")
             return
+        # resolve a login for each recorder on the Tk thread first (prompt-with-save if the saved one fails)
+        creds = {}
+        for d in nvrs:
+            c = self._nvr_cred_or_ask(d["ip"])
+            if c:
+                creds[d["ip"]] = c
+        if not creds:
+            return
         win = tk.Toplevel(self)
         win.title("NVR/DVR cameras - duplicates & cameras not recorded")
         win.transient(self)
@@ -1234,7 +1299,7 @@ class App(tk.Tk):
         def work():
             recs = []
             for d in nvrs:
-                cred = self._xmeye_cred(d["ip"])
+                cred = creds.get(d["ip"])
                 if not cred:
                     continue
                 try:
@@ -1242,6 +1307,12 @@ class App(tk.Tk):
                 except Exception:  # noqa: BLE001
                     continue
                 recs.append({"nvr": d["ip"], "name": d.get("name") or d["ip"], "channels": chans})
+            # Some recorders (code 607) don't report each channel's camera IP, only its NAME. Tie those channels
+            # to the SCANNED camera of the same name - which has a real IP/MAC - so duplicate/orphan detection
+            # still works without the NVR's cooperation.
+            scanned = [{"ip": d.get("ip"), "mac": d.get("mac"), "name": d.get("name")}
+                       for d in (getattr(self, "devices", []) or []) if d.get("ip")]
+            NDUP.enrich_from_scan(recs, scanned)
             dups = NDUP.find_duplicates(recs)
             # live cameras that are NOT recorders - to find any connected to the network but in no NVR/DVR
             live = [{"ip": d.get("ip"), "name": d.get("name") or d.get("ip")}

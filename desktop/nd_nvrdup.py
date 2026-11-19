@@ -11,13 +11,49 @@ recorder gives one) and reports the duplicates. Deleting anything is the caller'
 """
 
 
+def _norm(s):
+    """Loose name key: lowercase, keep only letters+digits, so 'Gangway to Reception', 'gangway_reception' and
+    'GANGWAY  RECEPTION' all match. Used to tie an NVR channel (name only, on firmwares that hide the camera IP)
+    to the scanned camera of the same name - which DOES have an IP and MAC."""
+    return "".join(c for c in (s or "").lower() if c.isalnum())
+
+
 def _key(ch):
-    """What identifies the camera on a channel - its MAC if present (survives IP changes), else its IP."""
+    """What identifies the camera on a channel - MAC (best, survives IP changes), else IP, else its name. The
+    name fallback is what makes duplicate/orphan detection work on recorders that only report channel NAMES."""
     mac = (ch.get("mac") or "").strip().upper()
     if mac:
         return "mac:" + mac
     ip = (ch.get("ip") or "").strip()
-    return ("ip:" + ip) if ip else ""
+    if ip:
+        return "ip:" + ip
+    nm = _norm(ch.get("name"))
+    # skip the default placeholder names (CAM1, D06...) - they are not real identities and would false-match
+    import re as _re
+    if nm and not _re.fullmatch(r"(cam|d|ch|ipc|channel)\d+", nm):
+        return "name:" + nm
+    return ""
+
+
+def enrich_from_scan(nvrs, scanned):
+    """Fill each NVR channel's missing IP/MAC by matching its NAME to a scanned camera. `scanned` is the device
+    list (each {"ip","mac","name"}). On firmwares that report channel names but not camera IPs, this is what
+    lets the app still know which real camera sits on each channel. Mutates and returns nvrs."""
+    by_name = {}
+    for d in scanned or []:
+        nm = _norm(d.get("name"))
+        if nm and nm not in by_name:
+            by_name[nm] = d
+    for rec in nvrs:
+        for ch in rec.get("channels", []):
+            if (ch.get("ip") or "").strip() or (ch.get("mac") or "").strip():
+                continue
+            hit = by_name.get(_norm(ch.get("name")))
+            if hit:
+                ch["ip"] = hit.get("ip") or ch.get("ip", "")
+                ch["mac"] = hit.get("mac") or ch.get("mac", "")
+                ch["matched_by"] = "name"
+    return nvrs
 
 
 def find_duplicates(nvrs):

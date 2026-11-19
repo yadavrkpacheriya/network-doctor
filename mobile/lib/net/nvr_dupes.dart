@@ -79,9 +79,37 @@ List<OrphanCam> findOrphans(List<NvrRecorder> nvrs, List<(String ip, String name
   return out;
 }
 
+String _norm(String s) => s.toLowerCase().split('').where((c) => RegExp(r'[a-z0-9]').hasMatch(c)).join();
+
+final _placeholder = RegExp(r'^(cam|d|ch|ipc|channel)\d+$');
+
 String _key(NvrChannel ch) {
   final ip = ch.ip.trim();
-  return ip.isNotEmpty ? 'ip:$ip' : '';
+  if (ip.isNotEmpty) return 'ip:$ip';
+  final nm = _norm(ch.name);
+  // a real channel name (e.g. "Main Gate") is an identity; a placeholder (CAM1, D06) is not - don't false-match.
+  if (nm.isNotEmpty && !_placeholder.hasMatch(nm)) return 'name:$nm';
+  return '';
+}
+
+/// Fill blank channel IPs by matching the channel NAME to a scanned camera of the same name (which has an IP).
+/// Lets duplicate/orphan detection work on recorders that report only channel names (code 607 etc). Mutates nvrs.
+void enrichFromScan(List<NvrRecorder> nvrs, List<(String ip, String name)> scanned) {
+  final byName = <String, String>{}; // norm name -> ip
+  for (final (ip, name) in scanned) {
+    final n = _norm(name);
+    if (n.isNotEmpty) byName.putIfAbsent(n, () => ip);
+  }
+  for (final rec in nvrs) {
+    for (var i = 0; i < rec.channels.length; i++) {
+      final ch = rec.channels[i];
+      if (ch.ip.trim().isNotEmpty) continue;
+      final hit = byName[_norm(ch.name)];
+      if (hit != null && hit.isNotEmpty) {
+        rec.channels[i] = NvrChannel(ch.chan, ch.name, hit, ch.online);
+      }
+    }
+  }
 }
 
 /// Find within- and cross-recorder duplicates. A channel with no camera IP is skipped (can't be matched).

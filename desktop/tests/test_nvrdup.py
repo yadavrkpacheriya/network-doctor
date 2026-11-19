@@ -57,6 +57,27 @@ class NvrDup(unittest.TestCase):
         self.assertEqual(ND.find_orphans([], [{"ip": "1.1.1.1"}, {"ip": "1.1.1.1"}]), [{"ip": "1.1.1.1", "name": ""}])
         self.assertEqual(ND.find_orphans([], []), [])
 
+    def test_enrich_from_scan_by_name(self):
+        # NVR reports only channel NAMES (no camera IP, e.g. code 607). Tie them to scanned cameras by name.
+        nvrs = [{"nvr": "n", "name": "NVR", "channels": [
+            {"chan": 1, "name": "Main Gate", "ip": ""},
+            {"chan": 2, "name": "Gangway to Reception", "ip": ""},
+            {"chan": 3, "name": "CAM3", "ip": ""}]}]            # placeholder - must NOT match
+        scan = [{"ip": "192.168.0.143", "mac": "AA", "name": "main gate"},      # case/space-insensitive
+                {"ip": "192.168.0.126", "mac": "BB", "name": "Gangway to Reception"}]
+        ND.enrich_from_scan(nvrs, scan)
+        got = {c["chan"]: c.get("ip") for c in nvrs[0]["channels"]}
+        self.assertEqual(got[1], "192.168.0.143")
+        self.assertEqual(got[2], "192.168.0.126")
+        self.assertEqual(got[3], "")                            # CAM3 stayed blank (no false match)
+
+    def test_name_keyed_duplicate_detected_without_ip(self):
+        # same named camera on two recorders, neither reporting an IP -> still a cross duplicate via the name key
+        nvrs = [{"nvr": "a", "name": "A", "channels": [{"chan": 1, "name": "Main Gate", "ip": ""}]},
+                {"nvr": "b", "name": "B", "channels": [{"chan": 5, "name": "Main Gate", "ip": ""}]}]
+        d = ND.find_duplicates(nvrs)
+        self.assertEqual(len(d["cross"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

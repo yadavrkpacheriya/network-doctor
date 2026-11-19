@@ -34,7 +34,10 @@ class _NvrScreenState extends State<NvrScreen> {
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
     if (!mounted) return;
-    setState(() => _user.text = p.getString('nvr_user') ?? 'admin');
+    setState(() {
+      _user.text = p.getString('nvr_user') ?? 'admin';
+      _pass.text = p.getString('nvr_pass') ?? ''; // saved for future use so it isn't re-typed each run
+    });
   }
 
   void _set(VoidCallback fn) {
@@ -44,6 +47,7 @@ class _NvrScreenState extends State<NvrScreen> {
   Future<void> _scan() async {
     final p = await SharedPreferences.getInstance();
     await p.setString('nvr_user', _user.text.trim());
+    await p.setString('nvr_pass', _pass.text); // remember for next time
     _set(() {
       _busy = true;
       _status = 'Finding the network...';
