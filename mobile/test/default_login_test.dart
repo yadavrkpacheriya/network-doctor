@@ -21,7 +21,8 @@ void main() {
     test('common defaults list matches the PC app (10 factory logins, admin/blank first)', () {
       expect(commonDefaults.length, 10);
       expect(commonDefaults.first, ['admin', '']);
-      expect(commonDefaults.contains(['root', 'root']), isTrue);
+      // List.contains compares by identity, so match on the values instead
+      expect(commonDefaults.any((c) => c[0] == 'root' && c[1] == 'root'), isTrue);
     });
   });
 
