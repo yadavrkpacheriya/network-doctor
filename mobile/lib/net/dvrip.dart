@@ -235,15 +235,43 @@ String _hexToIp(String text) {
   return [0, 8, 16, 24].map((s) => ((v >> s) & 0xFF).toString()).join('.');
 }
 
-String _ipIn(dynamic entry) {
-  final got = _findKey(entry, {'HostIP', 'DevIP', 'IPAddress', 'ip'});
-  if (got == null) return '';
-  final s = got.toString();
-  if (s.startsWith('0x') || RegExp(r'^[0-9A-Fa-f]{8}$').hasMatch(s)) {
-    final ip = _hexToIp(s);
-    if (ip.isNotEmpty && ip != '0.0.0.0') return ip;
+String _asIp(dynamic v) {
+  final s = v.toString().trim();
+  if (s.isEmpty) return '';
+  if (RegExp(r'^(\d{1,3}\.){3}\d{1,3}$').hasMatch(s)) {
+    return (s == '0.0.0.0' || s == '255.255.255.255') ? '' : s;
   }
-  return RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(s) ? s : '';
+  if (s.toLowerCase().startsWith('0x') || RegExp(r'^[0-9A-Fa-f]{8}$').hasMatch(s)) {
+    final ip = _hexToIp(s);
+    return (ip.isNotEmpty && ip != '0.0.0.0' && ip != '255.255.255.255') ? ip : '';
+  }
+  return '';
+}
+
+// field names vary by firmware; many XMeye recorders store the camera IP as a little-endian HEX string.
+const Set<String> _ipKeys = {'DevIP', 'HostIP', 'IPAddress', 'Address', 'IP', 'ip', 'DeviceIP', 'RemoteIP'};
+
+String _ipIn(dynamic entry) {
+  final got = _findKey(entry, _ipKeys);
+  if (got != null) {
+    final ip = _asIp(got);
+    if (ip.isNotEmpty) return ip;
+  }
+  // fall back: any dotted or hex IPv4 found anywhere in the entry
+  if (entry is Map) {
+    for (final v in entry.values) {
+      final ip = _ipIn(v);
+      if (ip.isNotEmpty) return ip;
+    }
+  } else if (entry is List) {
+    for (final v in entry) {
+      final ip = _ipIn(v);
+      if (ip.isNotEmpty) return ip;
+    }
+  } else {
+    return _asIp(entry);
+  }
+  return '';
 }
 
 /// One camera already configured on a recorder's channel.
@@ -271,7 +299,10 @@ Future<List<NvrChannel>> listChannels(String ip, String user, String pw,
     } catch (_) {}
     final ips = <int, String>{};
     final online = <int, bool>{};
-    for (final node in const ['Digital', 'NetWork.Digital', 'OPDigitalChannel', 'DigitalChannel', 'NetWork.NetDigital']) {
+    for (final node in const [
+      'Digital', 'NetWork.Digital', 'OPDigitalChannel', 'DigitalChannel', 'NetWork.NetDigital',
+      'NetWork.NetDigitalChannel', 'Dev', 'ChannelDevInfo'
+    ]) {
       dynamic dig;
       try {
         dig = await c.get(node);

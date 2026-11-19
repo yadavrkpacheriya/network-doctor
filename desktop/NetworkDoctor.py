@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.29"
+VERSION = "4.30"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1143,6 +1143,27 @@ class App(tk.Tk):
         ttk.Label(fr, textvariable=status, foreground="#0f766e", wraplength=420).pack(anchor="w")
         tv = make_tree(fr, ("name", "camip", "state"), ("Channel name", "Camera IP", "State"),
                        (220, 140, 90), first=("Ch", 50), height=14, sr=False)
+
+        def copy_raw():
+            def w2():
+                cred = self._xmeye_cred(ip)
+                if not cred:
+                    self.q.put(("call", lambda: status.set("No working login for this recorder.")))
+                    return
+                try:
+                    txt = DV.raw_config(ip, cred[0], cred[1])
+                except Exception as e:  # noqa: BLE001
+                    txt = "raw read failed: " + str(e)
+
+                def done():
+                    self.clipboard_clear()
+                    self.clipboard_append(txt)
+                    status.set("Raw NVR info copied - paste it to Claude so the camera-IP read can be tuned "
+                               "for this model.")
+                self.q.put(("call", done))
+            threading.Thread(target=w2, daemon=True).start()
+
+        ttk.Button(fr, text="Copy raw NVR info (if Camera IP is blank)", command=copy_raw).pack(anchor="w", pady=(6, 0))
 
         def work():
             cred = self._xmeye_cred(ip)

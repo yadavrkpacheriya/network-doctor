@@ -176,12 +176,21 @@ def read_info(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connecti
         return out
 
 
+_IP_KEYS = ("DevIP", "HostIP", "IPAddress", "Address", "IP", "ip", "DeviceIP", "RemoteIP")
+
+
 def _ip_in(node):
-    """Find an IPv4 address anywhere inside a nested digital-channel config entry (field names vary by
-    firmware: DevIP / HostIP / IPAddress / Address ...). Returns '' if none."""
-    if isinstance(node, str):
-        return node if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", node) and node != "0.0.0.0" else ""
+    """Find an IPv4 address anywhere inside a nested digital-channel config entry. Field names vary by firmware
+    (DevIP / HostIP / IPAddress / Address ...) AND many XMeye recorders store the camera IP as a little-endian
+    HEX string (e.g. '0x4A00A8C0' = 192.168.0.74) rather than dotted text, so prefer the known IP keys (decoding
+    hex) and fall back to any dotted IPv4 found. Returns '' if none."""
+    # 1) a known IP key, decoding hex where needed (0x........ or 8 hex digits)
     if isinstance(node, dict):
+        for k in _IP_KEYS:
+            if k in node:
+                got = _as_ip(node[k])
+                if got:
+                    return got
         for v in node.values():
             got = _ip_in(v)
             if got:
@@ -191,7 +200,52 @@ def _ip_in(node):
             got = _ip_in(v)
             if got:
                 return got
+    elif isinstance(node, str):
+        return _as_ip(node)
     return ""
+
+
+def _as_ip(v):
+    """A value -> dotted IPv4, decoding a little-endian hex form, or '' if it isn't a usable address."""
+    s = str(v).strip()
+    if not s:
+        return ""
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", s):
+        return s if s not in ("0.0.0.0", "255.255.255.255") else ""
+    if s.lower().startswith("0x") or re.fullmatch(r"[0-9A-Fa-f]{8}", s):
+        try:
+            got = hex_to_ip(s)
+            return got if got not in ("0.0.0.0", "255.255.255.255") else ""
+        except (ValueError, TypeError):
+            return ""
+    return ""
+
+
+def raw_config(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
+    """Diagnostic: log in and return, as a readable string, what each digital-channel config node ACTUALLY
+    contains on this recorder - so a model that hides the per-channel camera IP under an unusual field/node can
+    be identified from one 'Copy raw NVR info' and the reader taught the right field. Read-only. Trims each node
+    to the first channel entry so the dump stays small."""
+    import json as _json
+    nodes = ("ChannelTitle", "Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel",
+             "NetWork.NetDigital", "NetWork.NetDigitalChannel", "Dev", "ChannelDevInfo", "OnlineDigitalChannel")
+    out = ["NVR %s raw config (first entry of each node):" % ip]
+    with DvrIp(ip, port, timeout, connect) as c:
+        c.login(user, pw)
+        for node in nodes:
+            try:
+                v = c.get(node)
+            except DvrError as e:
+                out.append("  %s: (not available: %s)" % (node, e))
+                continue
+            arr = _channel_list(v) if node != "ChannelTitle" else v
+            sample = arr[0] if isinstance(arr, list) and arr else arr
+            try:
+                txt = _json.dumps(sample, ensure_ascii=False)[:600]
+            except (TypeError, ValueError):
+                txt = str(sample)[:600]
+            out.append("  %s: %s" % (node, txt))
+    return "\n".join(out)
 
 
 def disable_channel(ip, user, pw, chan_index, port=PORT, timeout=6, connect=socket.create_connection):
@@ -201,7 +255,7 @@ def disable_channel(ip, user, pw, chan_index, port=PORT, timeout=6, connect=sock
     writes it back; raises DvrError if it can't read/find the channel."""
     with DvrIp(ip, port, timeout, connect) as c:
         c.login(user, pw)
-        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital"):
+        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital", "NetWork.NetDigitalChannel", "Dev", "ChannelDevInfo"):
             try:
                 dig = c.get(node)
             except DvrError:
@@ -283,7 +337,7 @@ def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_conn
         except DvrError:
             pass
         ips, online = {}, {}
-        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital"):
+        for node in ("Digital", "NetWork.Digital", "OPDigitalChannel", "DigitalChannel", "NetWork.NetDigital", "NetWork.NetDigitalChannel", "Dev", "ChannelDevInfo"):
             try:
                 dig = c.get(node)
             except DvrError:
