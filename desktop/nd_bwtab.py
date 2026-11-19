@@ -241,6 +241,12 @@ class BandwidthPage:
         for txt, cmd in (("Show commands", self.show_queues), ("Apply on router", self.apply_queues),
                          ("Remove the plan from the router", self.undo_queues), ("Copy commands", self.copy_queues)):
             ttk.Button(bar, text=txt, command=cmd).pack(side="left", padx=(0, 6))
+        bar_opt = ttk.Frame(f)
+        bar_opt.pack(fill="x", pady=(4, 0))
+        ttk.Label(bar_opt, text="Slow network now? One-tap fix (no plan needed):", foreground="#1d4ed8").pack(
+            side="left", padx=(0, 8))
+        ttk.Button(bar_opt, text="Optimize bandwidth", command=self.quick_optimize).pack(side="left", padx=(0, 6))
+        ttk.Button(bar_opt, text="Undo optimize", command=self.undo_optimize).pack(side="left")
         self.tv_live = nd_tabs.UI["make_tree"](f, ("group", "n", "pool", "each", "now"),
                                                ("Group", "Devices", "Guaranteed", "Each user up to", "Used now (10 min)"),
                                                (260, 80, 110, 130, 150), None, height=6)
@@ -363,6 +369,39 @@ class BandwidthPage:
     def _unapplied(self):
         self.st()["applied"] = False
         self.save()
+
+    # ---- one-tap "Optimize bandwidth" (parity with the phone app) -------------------------------------------
+    # A quick, reversible fix for a slow network - no plan to build. Same three safe moves as the Android app:
+    # a PCQ fair-share simple-queue on the WAN (one device can't hog the line), flush the DNS cache, and drop
+    # stale time-wait connections. Everything is tagged "ndphone-opt" so "Undo optimize" removes exactly this.
+    _OPT_SCRIPT = (
+        ':local wan [/ip route get [find dst-address=0.0.0.0/0] interface]\n'
+        ':do { /queue type remove [find name="ndphone-opt-up"] } on-error={}\n'
+        ':do { /queue type remove [find name="ndphone-opt-down"] } on-error={}\n'
+        '/queue type add name=ndphone-opt-up kind=pcq pcq-classifier=src-address pcq-rate=0\n'
+        '/queue type add name=ndphone-opt-down kind=pcq pcq-classifier=dst-address pcq-rate=0\n'
+        ':do { /queue simple remove [find name="ndphone-opt"] } on-error={}\n'
+        '/queue simple add name=ndphone-opt target=0.0.0.0/0 interface=$wan '
+        'queue=ndphone-opt-up/ndphone-opt-down comment="ndphone-opt fair-share (remove to undo)"\n'
+        ':do { /ip dns cache flush } on-error={}\n'
+        ':do { /ip firewall connection remove [find tcp-state=time-wait] } on-error={}\n'
+    )
+    _OPT_UNDO = (
+        ':do { /queue simple remove [find name="ndphone-opt"] } on-error={}\n'
+        ':do { /queue type remove [find name="ndphone-opt-up"] } on-error={}\n'
+        ':do { /queue type remove [find name="ndphone-opt-down"] } on-error={}\n'
+    )
+
+    def quick_optimize(self):
+        self._send(self._OPT_SCRIPT, "Optimize bandwidth (fair-share, DNS flush, clear stale connections)",
+                   lambda err: self.var_msg.set(
+                       "The network should feel more responsive now. Undo anytime with 'Undo optimize'."
+                       if not err else f"Router refused it: {err}"))
+
+    def undo_optimize(self):
+        self._send(self._OPT_UNDO, "Undo optimize (remove the fair-share queue)",
+                   lambda err: self.var_msg.set("Optimize removed - the router is back as it was."
+                                                if not err else f"Router refused it: {err}"))
 
     def refresh_live(self):
         if not hasattr(self, "tv_live"):
