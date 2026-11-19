@@ -210,6 +210,82 @@ class RouterOs {
     await cmd('/system/script/remove', params: {'numbers': name}).catchError((_) => <Map<String, String>>[]);
   }
 
+  /// Reboot the router. The API returns before the box goes down, so the caller should expect the login to drop.
+  Future<void> reboot() async {
+    await talk(['/system/reboot'], check: false);
+  }
+
+  /// Find the WAN interface (the one carrying the default route), so bandwidth fixes target the right link.
+  /// Falls back to 'ether1' - the usual MikroTik WAN port - when the route can't be read.
+  Future<String> wanInterface() async {
+    try {
+      final raw = await talk(['/ip/route/print', '?dst-address=0.0.0.0/0']);
+      final routes = [for (final (t, w) in raw) if (t == '!re') _attrs(w)];
+      for (final r in routes) {
+        final i = r['interface'] ?? r['gateway-status'] ?? '';
+        final name = i.split(' ').first.trim();
+        if (name.isNotEmpty) return name;
+      }
+    } catch (_) {}
+    return 'ether1';
+  }
+
+  /// Relieve a slow network, remotely and reversibly. Safe, well-understood RouterOS housekeeping that fixes the
+  /// usual office causes of slowness without touching speeds anyone paid for:
+  ///  - a fair queue (PCQ, by SRC then DST) on the WAN so ONE device/download can't starve everyone else;
+  ///  - flush the DNS cache (stale/bad entries make pages hang);
+  ///  - drop stale connection-tracking entries (a full table slows new connections).
+  /// Everything is tagged "ndphone-opt" so undoOptimize() removes exactly what this added. Returns a short report.
+  Future<String> optimizeBandwidth() async {
+    final wan = await wanInterface();
+    final report = StringBuffer();
+    // 1) Fair-share queue on the WAN. PCQ shares the link evenly per device instead of first-come-first-served.
+    final src = 'ndphone-opt-up';
+    final dst = 'ndphone-opt-down';
+    await cmd('/queue/type/remove', params: {'numbers': src}).catchError((_) => <Map<String, String>>[]);
+    await cmd('/queue/type/remove', params: {'numbers': dst}).catchError((_) => <Map<String, String>>[]);
+    await cmd('/queue/type/add',
+        params: {'name': src, 'kind': 'pcq', 'pcq-classifier': 'src-address', 'pcq-rate': '0'});
+    await cmd('/queue/type/add',
+        params: {'name': dst, 'kind': 'pcq', 'pcq-classifier': 'dst-address', 'pcq-rate': '0'});
+    await cmd('/queue/simple/remove', params: {'numbers': 'ndphone-opt'}).catchError((_) => <Map<String, String>>[]);
+    await cmd('/queue/simple/add', params: {
+      'name': 'ndphone-opt',
+      'target': '0.0.0.0/0',
+      'interface': wan,
+      'queue': '$src/$dst', // simple-queue takes upload/download: src-classifier queue for up, dst for down
+      'comment': 'ndphone-opt fair-share (remove to undo)',
+    });
+    report.writeln('Fair-share queue set on WAN ($wan) - one device can no longer hog the line.');
+    // 2) Flush DNS cache.
+    try {
+      await talk(['/ip/dns/cache/flush'], check: false);
+      report.writeln('DNS cache flushed - stale lookups cleared.');
+    } catch (_) {}
+    // 3) Drop stale connection tracking so new connections aren't queued behind dead ones.
+    try {
+      final raw = await talk(['/ip/firewall/connection/print', '?tcp-state=time-wait']);
+      final conns = [for (final (t, w) in raw) if (t == '!re') _attrs(w)];
+      var n = 0;
+      for (final c in conns) {
+        final id = c['.id'] ?? '';
+        if (id.isNotEmpty) {
+          await talk(['/ip/firewall/connection/remove', '=.id=$id'], check: false);
+          n++;
+        }
+      }
+      if (n > 0) report.writeln('Cleared $n stale connections.');
+    } catch (_) {}
+    return report.toString().trim();
+  }
+
+  /// Remove exactly what optimizeBandwidth() added (the fair-share queue), putting the router back as it was.
+  Future<void> undoOptimize() async {
+    await cmd('/queue/simple/remove', params: {'numbers': 'ndphone-opt'}).catchError((_) => <Map<String, String>>[]);
+    await cmd('/queue/type/remove', params: {'numbers': 'ndphone-opt-up'}).catchError((_) => <Map<String, String>>[]);
+    await cmd('/queue/type/remove', params: {'numbers': 'ndphone-opt-down'}).catchError((_) => <Map<String, String>>[]);
+  }
+
   Future<void> close() async {
     try {
       await _in?.close();

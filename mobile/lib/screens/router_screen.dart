@@ -130,6 +130,58 @@ class _RouterScreenState extends State<RouterScreen> {
     });
   }
 
+  Future<void> _reboot() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Restart the router?'),
+        content: const Text('The whole network drops for about 1-2 minutes while the router restarts, then comes '
+            'back on its own. Use this when the internet is stuck and nothing else helped.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Restart')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _task('Sending restart...', (r) async {
+      await r.reboot();
+      _set(() => _status = 'Restart sent - the router will be back in 1-2 minutes. Reconnect after that.');
+    });
+  }
+
+  Future<void> _optimize() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Optimize bandwidth?'),
+        content: const Text('Fixes a slow network remotely: shares the line fairly so one device/download can\'t '
+            'hog it, flushes the DNS cache, and clears stale connections. Nothing anyone paid for is reduced, and '
+            'you can undo it anytime.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Optimize')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    _set(() => _cmdOut = '');
+    await _task('Optimizing...', (r) async {
+      final report = await r.optimizeBandwidth();
+      _set(() {
+        _cmdOut = report;
+        _status = 'Done - the network should feel more responsive now.';
+      });
+    });
+  }
+
+  Future<void> _undoOptimize() async {
+    await _task('Removing the plan...', (r) async {
+      await r.undoOptimize();
+      _set(() => _status = 'Fair-share plan removed - the router is back as it was.');
+    });
+  }
+
   Future<void> _backup() async {
     _set(() => _cmdOut = '');
     await _task('Reading the router config...', (r) async {
@@ -260,6 +312,20 @@ class _RouterScreenState extends State<RouterScreen> {
               onPressed: _busy ? null : _backup,
               icon: const Icon(Icons.save),
               label: const Text('Backup config')),
+          FilledButton.tonalIcon(
+              onPressed: _busy ? null : _optimize,
+              icon: const Icon(Icons.speed),
+              label: const Text('Optimize bandwidth')),
+          OutlinedButton.icon(
+              onPressed: _busy ? null : _undoOptimize,
+              icon: const Icon(Icons.undo),
+              label: const Text('Undo optimize')),
+          FilledButton.tonalIcon(
+              style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade100, foregroundColor: Colors.red.shade900),
+              onPressed: _busy ? null : _reboot,
+              icon: const Icon(Icons.restart_alt),
+              label: const Text('Restart router')),
         ]),
         for (final m in _rows) _rowCard(m),
         const Divider(),
