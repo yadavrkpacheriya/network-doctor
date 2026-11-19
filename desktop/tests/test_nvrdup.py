@@ -71,12 +71,28 @@ class NvrDup(unittest.TestCase):
         self.assertEqual(got[2], "192.168.0.126")
         self.assertEqual(got[3], "")                            # CAM3 stayed blank (no false match)
 
-    def test_name_keyed_duplicate_detected_without_ip(self):
-        # same named camera on two recorders, neither reporting an IP -> still a cross duplicate via the name key
+    def test_name_only_match_is_maybe_not_confirmed(self):
+        # same NAME on two recorders, no IP -> a MAYBE (could be two different cameras), NOT a confirmed duplicate
         nvrs = [{"nvr": "a", "name": "A", "channels": [{"chan": 1, "name": "Main Gate", "ip": ""}]},
                 {"nvr": "b", "name": "B", "channels": [{"chan": 5, "name": "Main Gate", "ip": ""}]}]
         d = ND.find_duplicates(nvrs)
-        self.assertEqual(len(d["cross"]), 1)
+        self.assertEqual(d["cross"], [])                 # not confirmed
+        self.assertEqual(len(d["maybe_cross"]), 1)       # flagged for review only
+
+    def test_two_real_cameras_same_name_not_a_confirmed_duplicate(self):
+        # Rakesh: two DIFFERENT cameras both named "FG AREA" (different IPs) must NOT be called a duplicate
+        nvrs = [{"nvr": "a", "name": "NVR", "channels": [{"chan": 10, "name": "FG AREA", "ip": "192.168.0.60"}]},
+                {"nvr": "b", "name": "DVR", "channels": [{"chan": 2, "name": "FG AREA", "ip": "192.168.0.61"}]}]
+        d = ND.find_duplicates(nvrs)
+        self.assertEqual(d["cross"], [])                 # different IPs -> different cameras -> NOT a duplicate
+        self.assertEqual(d["maybe_cross"], [])           # and not even a maybe: the IPs prove they differ
+
+    def test_same_ip_on_two_recorders_is_confirmed(self):
+        nvrs = [{"nvr": "a", "name": "A", "channels": [{"chan": 1, "name": "Gate", "ip": "192.168.0.60"}]},
+                {"nvr": "b", "name": "B", "channels": [{"chan": 5, "name": "Gate", "ip": "192.168.0.60"}]}]
+        d = ND.find_duplicates(nvrs)
+        self.assertEqual(len(d["cross"]), 1)             # same IP = same camera = real duplicate
+        self.assertEqual(d["cross"][0]["by"], "ip")
 
 
 if __name__ == "__main__":

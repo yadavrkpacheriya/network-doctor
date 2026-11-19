@@ -47,11 +47,15 @@ class OrphanCam {
 }
 
 class DupResult {
-  DupResult(this.within, this.cross, [this.orphans = const []]);
-  final List<WithinDup> within;
-  final List<CrossDup> cross;
+  DupResult(this.within, this.cross,
+      [this.orphans = const [], this.maybeWithin = const [], this.maybeCross = const []]);
+  final List<WithinDup> within; // confirmed by IP/MAC
+  final List<CrossDup> cross; // confirmed by IP/MAC
   final List<OrphanCam> orphans; // live cameras not in any DVR/NVR
-  bool get isEmpty => within.isEmpty && cross.isEmpty && orphans.isEmpty;
+  final List<WithinDup> maybeWithin; // NAME-only - could be two different cameras, review not delete
+  final List<CrossDup> maybeCross;
+  bool get isEmpty =>
+      within.isEmpty && cross.isEmpty && orphans.isEmpty && maybeWithin.isEmpty && maybeCross.isEmpty;
 }
 
 /// Cameras on the network that no recorder has a channel for - i.e. live but NOT recorded. `liveCameras` is the
@@ -114,8 +118,8 @@ void enrichFromScan(List<NvrRecorder> nvrs, List<(String ip, String name)> scann
 
 /// Find within- and cross-recorder duplicates. A channel with no camera IP is skipped (can't be matched).
 DupResult findDuplicates(List<NvrRecorder> nvrs) {
-  final within = <WithinDup>[];
-  // key -> list of (nvrIp, nvrName, chan, label)
+  // confirmed (IP/MAC) vs maybe (NAME only - could be two different cameras with the same label).
+  final within = <WithinDup>[], maybeWithin = <WithinDup>[];
   final seen = <String, List<DupPlace>>{};
   final seenLabel = <String, String>{};
 
@@ -134,17 +138,19 @@ DupResult findDuplicates(List<NvrRecorder> nvrs) {
     }
     byCam.forEach((k, chans) {
       if (chans.length > 1) {
-        within.add(WithinDup(rec.ip, nname, byCamLabel[k]!, chans..sort()));
+        final row = WithinDup(rec.ip, nname, byCamLabel[k]!, chans..sort());
+        (k.startsWith('name:') ? maybeWithin : within).add(row);
       }
     });
   }
 
-  final cross = <CrossDup>[];
+  final cross = <CrossDup>[], maybeCross = <CrossDup>[];
   seen.forEach((k, places) {
     final recs = places.map((p) => p.nvrIp).toSet();
     if (recs.length > 1) {
-      cross.add(CrossDup(seenLabel[k]!, places));
+      final row = CrossDup(seenLabel[k]!, places);
+      (k.startsWith('name:') ? maybeCross : cross).add(row);
     }
   });
-  return DupResult(within, cross);
+  return DupResult(within, cross, const [], maybeWithin, maybeCross);
 }

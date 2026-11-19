@@ -58,11 +58,16 @@ def enrich_from_scan(nvrs, scanned):
 
 def find_duplicates(nvrs):
     """nvrs: list of {"nvr": <ip>, "name": <nvr name>, "channels": [<list_channels output>]}.
-    Returns {"within": [...], "cross": [...]}.
-      within: {"nvr","name","camera","channels":[chan numbers]}  - same camera on 2+ channels of ONE recorder.
-      cross:  {"camera","on":[{"nvr","name","chan"}]}             - same camera on 2+ DIFFERENT recorders.
+    Returns {"within": [...], "cross": [...], "maybe_within": [...], "maybe_cross": [...]}.
+
+    A CONFIRMED duplicate is matched by IP or MAC - the same physical camera, truly recorded twice.
+    A NAME-only match is NOT confirmed: two DIFFERENT cameras can share a label (Rakesh, 19 Nov: two real
+    cameras both named 'FG AREA'). Those go in the 'maybe_*' buckets as "same name - check if it's one camera or
+    two", never reported as a real duplicate, so the app never tells you to delete a second, genuine camera.
+      within/cross:            confirmed (IP/MAC) - safe to act on.
+      maybe_within/maybe_cross: same NAME only - review, don't auto-delete.
     """
-    within, seen = [], {}            # seen: camera key -> list of (nvr_ip, nvr_name, chan, cam_label)
+    within, maybe_within, seen = [], [], {}   # seen: key -> [(nvr_ip, nvr_name, chan, label)]; key carries its kind
     for rec in nvrs:
         nip, nname = rec.get("nvr", ""), rec.get("name", "") or rec.get("nvr", "")
         by_cam = {}
@@ -75,15 +80,17 @@ def find_duplicates(nvrs):
             seen.setdefault(k, []).append((nip, nname, ch.get("chan"), label))
         for k, hits in by_cam.items():
             if len(hits) > 1:
-                within.append({"nvr": nip, "name": nname, "camera": hits[0][1],
-                               "channels": sorted(h[0] for h in hits if h[0] is not None)})
-    cross = []
+                row = {"nvr": nip, "name": nname, "camera": hits[0][1],
+                       "channels": sorted(h[0] for h in hits if h[0] is not None), "by": k.split(":", 1)[0]}
+                (maybe_within if k.startswith("name:") else within).append(row)
+    cross, maybe_cross = [], []
     for k, hits in seen.items():
         recs = {h[0] for h in hits}
         if len(recs) > 1:                        # the camera is on more than one recorder
-            cross.append({"camera": hits[0][3],
-                          "on": [{"nvr": h[0], "name": h[1], "chan": h[2]} for h in hits]})
-    return {"within": within, "cross": cross}
+            row = {"camera": hits[0][3], "by": k.split(":", 1)[0],
+                   "on": [{"nvr": h[0], "name": h[1], "chan": h[2]} for h in hits]}
+            (maybe_cross if k.startswith("name:") else cross).append(row)
+    return {"within": within, "cross": cross, "maybe_within": maybe_within, "maybe_cross": maybe_cross}
 
 
 def find_orphans(nvrs, live_cameras):

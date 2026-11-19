@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.33"
+VERSION = "4.34"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1339,7 +1339,8 @@ class App(tk.Tk):
                 return
             # orphans are only meaningful when we resolved most channels' camera IPs
             low_cov = total_ch and with_ip < 0.6 * total_ch
-            if not within and not cross and not orphans:
+            has_maybe = dups.get("maybe_cross") or dups.get("maybe_within")
+            if not within and not cross and not orphans and not has_maybe:
                 if low_cov:
                     status.set("Read %d recorder(s), %d channel(s). These recorders don't report each channel's "
                                "camera IP (and their channel names don't match the scan), so I can't reliably say "
@@ -1389,6 +1390,22 @@ class App(tk.Tk):
                     ttk.Button(row, text="Switch off ch %d" % extra,
                                command=lambda nv=x["nvr"], nm=x["name"], ch=extra, cam=x["camera"]:
                                self._nvr_drop_dup(nv, nm, ch, cam)).pack(side="right")
+            # NAME-only matches - NOT confirmed duplicates. Two different cameras can share a name (e.g. two real
+            # 'FG AREA' cameras), so these are shown for review only, never with a delete button.
+            maybe_cross = dups.get("maybe_cross", [])
+            maybe_within = dups.get("maybe_within", [])
+            if maybe_cross or maybe_within:
+                ttk.Label(body, text="Same NAME on more than one channel - could be ONE camera added twice, or "
+                          "TWO different cameras you gave the same name. Check before removing anything:",
+                          font=("", 9, "bold"), foreground="#92400e", wraplength=640).pack(anchor="w", pady=(10, 2))
+                for x in maybe_cross:
+                    where = "  +  ".join("%s ch%s" % (o["name"], o["chan"]) for o in x["on"])
+                    ttk.Label(body, wraplength=560, justify="left",
+                              text="  '%s'  ->  %s" % (x["camera"], where)).pack(anchor="w")
+                for x in maybe_within:
+                    ttk.Label(body, wraplength=560, justify="left",
+                              text="  '%s' on %s channels %s" % (x["camera"], x["name"],
+                                                                 ", ".join(map(str, x["channels"])))).pack(anchor="w")
 
         threading.Thread(target=work, daemon=True).start()
 

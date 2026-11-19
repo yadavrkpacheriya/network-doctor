@@ -103,7 +103,7 @@ class _NvrScreenState extends State<NvrScreen> {
       final orphans = lowCoverage ? <OrphanCam>[] : findOrphans(recs, camLive);
       _set(() {
         _recorders = recs;
-        _dup = DupResult(dup.within, dup.cross, orphans);
+        _dup = DupResult(dup.within, dup.cross, orphans, dup.maybeWithin, dup.maybeCross);
         _lowCoverage = lowCoverage;
         final okRec = recs.where((r) => r.channels.isNotEmpty).length;
         final orphanTxt = lowCoverage
@@ -179,6 +179,20 @@ class _NvrScreenState extends State<NvrScreen> {
               _sectionTitle('Live cameras NOT in any recorder (not being recorded)', Colors.red.shade700),
               for (final o in dup.orphans)
                 _card(Icons.videocam_off, Colors.red.shade700, o.ip, o.name.isNotEmpty ? o.name : 'not added to any DVR/NVR'),
+            ],
+            if (dup.maybeCross.isNotEmpty || dup.maybeWithin.isNotEmpty) ...[
+              _sectionTitle('Same NAME only — could be one camera twice OR two different cameras', Colors.amber.shade800),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('Matched by name because these recorders don\'t report camera IPs. Check before '
+                    'removing anything — two real cameras can share a name.', style: TextStyle(fontSize: 12, color: Colors.amber.shade900)),
+              ),
+              for (final c in dup.maybeCross)
+                _card(Icons.help_outline, Colors.amber.shade800, c.camera,
+                    c.places.map((p) => 'on ${p.nvrName}  ·  channel ${p.chan}').join('\n')),
+              for (final w in dup.maybeWithin)
+                _card(Icons.help_outline, Colors.amber.shade800, w.camera,
+                    'on ${w.nvrName}  ·  channels ${w.channels.join(', ')}'),
             ],
           ],
           if (_recorders.isNotEmpty) ...[
