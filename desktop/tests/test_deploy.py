@@ -84,13 +84,32 @@ class Sweep(unittest.TestCase):
             if argv[:2] == ["net", "use"] and "/delete" not in argv:
                 user = argv[3]
                 seen.append(user)
-                return (0, "OK") if user == "/user:good" else (2, "error 1326 logon failure")
+                # 'bad' fails as a plain wrong-authority ("not supported"), which IS worth another user form;
+                # 'good' then connects. Keeps the "fall through to the next credential" behaviour under test.
+                return (0, "OK") if "good" in user else (2, "The request is not supported.")
             return 0, ""
         targets = [{"ip": "192.168.0.70", "name": "PC1"}]
         creds = [("bad", "bad", "x"), ("good", "good", "y")]
         res = D.deploy_all(targets, creds, "", "/src", run=run, place=lambda ip, src, central: None)
         self.assertTrue(res[0]["ok"])
-        self.assertEqual(seen, ["/user:bad", "/user:good"])     # fell through to the working credential
+        # 'bad' tried host-qualified then bare ("not supported" => worth another form), then 'good' connects on
+        # its first (qualified) form.
+        self.assertEqual(seen, [r"/user:192.168.0.70\bad", "/user:bad", r"/user:192.168.0.70\good"])
+
+    def test_wrong_password_does_not_retry_other_user_forms(self):
+        # error 86 (bad password) is the same for every user form, so we must NOT waste a second attempt on it
+        seen = []
+
+        def run(argv, timeout=40):
+            if argv[:2] == ["net", "use"] and "/delete" not in argv:
+                seen.append(argv[3])
+                return 2, "System error 86 has occurred. The specified network password is not correct."
+            return 0, ""
+        res = D.deploy_one("192.168.0.70", "Administrator", "wrong", "", "/src",
+                           run=run, place=lambda ip, src, central: None)
+        self.assertFalse(res["ok"])
+        self.assertIn("wrong password", res["detail"])
+        self.assertEqual(seen, [r"/user:192.168.0.70\Administrator"])   # only ONE form tried
 
 
 if __name__ == "__main__":

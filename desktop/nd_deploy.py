@@ -75,42 +75,59 @@ TASK_FIX = "NetworkDoctor Fix"
 _PS = r"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File"
 
 
-def net_use_argv(ip, user, pw, connect=True):
+def qualify_user(ip, user):
+    r"""Qualify a BARE local-admin name with the target host, so a workgroup PC knows which account authority to
+    use. An unqualified "Administrator" against \\ip\C$ is exactly what makes Windows answer "The request is not
+    supported" / 1312 on workgroup machines (Rakesh, 19 Nov: 0 of 22 installed, almost all "request not
+    supported"). A name that already carries a domain (DOMAIN\user or user@domain) is left untouched."""
+    u = (user or "").strip()
+    if "\\" in u or "/" in u or "@" in u:
+        return u
+    return "%s\\%s" % (ip, u)
+
+
+def _u(ip, user, qualify):
+    return qualify_user(ip, user) if qualify else user
+
+
+def net_use_argv(ip, user, pw, connect=True, qualify=True):
     share = r"\\%s\C$" % ip
     if connect:
-        return ["net", "use", share, "/user:" + user, pw]
+        return ["net", "use", share, "/user:" + _u(ip, user, qualify), pw]
     return ["net", "use", share, "/delete", "/y"]
 
 
-def schtasks_create_argv(ip, user, pw, name, run_cmd, sched):
+def schtasks_create_argv(ip, user, pw, name, run_cmd, sched, qualify=True):
     """A `schtasks /S` create line (SYSTEM, highest privileges, replace existing). `sched` is e.g. ('ONLOGON',)
-    or ('ONCE','00:00')."""
-    argv = ["schtasks", "/S", ip, "/U", user, "/P", pw, "/Create", "/TN", name,
+    or ('ONCE','00:00'). The user is host-qualified for the same reason as net_use_argv unless qualify=False
+    (the caller already picked the working form)."""
+    argv = ["schtasks", "/S", ip, "/U", _u(ip, user, qualify), "/P", pw, "/Create", "/TN", name,
             "/TR", run_cmd, "/RU", "SYSTEM", "/RL", "HIGHEST", "/F", "/SC", sched[0]]
     if sched[0] == "ONCE":
         argv += ["/ST", sched[1] if len(sched) > 1 else "00:00"]
     return argv
 
 
-def schtasks_run_argv(ip, user, pw, name):
-    return ["schtasks", "/S", ip, "/U", user, "/P", pw, "/Run", "/TN", name]
+def schtasks_run_argv(ip, user, pw, name, qualify=True):
+    return ["schtasks", "/S", ip, "/U", _u(ip, user, qualify), "/P", pw, "/Run", "/TN", name]
 
 
 def agent_run_cmd(mode):
     return '%s "%s\\networkdoctor-agent.ps1" -Mode %s' % (_PS, REMOTE_DIR, mode)
 
 
-def deploy_plan(ip, user, pw):
+def deploy_plan(ip, user, pw, qualify=True):
     """The ordered steps to install the agent on `ip`. Each step is (label, argv). File copies are handled by
     the runner separately (they need the local source dir), so this is the task-registration half, which is
-    what we unit-test. Credentials appear only here, on the target you chose."""
+    what we unit-test. Credentials appear only here, on the target you chose. qualify=False when the caller has
+    already chosen the working user form (so it isn't host-qualified twice)."""
     return [
         ("register background task",
-         schtasks_create_argv(ip, user, pw, TASK_BG, agent_run_cmd("background"), ("ONLOGON",))),
+         schtasks_create_argv(ip, user, pw, TASK_BG, agent_run_cmd("background"), ("ONLOGON",), qualify=qualify)),
         ("register fix task",
-         schtasks_create_argv(ip, user, pw, TASK_FIX, agent_run_cmd("fix"), ("ONCE", "00:00"))),
+         schtasks_create_argv(ip, user, pw, TASK_FIX, agent_run_cmd("fix"), ("ONCE", "00:00"), qualify=qualify)),
         ("start the agent now",
-         schtasks_run_argv(ip, user, pw, TASK_BG)),
+         schtasks_run_argv(ip, user, pw, TASK_BG, qualify=qualify)),
     ]
 
 
@@ -149,8 +166,21 @@ def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
     `run` and `place` are injectable for tests (place does the file copy, which is Windows-only)."""
     place = place or _place_files
 
-    # 1. authenticate to the admin share
-    rc, out = run(net_use_argv(ip, user, pw, True))
+    # 1. authenticate to the admin share. Try the host-qualified name first (what workgroup PCs need), and if the
+    # authority is rejected ("request not supported" / 1312 / logon failure), retry with the name exactly as saved
+    # - a real DOMAIN\user or user@domain account wants that form, not ip\user. The form that connects is reused
+    # for schtasks so both halves authenticate the same way.
+    share = r"\\%s\C$" % ip
+    run(["net", "use", share, "/delete", "/y"])          # clear any stale session to this share first (error 1219)
+    forms = [qualify_user(ip, user)]
+    if forms[0] != user:
+        forms.append(user)                                # fall back to the bare/domain name as saved
+    rc, out, used = 1, "", forms[0]
+    for cand in forms:
+        rc, out = run(["net", "use", share, "/user:" + cand, pw])
+        used = cand
+        if rc == 0 or not _authority_retry(out):
+            break                                         # connected, or a failure another form won't fix
     if rc != 0:
         return {"ip": ip, "ok": False, "step": "connect", "detail": _net_hint(out)}
     try:
@@ -158,14 +188,14 @@ def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
             place(ip, src_dir, central)
         except Exception as e:  # noqa: BLE001
             return {"ip": ip, "ok": False, "step": "copy", "detail": "cannot write C$ share: %s" % e}
-        # 2. register + start the tasks
-        for label, argv in deploy_plan(ip, user, pw):
+        # 2. register + start the tasks, using the SAME user form that connected
+        for label, argv in deploy_plan(ip, used, pw, qualify=False):
             rc, out = run(argv)
             if rc != 0:
                 return {"ip": ip, "ok": False, "step": label, "detail": (out or "").strip()[:200]}
         return {"ip": ip, "ok": True, "step": "done", "detail": "agent installed and started"}
     finally:
-        run(net_use_argv(ip, user, pw, False))
+        run(["net", "use", share, "/delete", "/y"])
 
 
 def _deploy_target(t, creds, central, src_dir, run, place):
@@ -209,12 +239,33 @@ def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=
     return results
 
 
+def _authority_retry(out):
+    """True when a connect failure might be fixed by trying a DIFFERENT user form (qualified vs bare) - i.e. the
+    account authority was wrong, not the password or the reachability. 'The request is not supported' (1312) and
+    plain logon failures fall here; a wrong-password (error 86 / 1326 / 'network password is not correct') does
+    not, because every form has the same password."""
+    o = (out or "").lower()
+    if "86" in o or "1326" in o or "password is not correct" in o or "currently disabled" in o:
+        return False
+    return ("not supported" in o or "1312" in o or "logon failure" in o or "access is denied" in o or "1327" in o)
+
+
 def _net_hint(out):
     o = (out or "").lower()
     if "1219" in o or "multiple connections" in o:
-        return "already connected with other credentials - run: net use * /delete"
-    if "53" in o or "network path" in o:
-        return "cannot reach the PC's admin share (File & Printer Sharing off, or firewall)"
-    if "5" in o or "access is denied" in o or "1326" in o or "logon failure" in o:
+        return "was already connected with another login - cleared and retried; if it persists, run: net use * /delete"
+    if "1331" in o or "currently disabled" in o:
+        return "that admin account is disabled on the PC - enable it or use a different admin login"
+    if "error 86" in o or "system error 86" in o or "password is not correct" in o or "1326" in o or \
+            "logon failure" in o:
+        return "wrong password for this PC's admin account"
+    if "not supported" in o or "1312" in o:
+        return ("the PC refused the login authority even host-qualified - usually a workgroup PC that needs "
+                "LocalAccountTokenFilterPolicy=1, or admin-share/File & Printer Sharing turned off")
+    if "error 53" in o or "system error 53" in o or "network path" in o or "1231" in o:
+        return "cannot reach the PC's admin share (PC offline, File & Printer Sharing off, or firewall)"
+    if "timed out" in o:
+        return "PC offline or very slow (timed out)"
+    if "access is denied" in o or "error 5" in o or "system error 5" in o:
         return "admin login refused (wrong credential, or workgroup PC needs LocalAccountTokenFilterPolicy=1)"
     return (out or "could not connect").strip()[:200]
