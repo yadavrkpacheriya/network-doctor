@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.32"
+VERSION = "4.33"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1314,25 +1314,47 @@ class App(tk.Tk):
                        for d in (getattr(self, "devices", []) or []) if d.get("ip")]
             NDUP.enrich_from_scan(recs, scanned)
             dups = NDUP.find_duplicates(recs)
-            # live cameras that are NOT recorders - to find any connected to the network but in no NVR/DVR
-            live = [{"ip": d.get("ip"), "name": d.get("name") or d.get("ip")}
-                    for d in (getattr(self, "devices", []) or [])
-                    if d.get("ip") and d.get("online") and core.CAT_CAM in str(d.get("category", ""))
-                    and core.cctv_role(d) != "nvr"]
-            orphans = NDUP.find_orphans(recs, live)
-            self.q.put(("call", lambda: show(recs, dups, orphans)))
+            # How many channels do we actually have a camera IP for? The orphan check ("live but in no recorder")
+            # is only trustworthy when most channels resolved to an IP. On recorders that hide channel IPs (code
+            # 607) and whose channel names don't match the scan, almost nothing resolves - so EVERY camera would
+            # look like an orphan, which is a false alarm. Only run the orphan check when coverage is good.
+            total_ch = sum(len(r["channels"]) for r in recs)
+            with_ip = sum(1 for r in recs for ch in r["channels"] if (ch.get("ip") or "").strip())
+            coverage = (with_ip / total_ch) if total_ch else 0.0
+            orphans = []
+            if coverage >= 0.6:                           # at least 60% of channels have a known camera IP
+                live = [{"ip": d.get("ip"), "name": d.get("name") or d.get("ip")}
+                        for d in (getattr(self, "devices", []) or [])
+                        if d.get("ip") and d.get("online") and core.CAT_CAM in str(d.get("category", ""))
+                        and core.cctv_role(d) != "nvr"]
+                orphans = NDUP.find_orphans(recs, live)
+            self.q.put(("call", lambda: show(recs, dups, orphans, total_ch, with_ip)))
 
-        def show(recs, dups, orphans):
+        def show(recs, dups, orphans, total_ch=0, with_ip=0):
             for w in body.winfo_children():
                 w.destroy()
             within, cross = dups["within"], dups["cross"]
             if not recs:
                 status.set("Couldn't read any recorder - add the NVR/DVR login in Setup > Camera/NVR/DVR logins.")
                 return
+            # orphans are only meaningful when we resolved most channels' camera IPs
+            low_cov = total_ch and with_ip < 0.6 * total_ch
             if not within and not cross and not orphans:
-                status.set("Read %d recorder(s). No duplicate cameras, and every live camera is on a recorder."
-                           % len(recs))
+                if low_cov:
+                    status.set("Read %d recorder(s), %d channel(s). These recorders don't report each channel's "
+                               "camera IP (and their channel names don't match the scan), so I can't reliably say "
+                               "which cameras are missing - I won't guess and flag them all. Duplicates by name are "
+                               "still checked (none found). To get the missing-camera list, the NVR channel names "
+                               "need to match the camera names in Devices, or the NVR must expose channel IPs."
+                               % (len(recs), total_ch))
+                else:
+                    status.set("Read %d recorder(s). No duplicate cameras, and every live camera is on a recorder."
+                               % len(recs))
                 return
+            if low_cov:
+                ttk.Label(body, text="Note: these recorders don't report channel IPs, so the 'not in any recorder' "
+                          "list is unreliable and is hidden. Duplicates found by channel name are shown below.",
+                          wraplength=640, foreground="#92400e").pack(anchor="w", pady=(2, 6))
             if orphans:
                 self._record_alert("warning", "%d camera(s) live on the network but in NO NVR/DVR (not recorded): %s"
                                    % (len(orphans), ", ".join(o["ip"] for o in orphans[:6])), "NVR check")
@@ -1341,8 +1363,10 @@ class App(tk.Tk):
                 for o in orphans:
                     ttk.Label(body, wraplength=560, justify="left",
                               text="  %s  %s" % (o["ip"], ("- " + o["name"]) if o["name"] else "")).pack(anchor="w")
-            status.set("Read %d recorder(s): %d duplicate within an NVR, %d on more than one NVR, "
-                       "%d live camera(s) in no recorder." % (len(recs), len(within), len(cross), len(orphans)))
+            orphan_txt = ("%d live camera(s) in no recorder." % len(orphans)) if not low_cov \
+                else "missing-camera list hidden (recorders don't report channel IPs)."
+            status.set("Read %d recorder(s): %d duplicate within an NVR, %d on more than one NVR; %s"
+                       % (len(recs), len(within), len(cross), orphan_txt))
             if cross:
                 self._record_alert("warning", "%d camera(s) recorded by more than one NVR: %s"
                                    % (len(cross), ", ".join(x["camera"] for x in cross[:6])), "NVR check")

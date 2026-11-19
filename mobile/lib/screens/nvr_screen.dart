@@ -24,6 +24,7 @@ class _NvrScreenState extends State<NvrScreen> {
   String _status = '';
   List<NvrRecorder> _recorders = [];
   DupResult? _dup;
+  bool _lowCoverage = false;
 
   @override
   void initState() {
@@ -92,16 +93,24 @@ class _NvrScreenState extends State<NvrScreen> {
           recs.add(NvrRecorder(rip, '$rip (login failed)', const []));
         }
       }
-      // 3) duplicates + orphans
+      // 3) duplicates + orphans. The orphan check ("live but in no recorder") is only trustworthy when most
+      // channels resolved to a camera IP. On recorders that hide channel IPs, almost nothing resolves, so every
+      // camera would look like an orphan - a false alarm. Only run it when coverage is good.
       final dup = findDuplicates(recs);
-      final orphans = findOrphans(recs, camLive);
+      final totalCh = recs.fold<int>(0, (s, r) => s + r.channels.length);
+      final withIp = recs.fold<int>(0, (s, r) => s + r.channels.where((c) => c.ip.trim().isNotEmpty).length);
+      final lowCoverage = totalCh > 0 && withIp < 0.6 * totalCh;
+      final orphans = lowCoverage ? <OrphanCam>[] : findOrphans(recs, camLive);
       _set(() {
         _recorders = recs;
         _dup = DupResult(dup.within, dup.cross, orphans);
+        _lowCoverage = lowCoverage;
         final okRec = recs.where((r) => r.channels.isNotEmpty).length;
+        final orphanTxt = lowCoverage
+            ? 'missing-camera list hidden (recorders don\'t report channel IPs).'
+            : '${orphans.length} camera(s) not in any recorder.';
         _status = '$okRec of ${recs.length} recorder(s) read. '
-            '${dup.within.length} within-duplicate(s), ${dup.cross.length} across-recorder duplicate(s), '
-            '${orphans.length} camera(s) not in any recorder.';
+            '${dup.within.length} within-duplicate(s), ${dup.cross.length} across-recorder duplicate(s). $orphanTxt';
       });
     } catch (e) {
       _set(() => _status = 'Error: $e');
@@ -140,7 +149,15 @@ class _NvrScreenState extends State<NvrScreen> {
           ],
           if (dup != null) ...[
             const Divider(height: 28),
-            if (dup.isEmpty)
+            if (_lowCoverage)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                    "These recorders don't report channel IPs, so the 'not in any recorder' list is unreliable and "
+                    'is hidden. Duplicates found by channel name/IP are still shown.',
+                    style: TextStyle(color: Colors.orange.shade900, fontSize: 12)),
+              ),
+            if (dup.isEmpty && !_lowCoverage)
               Row(children: [
                 Icon(Icons.check_circle, color: Colors.green.shade700),
                 const SizedBox(width: 8),
