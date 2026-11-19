@@ -110,5 +110,35 @@ class Client(unittest.TestCase):
         self.assertIsNone(R.from_settings({}, "1.1.1.1"))
 
 
+class WifiPassword(unittest.TestCase):
+    def _client(self, responses):
+        c = R.RouterOS.__new__(R.RouterOS)
+        c.cmd = lambda path, **kw: responses.get(path, [])
+        return c
+
+    def test_classic_security_profile_ties_ssid_to_key(self):
+        c = self._client({
+            "/interface/wireless/security-profiles/print": [
+                {"name": "default", "wpa2-pre-shared-key": "office-secret"}],
+            "/interface/wireless/print": [{"ssid": "SunHome", "security-profile": "default"}],
+        })
+        self.assertEqual(c.wifi_passwords(), [("SunHome", "office-secret")])
+
+    def test_newer_wifi_package(self):
+        c = self._client({
+            "/interface/wifi/print": [{"configuration.ssid": "SunHome5G", "security.passphrase": "newkey123"}]})
+        self.assertEqual(c.wifi_passwords(), [("SunHome5G", "newkey123")])
+
+    def test_blank_key_skipped_and_deduped(self):
+        c = self._client({
+            "/interface/wireless/security-profiles/print": [
+                {"name": "default", "wpa2-pre-shared-key": ""},            # blank -> skipped
+                {"name": "p2", "wpa2-pre-shared-key": "k"}],
+            "/interface/wireless/print": [
+                {"ssid": "A", "security-profile": "p2"}, {"ssid": "A", "security-profile": "p2"}],  # dup
+        })
+        self.assertEqual(c.wifi_passwords(), [("A", "k")])
+
+
 if __name__ == "__main__":
     unittest.main()

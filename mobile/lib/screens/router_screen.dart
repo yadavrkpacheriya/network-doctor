@@ -182,6 +182,23 @@ class _RouterScreenState extends State<RouterScreen> {
     });
   }
 
+  Future<void> _wifiPassword() async {
+    _set(() => _cmdOut = '');
+    await _task('Reading Wi-Fi password...', (r) async {
+      final wifi = await r.wifiPasswords();
+      _set(() {
+        if (wifi.isEmpty) {
+          _cmdOut = 'No Wi-Fi password found on this router. Either the Wi-Fi is run by a separate access point '
+              '(check that device), or this login can\'t read the wireless config.';
+        } else {
+          _cmdOut = wifi.map((w) => w.$1.isNotEmpty ? 'Wi-Fi "${w.$1}"\n  Password: ${w.$2}' : 'Password: ${w.$2}')
+              .join('\n\n');
+        }
+        _status = 'This is your own saved Wi-Fi key, read from the router.';
+      });
+    });
+  }
+
   Future<void> _backup() async {
     _set(() => _cmdOut = '');
     await _task('Reading the router config...', (r) async {
@@ -312,6 +329,10 @@ class _RouterScreenState extends State<RouterScreen> {
               onPressed: _busy ? null : _backup,
               icon: const Icon(Icons.save),
               label: const Text('Backup config')),
+          FilledButton.tonalIcon(
+              onPressed: _busy ? null : _wifiPassword,
+              icon: const Icon(Icons.wifi_password),
+              label: const Text('Show Wi-Fi password')),
           FilledButton.tonalIcon(
               onPressed: _busy ? null : _optimize,
               icon: const Icon(Icons.speed),

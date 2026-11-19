@@ -346,6 +346,41 @@ class RouterOS:
     def leases(self):
         return self.cmd("/ip/dhcp-server/lease/print")
 
+    def wifi_passwords(self):
+        """Recover YOUR OWN Wi-Fi password(s) from this router (for when you've forgotten it). Reads the saved
+        passphrase from the router's wireless config - your own key, read at its source, not cracked. Returns
+        [(ssid, password)]; ssid may be '' on older RouterOS. Covers classic security-profiles and newer wifi."""
+        out, seen = [], set()
+
+        def add(ssid, pw):
+            if pw and (ssid, pw) not in seen:
+                seen.add((ssid, pw))
+                out.append((ssid, pw))
+
+        try:
+            profs = self.cmd("/interface/wireless/security-profiles/print")
+            key_by = {}
+            for p in profs:
+                if p.get("name"):
+                    key_by[p["name"]] = (p.get("wpa2-pre-shared-key") or p.get("wpa-pre-shared-key")
+                                         or p.get("pre-shared-key") or "")
+            ifs = self.cmd("/interface/wireless/print")
+            if not ifs:
+                for key in key_by.values():
+                    add("", key)
+            for i in ifs:
+                add(i.get("ssid", ""), key_by.get(i.get("security-profile", "default"), ""))
+        except Exception:  # noqa: BLE001
+            pass
+        for path in ("/interface/wifi/print", "/interface/wifiwave2/print"):
+            try:
+                for a in self.cmd(path):
+                    add(a.get("configuration.ssid") or a.get("ssid", ""),
+                        a.get("security.passphrase") or a.get("passphrase", ""))
+            except Exception:  # noqa: BLE001
+                pass
+        return out
+
     # ---- scripts (the same text people would paste in WinBox > New Terminal)
     def run_script(self, source, name="netdoctor-run"):
         """Runs a RouterOS script on the router. Returns the router's error text, or '' when it ran to the end."""

@@ -230,6 +230,50 @@ class RouterOs {
     return 'ether1';
   }
 
+  /// Recover YOUR OWN Wi-Fi password from the router you're logged in to (for when you've forgotten it). Reads
+  /// the configured passphrase from the router's wireless config - this is your own saved key, read at its
+  /// source, not cracked. Returns a list of (ssid, password); SSID may be blank on older RouterOS. Tries the
+  /// classic security-profiles, CAPsMAN, and the newer wifiwave2 config.
+  Future<List<(String ssid, String pass)>> wifiPasswords() async {
+    final out = <(String, String)>[];
+    final seen = <String>{};
+    void add(String ssid, String pass) {
+      if (pass.isEmpty) return;
+      final k = '$ssid|$pass';
+      if (seen.add(k)) out.add((ssid, pass));
+    }
+
+    // classic: security profile holds the key; wireless interface holds the SSID that uses that profile
+    try {
+      final profs = [
+        for (final (t, w) in await talk(['/interface/wireless/security-profiles/print'])) if (t == '!re') _attrs(w)
+      ];
+      final keyByProfile = <String, String>{};
+      for (final p in profs) {
+        final key = p['wpa2-pre-shared-key'] ?? p['wpa-pre-shared-key'] ?? p['pre-shared-key'] ?? '';
+        if ((p['name'] ?? '').isNotEmpty) keyByProfile[p['name']!] = key;
+      }
+      final ifs = [for (final (t, w) in await talk(['/interface/wireless/print'])) if (t == '!re') _attrs(w)];
+      if (ifs.isEmpty) {
+        keyByProfile.forEach((_, key) => add('', key));
+      }
+      for (final i in ifs) {
+        add(i['ssid'] ?? '', keyByProfile[i['security-profile'] ?? 'default'] ?? '');
+      }
+    } catch (_) {}
+    // newer wifiwave2 / wifi package: SSID + passphrase on the wifi config
+    for (final path in const ['/interface/wifi/print', '/interface/wifiwave2/print']) {
+      try {
+        for (final (t, w) in await talk([path])) {
+          if (t != '!re') continue;
+          final a = _attrs(w);
+          add(a['configuration.ssid'] ?? a['ssid'] ?? '', a['security.passphrase'] ?? a['passphrase'] ?? '');
+        }
+      } catch (_) {}
+    }
+    return out;
+  }
+
   /// Relieve a slow network, remotely and reversibly. Safe, well-understood RouterOS housekeeping that fixes the
   /// usual office causes of slowness without touching speeds anyone paid for:
   ///  - a fair queue (PCQ, by SRC then DST) on the WAN so ONE device/download can't starve everyone else;

@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.34"
+VERSION = "4.35"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1919,6 +1919,7 @@ class App(tk.Tk):
         ttk.Button(ro, text="Apply router settings now", command=lambda: self.router_apply(
             M.router_setup_commands(self.lip), "Router settings (NetFlow, log, SNMP, loop protection)")).pack(
             side="left", padx=4)
+        ttk.Button(ro, text="Show Wi-Fi password", command=self.router_wifi_password).pack(side="left", padx=4)
         ttk.Button(ro, text="Forget login", command=self.router_forget).pack(side="right")
         self.var_ro_info = tk.StringVar(value="saved - " + (r.get("ident") or "") if r.get("user") else
                                         "not set: commands are shown to paste in WinBox instead")
@@ -2133,6 +2134,50 @@ class App(tk.Tk):
         self._save_settings()
         self.var_ro_pw.set("")
         self.var_ro_info.set("not set: commands are shown to paste in WinBox instead")
+
+    def router_wifi_password(self):
+        """Recover the Wi-Fi password(s) saved on the router, for when the user has forgotten it. Reads the key
+        from the router's own wireless config (not cracked). Needs the router login."""
+        c = self.router_client()
+        if not c:
+            return
+        self.var_ro_info.set("Reading Wi-Fi password...")
+
+        def work():
+            try:
+                with c:
+                    wifi = c.wifi_passwords()
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("call", lambda: self.var_ro_info.set("Couldn't read it: " + str(e))))
+                return
+
+            def done():
+                self.var_ro_info.set("saved")
+                if not wifi:
+                    messagebox.showinfo(APP, "No Wi-Fi password found on this router.\n\nThe Wi-Fi may be run by a "
+                                        "separate access point - check that device - or this login can't read the "
+                                        "wireless config.")
+                    return
+                txt = "\n\n".join(("Wi-Fi \"%s\"\n    Password: %s" % (s, p)) if s else ("Password: %s" % p)
+                                  for s, p in wifi)
+                top = tk.Toplevel(self)
+                top.title("Your Wi-Fi password")
+                top.transient(self)
+                fr = ttk.Frame(top, padding=14)
+                fr.pack(fill="both", expand=True)
+                ttk.Label(fr, text="Read from your router (this is your own saved key):",
+                          foreground="#0f766e").pack(anchor="w", pady=(0, 8))
+                box = tk.Text(fr, height=min(10, 2 + 3 * len(wifi)), width=52, wrap="word")
+                box.insert("1.0", txt)
+                box.configure(state="disabled")
+                box.pack(fill="both", expand=True)
+
+                def copy():
+                    self.clipboard_clear()
+                    self.clipboard_append(txt)
+                ttk.Button(fr, text="Copy", command=copy).pack(anchor="e", pady=(8, 0))
+            self.q.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
 
     def router_client(self, ask=True):
         c = RO.from_settings(self._settings(), self.gw)
