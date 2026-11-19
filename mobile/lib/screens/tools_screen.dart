@@ -6,6 +6,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import '../net/model.dart';
 import '../net/snmp.dart' as snmp;
 import '../net/tools.dart';
+import 'nvr_screen.dart';
 import 'router_screen.dart';
 import 'device_screen.dart';
 import 'clean_screen.dart';
@@ -51,6 +52,9 @@ class ToolsScreen extends StatelessWidget {
         tool(const Color(0xFF7C3AED), Icons.vpn_key, 'Router (MikroTik) login',
             'Log in to the router directly over Wi-Fi: DHCP leases, ARP (IP-MAC), run commands - no PC',
             const RouterScreen()),
+        tool(const Color(0xFF1D4ED8), Icons.dvr, 'NVR / DVR cameras',
+            'Read every recorder, find duplicate cameras and cameras not in any DVR/NVR - no PC',
+            const NvrScreen()),
         _header(context, 'Your phone', const Color(0xFF7C3AED)),
         tool(const Color(0xFF7C3AED), Icons.cleaning_services, 'Phone clean-up',
             'Find duplicate, junk and big files, free space and keep the phone fast', const CleanScreen()),
