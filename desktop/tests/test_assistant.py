@@ -65,6 +65,17 @@ class Plan(unittest.TestCase):
         self.assertIn("192.168.0.38", r["auto"][0]["cmd"])
         self.assertIn("FE:EA:4C:27:3C:36", r["auto"][0]["cmd"])
 
+    def test_dhcp_pool_full_not_misread_as_new_device(self):
+        # the pool text contains "new devices may get no address" - must classify as dhcp_full, not new_device
+        r = AL.recipe("The DHCP pool is almost full - new devices may get no address. Widen the range.")
+        self.assertEqual(r["kind"], "dhcp_full")
+        self.assertTrue(r["auto"])                      # offers the lease-time fix
+        self.assertIn("lease", r["auto"][0]["cmd"])
+
+    def test_real_new_device_still_classifies(self):
+        r = AL.recipe("6 new device(s) on the network (3 Phones): iPhone-16 192.168.0.17")
+        self.assertEqual(r["kind"], "new_device")
+
     def test_unknown(self):
         p = A.plan("make me a sandwich")
         self.assertEqual(p["kind"], "none")

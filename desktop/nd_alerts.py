@@ -181,6 +181,26 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "Re-check after a few minutes: the repeated line should stop."],
                     auto=auto)
 
+    # DHCP pool filling up. NOTE: this is checked BEFORE the 'new device' rule because this text contains the
+    # words "new devices may get no address" - otherwise it was misclassified as new_device.
+    if "pool is almost full" in low or "pool almost full" in low or ("dhcp" in low and "almost full" in low):
+        return _fix(2, "dhcp_full", "The DHCP pool is filling up - usually phones with private/rotating MACs",
+                    "Phones set to a 'private / random Wi-Fi address' change their MAC every so often. The router "
+                    "treats each new MAC as a brand-new device and hands out a fresh lease, while the old leases "
+                    "sit unused until they expire - so the pool slowly fills with ghost leases of the SAME phones. "
+                    "Widening the range only delays it; the real fix is to make leases expire quickly so the "
+                    "ghosts free up, and to keep fixed gear out of the dynamic pool.",
+                    "Shorten the DHCP lease time so ghost leases free up fast (button below); reserve cameras, PCs "
+                    "and printers as static IPs (Cameras > Restart & fix camera IPs); ideally put phones on their "
+                    "own Wi-Fi/pool.",
+                    ["Press 'Shorten DHCP lease to 2h' - rotated-MAC ghosts then expire in 2h instead of a day.",
+                     "Reserve your fixed devices (cameras/NVR/PCs/printers) so the pool is only used by phones.",
+                     "If phones keep churning, give them a separate SSID with its own larger pool.",
+                     "On managed office phones, turn off 'Private Wi-Fi address' for the office network."],
+                    auto=[("Shorten DHCP lease to 2h (frees ghost leases fast)", "router",
+                           "/ip dhcp-server set [find] lease-time=2h",
+                           "/ip dhcp-server set [find] lease-time=1d")])
+
     if "ip conflict" in low or "conflict on" in low or "used by another device" in low:
         return _fix(1, "ip_conflict", f"Two devices use the same IP {ip}",
                     "Two devices answer for one IP. Both get cut off at random; printers and ERP sessions drop.",
@@ -484,7 +504,8 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "consider changing the router password."],
                     app=("Open Config backup", "t_backup"))
 
-    if "new device" in low or "randomized" in low or "random mac" in low:
+    if (("new device" in low and "pool" not in low and "almost full" not in low)
+            or "randomized" in low or "random mac" in low):
         return _fix(3, "new_device", "New device(s) joined the network",
                     "Phones with a 'private / randomized' MAC show as new devices every time, so their history and "
                     "names get lost.",
