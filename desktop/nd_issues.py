@@ -46,9 +46,25 @@ def group(items, now=None, days=1):
     return rows
 
 
+# Kinds that are OBSERVATIONS, not faults the app can fix - they must never enter the recurring / "needs a
+# permanent fix" / Send-to-Claude pipeline (Rakesh, 19 Nov: 10 of 12 "recurring issues" were just phones/PCs
+# using Facebook/Instagram/Google - normal usage the app can't and shouldn't "fix", so they piled up as open).
+# These still show in the Usage view; they just aren't treated as unsolved problems.
+INFORMATIONAL_KINDS = {"other", "bandwidth_hog", "usage", "heavy_usage", "top_talker", "device_spike", "big_user"}
+
+
+def _is_fixable(row):
+    """A row the app could actually act on - excludes pure usage/bandwidth observations. A usage alert can be
+    tagged fixable by the recipe (row['actionable'] True) if it ever maps to a real fix; by default it is not."""
+    if row.get("actionable"):
+        return True
+    return (row.get("kind") or "other") not in INFORMATIONAL_KINDS
+
+
 def recurring(items, now=None, days=1, min_count=3):
-    """The problems that happened at least `min_count` times in the window - the ones worth fixing for good."""
-    return [r for r in group(items, now, days) if r["count"] >= min_count]
+    """The FIXABLE problems that happened at least `min_count` times in the window - the ones worth fixing for
+    good. Usage/bandwidth observations are excluded (they aren't faults the app can fix)."""
+    return [r for r in group(items, now, days) if r["count"] >= min_count and _is_fixable(r)]
 
 
 def top_issues(items, now=None, days=1, n=10):
@@ -58,8 +74,9 @@ def top_issues(items, now=None, days=1, n=10):
 
 def needs_claude(row):
     """A recurring problem the app could NOT fix itself is the one to hand to Claude for a permanent fix:
-    it recurs (>=3) and is still open."""
-    return row["count"] >= 3 and row["open"]
+    it recurs (>=3), is still open, AND is a real fixable fault - never a usage/bandwidth observation, which the
+    app can't fix and which should never land on the Send-to-Claude list."""
+    return row["count"] >= 3 and row["open"] and _is_fixable(row)
 
 
 def _ago(seconds):

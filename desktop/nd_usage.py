@@ -1178,13 +1178,18 @@ class UsageStore:
         last = days_seen[-1] if days_seen else today.isoformat()
         for dev, per_day in dev_day.items():
             hist = [b for d, b in per_day.items() if d != last]
-            if len(hist) >= 3 and per_day.get(last, 0) > 3 * max(statistics.mean(hist), 200e6 / 3):
+            today_use = per_day.get(last, 0)
+            # Only flag a REAL outlier, not normal phone use (Rakesh, 19 Nov: a 500 MB Instagram day kept firing
+            # as "5x usual"). Require: a mature baseline (>=5 days of history), at least 2 GB absolute today, AND
+            # >=5x a baseline that itself is floored at 1 GB - so an ordinary 300-600 MB phone day never alarms.
+            base = max(statistics.mean(hist), 1e9) if hist else 1e9
+            if len(hist) >= 5 and today_use >= 2e9 and today_use > 5 * base:
                 nm = self.who(names, dev)
                 top = dev_app[dev].most_common(1)[0][0] if dev_app[dev] else "?"
                 if self.is_trusted(top):
                     continue  # a deliberate, expected service (e.g. Acronis backup) - not a problem
                 out.append({"sev": "warning", "title": f"{nm} used {fmt_bytes(per_day[last])} on {last}",
-                            "text": f"About {per_day[last] / max(statistics.mean(hist), 1):.0f} times its usual "
+                            "text": f"About {today_use / base:.0f} times its usual "
                                     f"daily use. Mostly: {top}.",
                             "action": "Check what runs on it (Analyse in the Devices tab). A backup, update or video "
                                       "download all day - limit its speed (Commands > Limit the speed of one device).",

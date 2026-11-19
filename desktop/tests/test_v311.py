@@ -191,12 +191,26 @@ class Usage(unittest.TestCase):
             day = dt.date.today() - dt.timedelta(days=back)
             t = time.mktime((day.year, day.month, day.day, 10, 0, 0, 0, 0, -1))
             self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 5_000_000, False, now=t)
-        self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 3_000_000_000, False, now=time.time())
+        # a GENUINE outlier (7 GB in a day) still fires - malware, a stuck backup, a runaway download
+        self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 7_000_000_000, False, now=time.time())
         spikes = [i for i in self.s.insights() if i.get("kind") == "device_spike"]
         self.assertEqual(len(spikes), 1)
         self.assertEqual(spikes[0]["dev"], "AA:00:00:00:00:01")
         self.assertEqual(spikes[0]["day"], dt.date.today().isoformat())
         self.assertIn("ACC-PC", spikes[0]["title"])
+
+    def test_normal_phone_day_is_not_flagged(self):
+        """3.31: a normal 500 MB phone day (Instagram/Facebook) must NOT fire a device_spike - that false alarm
+        was filling the recurring-issue list with un-fixable 'used Nx usual' noise (Rakesh, 19 Nov)."""
+        import datetime as dt
+        for back in range(6, -1, -1):
+            day = dt.date.today() - dt.timedelta(days=back)
+            t = time.mktime((day.year, day.month, day.day, 10, 0, 0, 0, 0, -1))
+            self.s.add_flow("192.168.0.41", "142.250.1.1", 443, 6, 60_000_000, False, now=t)   # ~60 MB/day usual
+        self.s.add_flow("192.168.0.41", "142.250.1.1", 443, 6, 500_000_000, False, now=time.time())  # 500 MB today
+        spikes = [i for i in self.s.insights() if i.get("kind") == "device_spike"
+                  and i.get("dev") == "AA:00:00:00:00:02"]
+        self.assertEqual(spikes, [])   # below the 2 GB absolute floor -> no alarm
 
     def test_dashboard_html(self):
         self.s.add_flow("192.168.0.40", "142.250.1.1", 443, 6, 1000, False)
