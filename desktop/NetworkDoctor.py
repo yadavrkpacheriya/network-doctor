@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.26"
+VERSION = "4.27"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -4749,7 +4749,9 @@ class App(tk.Tk):
                 store.pop(mac, None)
             if sw.stale:
                 self._save_settings()
-            findings = SW.auto_findings(results, devices, set(saved))
+            if not hasattr(self, "_login_fail_streaks"):
+                self._login_fail_streaks = {}             # device -> consecutive login-probe failures (busy-camera guard)
+            findings = SW.auto_findings(results, devices, set(saved), streaks=self._login_fail_streaks)
             now, seen = time.time(), set()
             for sev, text in findings:
                 key = "login_check:" + text

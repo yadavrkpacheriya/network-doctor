@@ -40,6 +40,23 @@ class Findings(unittest.TestCase):
                             [dev("192.168.0.64", CAM)], {CAM})
         self.assertEqual(AL.explain(f[0][1], f[0][0])["kind"], "device_down")
 
+    def test_busy_camera_one_timeout_does_not_alert(self):
+        # a single web-login timeout on a busy camera must NOT raise device_down (Rakesh, 19 Nov: it flapped
+        # fixed->open->fixed). With a streaks dict it only warns after LOGIN_FAIL_STREAK misses in a row.
+        streaks, res = {}, [result(CAM, "192.168.0.64", S.UNREACH, detail="timed out")]
+        devs = [dev("192.168.0.64", CAM)]
+        self.assertEqual(S.auto_findings(res, devs, {CAM}, streaks=streaks), [])   # 1st miss - silent
+        self.assertEqual(S.auto_findings(res, devs, {CAM}, streaks=streaks), [])   # 2nd miss - still silent
+        f = S.auto_findings(res, devs, {CAM}, streaks=streaks)                     # 3rd in a row - now it alerts
+        self.assertEqual(AL.explain(f[0][1], f[0][0])["kind"], "device_down")
+
+    def test_streak_resets_when_camera_answers(self):
+        streaks = {}
+        devs = [dev("192.168.0.64", CAM)]
+        S.auto_findings([result(CAM, "192.168.0.64", S.UNREACH)], devs, {CAM}, streaks=streaks)   # 1 miss
+        S.auto_findings([result(CAM, "192.168.0.64", S.OK)], devs, {CAM}, streaks=streaks)        # answered -> reset
+        self.assertEqual(S.auto_findings([result(CAM, "192.168.0.64", S.UNREACH)], devs, {CAM}, streaks=streaks), [])
+
     def test_camera_gone_from_the_network(self):
         devs = [dev("192.168.0.64", CAM, online=False, name="Gate cam"), dev("192.168.0.30", PC, core.CAT_PC, False)]
         f = S.auto_findings([], devs, {CAM, PC})

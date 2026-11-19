@@ -512,21 +512,39 @@ def auto_targets(devices, saved, kinds=("pc", "cam", "net")):
     return [t for t in plan(devices, kinds=kinds) if (t["dev"].get("mac") or "") in (saved or {})]
 
 
-def auto_findings(results, devices, saved_macs):
+# A camera/DVR serving video routinely drops a SINGLE web-login probe when busy (recording, mobile app, clip
+# download, CPU spike), so one timeout is not "the login service stopped". Require this many CONSECUTIVE auto-
+# checks to fail before warning - kills the fixed->open->fixed flapping (Rakesh, 19 Nov: 192.168.1.101 "stopped
+# responding" x6, cleared itself each time) without hiding a genuinely dead service.
+LOGIN_FAIL_STREAK = 3
+
+
+def auto_findings(results, devices, saved_macs, streaks=None):
     """What the automatic check found that someone must know NOW: [(severity, text)].
     - the remembered login of a device was refused  -> its password was changed;
-    - a device answers the network but not on its login service;
-    - a camera / recorder with a remembered login is not on the network at all."""
+    - a device answers the network but not on its login service (only after LOGIN_FAIL_STREAK in a row);
+    - a camera / recorder with a remembered login is not on the network at all.
+    `streaks` (dict mac/ip -> consecutive-fail count) is updated in place when given, so a one-off timeout on a
+    busy camera never alerts; pass the same dict each auto-check. None = old behaviour (alert on the first miss)."""
     out = []
     for r in results:
         who = f"{r.get('name') or r['ip']} ({r['ip']})"
         tried_saved = [st for n, st in r.get("tried") or [] if n == SAVED]
+        key = r.get("mac") or r["ip"]
         if r["status"] == AUTH and AUTH in tried_saved:
+            if streaks is not None:
+                streaks.pop(key, None)
             out.append(("critical", f"Saved login refused by {who} - its password was changed (or the account is "
                                     f"locked). {r.get('category') or 'Device'}, MAC {r.get('mac', '')}"))
         elif r["status"] in (UNREACH, ERR) and tried_saved:
+            if streaks is not None:
+                streaks[key] = streaks.get(key, 0) + 1
+                if streaks[key] < LOGIN_FAIL_STREAK:
+                    continue                              # a blip - wait for it to persist before crying wolf
             out.append(("warning", f"{who} is on the network but its login service has stopped responding "
                                    f"({METHOD_TITLE.get(r['method'], r['method'])}): {r.get('detail', '')[:90]}"))
+        elif streaks is not None and r["status"] == OK:
+            streaks.pop(key, None)                         # answered fine - reset its streak
     online = {d.get("mac") for d in devices if d.get("online") and d.get("mac")}
     gone = [d for d in devices if d.get("mac") in set(saved_macs) and d.get("mac") not in online
             and (d.get("category") == core.CAT_CAM or "CCTV" in " ".join(d.get("notes") or []))]

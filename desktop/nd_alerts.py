@@ -193,12 +193,18 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                     "Shorten the DHCP lease time so ghost leases free up fast (button below); reserve cameras, PCs "
                     "and printers as static IPs (Cameras > Restart & fix camera IPs); ideally put phones on their "
                     "own Wi-Fi/pool.",
-                    ["Press 'Shorten DHCP lease to 2h' - rotated-MAC ghosts then expire in 2h instead of a day.",
+                    ["Press 'Shorten DHCP lease to 30m' - rotated-MAC ghosts then expire in 30 min, not a day.",
                      "Reserve your fixed devices (cameras/NVR/PCs/printers) so the pool is only used by phones.",
+                     "Widen the phone pool once in WinBox (IP > Pool): set the range to the full .20-.250 so there "
+                     "is always headroom (check your current range first; keep reserved IPs outside it).",
                      "If phones keep churning, give them a separate SSID with its own larger pool.",
                      "On managed office phones, turn off 'Private Wi-Fi address' for the office network."],
-                    auto=[("Shorten DHCP lease to 2h (frees ghost leases fast)", "router",
-                           "/ip dhcp-server set [find] lease-time=2h",
+                    auto=[("Shorten DHCP lease to 30m (rotated-MAC ghosts expire fast)", "router",
+                           # The permanent cure for rotating private MACs is a SHORT lease: at 30m a phone's old
+                           # ghost leases free up within half an hour instead of sitting for a day, so the pool
+                           # stops filling. 30m (was 2h) because 2h still let a busy phone network pile up ghosts
+                           # faster than they expired (Rakesh, 19 Nov: pool still filling after the 2h fix).
+                           "/ip dhcp-server set [find] lease-time=30m",
                            "/ip dhcp-server set [find] lease-time=1d")])
 
     if "ip conflict" in low or "conflict on" in low or "used by another device" in low:
