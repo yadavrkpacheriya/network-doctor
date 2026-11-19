@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.28"
+VERSION = "4.29"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1201,12 +1201,14 @@ class App(tk.Tk):
         win = tk.Toplevel(self)
         win.title("NVR/DVR cameras - duplicates & cameras not recorded")
         win.transient(self)
+        win.geometry("720x560")                 # opens at a usable size (content loads async, so don't rely on it to grow)
+        win.minsize(520, 360)
+        win.resizable(True, True)
         fr = ttk.Frame(win, padding=12)
         fr.pack(fill="both", expand=True)
         status = tk.StringVar(value="Reading %d recorder(s)..." % len(nvrs))
-        ttk.Label(fr, textvariable=status, foreground="#0f766e", wraplength=560, justify="left").pack(anchor="w")
-        body = ttk.Frame(fr)
-        body.pack(fill="both", expand=True, pady=(8, 0))
+        ttk.Label(fr, textvariable=status, foreground="#0f766e", wraplength=680, justify="left").pack(anchor="w")
+        body = nd_tabs.scroll_area(fr)          # long duplicate/orphan lists scroll instead of cramming
 
         def work():
             recs = []
