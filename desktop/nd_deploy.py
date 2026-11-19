@@ -181,6 +181,14 @@ def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
         used = cand
         if rc == 0 or not _authority_retry(out):
             break                                         # connected, or a failure another form won't fix
+    # UAC blocks the built-in local Administrator from the C$ share until LocalAccountTokenFilterPolicy=1 is set
+    # on the PC - the classic "request is not supported" on a workgroup machine with one common admin password
+    # (Rakesh, 19 Nov). reg.exe talks to the Remote Registry over RPC, NOT the C$ share, so it can often set that
+    # key even when C$ is blocked. If the connect failed that way, set the key once and retry the share.
+    if rc != 0 and _uac_blocked(out):
+        if enable_remote_admin(ip, used, pw, run):
+            run(["net", "use", share, "/delete", "/y"])
+            rc, out = run(["net", "use", share, "/user:" + used, pw])
     if rc != 0:
         return {"ip": ip, "ok": False, "step": "connect", "detail": _net_hint(out)}
     try:
@@ -237,6 +245,42 @@ def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=
             if progress:
                 progress(done, total, res)
     return results
+
+
+def reg_token_argv(ip):
+    r"""reg.exe line to set LocalAccountTokenFilterPolicy=1 under HKLM on the remote PC over the Remote Registry
+    (RPC) - no C$ admin share needed. It uses the IPC$ session's credentials, so establish that session first."""
+    key = r"\\%s\HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" % ip
+    return ["reg", "add", key, "/v", "LocalAccountTokenFilterPolicy", "/t", "REG_DWORD", "/d", "1", "/f"]
+
+
+def enable_remote_admin(ip, user, pw, run):
+    r"""Best-effort: let the built-in local Administrator use the admin share on a workgroup PC by setting
+    LocalAccountTokenFilterPolicy=1 over the Remote Registry (which doesn't need C$). Each arg is passed
+    separately (no password on a shell command line, no &-escaping surprises). Returns True if the key was set.
+    Often the Remote Registry service is disabled, in which case this simply returns False and the clear hint
+    tells the user what to switch on - it never makes things worse."""
+    ipc = r"\\%s\IPC$" % ip
+    run(["net", "use", ipc, "/delete", "/y"])
+    rc, _ = run(["net", "use", ipc, "/user:" + user, pw])
+    if rc != 0:
+        return False
+    try:
+        krc, _ = run(reg_token_argv(ip))
+        return krc == 0
+    finally:
+        run(["net", "use", ipc, "/delete", "/y"])
+
+
+def _uac_blocked(out):
+    """True when the connect failure looks like UAC remote-restriction on a workgroup PC (the thing
+    LocalAccountTokenFilterPolicy=1 fixes), so it's worth trying to set that key over the Remote Registry. A plain
+    wrong-password (86 / "password is not correct") is excluded - the same password won't fix via the registry."""
+    o = (out or "").lower()
+    if "86" in o or "password is not correct" in o or "currently disabled" in o or "1331" in o:
+        return False
+    return ("not supported" in o or "1312" in o or "access is denied" in o or
+            "error 5" in o or "system error 5" in o)
 
 
 def _authority_retry(out):

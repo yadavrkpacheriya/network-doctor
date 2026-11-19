@@ -81,7 +81,9 @@ class Sweep(unittest.TestCase):
         seen = []
 
         def run(argv, timeout=40):
-            if argv[:2] == ["net", "use"] and "/delete" not in argv:
+            if argv[:1] == ["reg"]:
+                return 1, "remote registry disabled"      # the UAC-enabler can't help here; no C$ retry after it
+            if argv[:2] == ["net", "use"] and argv[2].endswith(r"\C$") and "/delete" not in argv:
                 user = argv[3]
                 seen.append(user)
                 # 'bad' fails as a plain wrong-authority ("not supported"), which IS worth another user form;
@@ -110,6 +112,25 @@ class Sweep(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("wrong password", res["detail"])
         self.assertEqual(seen, [r"/user:192.168.0.70\Administrator"])   # only ONE form tried
+
+    def test_uac_enabler_sets_token_policy_then_connects(self):
+        # workgroup PC: C$ first says "request is not supported" (UAC). After the Remote-Registry key is set, the
+        # C$ retry connects. Verifies the one-click LocalAccountTokenFilterPolicy enabler path.
+        c_hits, reg_set = [], []
+
+        def run(argv, timeout=40):
+            if argv[:1] == ["reg"]:
+                reg_set.append(argv)
+                return 0, ""                               # remote registry available; key written
+            if argv[:2] == ["net", "use"] and argv[2].endswith(r"\C$") and "/delete" not in argv:
+                c_hits.append(argv[3])
+                return (0, "OK") if len(c_hits) > 2 else (2, "The request is not supported.")
+            return 0, ""
+        res = D.deploy_one("192.168.0.70", "Administrator", "pw", "", "/src",
+                           run=run, place=lambda ip, src, central: None)
+        self.assertTrue(res["ok"])
+        self.assertTrue(reg_set)                            # the policy key was pushed
+        self.assertIn("LocalAccountTokenFilterPolicy", reg_set[0])
 
 
 if __name__ == "__main__":
