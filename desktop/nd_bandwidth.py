@@ -329,12 +329,34 @@ def default_ranges(net):
     if n.num_addresses < 256:
         return {}
     base = int(n.network_address)
-    # .1 - .25 kept free for the router / switches / access points, PCs and laptops next, then one unbroken
-    # line for the cameras with the recorders at its end, so a missing camera is a visible gap in the list
-    offs = {"infra": (2, 25), "pc": (26, 70), "cam": (71, 140), "nvr": (141, 150), "vip": (151, 199),
-            "mobile": (200, 250)}
+    # Rakesh's split (20 Nov): the lower ~100 addresses are RESERVED for fixed infrastructure (router/switches,
+    # NVR/DVR, printers, then one unbroken line of cameras), and the upper 150 (.102-.251) are left as the DHCP
+    # POOL for the devices that churn - PCs and mobiles, including phones with rotating private MACs. A 150-wide
+    # pool never fills, so the "DHCP pool almost full" problem is solved at the layout level. See dhcp_pool_range().
+    #   infra  .2-.10   (9)   router, switches, access points
+    #   nvr    .11-.20  (10)  NVR / DVR
+    #   printer.21-.25  (5)   printers
+    #   cam    .26-.101 (76)  CCTV cameras (reserved, static)
+    #   pc     .102-.151(50)  office + VIP PCs   -> inside the DHCP pool
+    #   mobile .152-.251(100) mobiles / tablets  -> inside the DHCP pool
+    offs = {"infra": (2, 10), "nvr": (11, 20), "printer": (21, 25), "cam": (26, 101),
+            "pc": (102, 151), "vip": (102, 151), "mobile": (152, 251)}
     return {g: (str(ipaddress.IPv4Address(base + lo)), str(ipaddress.IPv4Address(base + hi)))
             for g, (lo, hi) in offs.items()}
+
+
+def dhcp_pool_range(net):
+    """The address range the router's DHCP pool should hand out dynamically: the 150 upper addresses (.102-.251)
+    used by PCs and mobiles. Fixed infrastructure below .102 is reserved per-MAC and kept OUT of the pool, so the
+    churning devices can never exhaust it. Returns (first, last) or None."""
+    try:
+        n = ipaddress.ip_network(net, strict=False)
+    except ValueError:
+        return None
+    if n.num_addresses < 256:
+        return None
+    base = int(n.network_address)
+    return (str(ipaddress.IPv4Address(base + 102)), str(ipaddress.IPv4Address(base + 251)))
 
 
 def _in_range(ip, rng):

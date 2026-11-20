@@ -398,6 +398,30 @@ class BandwidthPage:
                        "The network should feel more responsive now. Undo anytime with 'Undo optimize'."
                        if not err else f"Router refused it: {err}"))
 
+    def set_dhcp_pool(self):
+        """Set the router's DHCP pool to the 150 upper addresses (.102-.251) so only PCs and mobiles draw from it;
+        fixed infra below .102 is reserved per-MAC and stays out of the pool. This is the layout-level cure for
+        'DHCP pool almost full' (Rakesh, 20 Nov). Also sets the lease to 30m so rotated-MAC ghosts free up fast."""
+        rng = B.dhcp_pool_range(self.lan())
+        if not rng:
+            self.var_msg.set("Need a /24 network to set a 150-address pool.")
+            return
+        first, last = rng
+        if not messagebox.askyesno(
+                "Set DHCP pool",
+                "Set the router's DHCP pool to %s - %s (150 addresses for PCs and mobiles) and lease to 30m?\n\n"
+                "Fixed devices (cameras, NVR/DVR, router, printers) below %s must be RESERVED (use 'Reserve on "
+                "the router now') so they keep their IPs and stay out of the pool.\n\nNothing else changes; this "
+                "can be undone." % (first, last, first)):
+            return
+        script = (
+            ':foreach p in=[/ip pool find] do={/ip pool set $p ranges=%s-%s}\n'
+            '/ip dhcp-server set [find] lease-time=30m\n' % (first, last))
+        self._send(script, "Set DHCP pool to %s-%s (150 for PCs/mobiles) + 30m lease" % (first, last),
+                   lambda err: self.var_msg.set(
+                       "DHCP pool set to %s-%s. Now press 'Reserve on the router now' to pin the fixed devices "
+                       "below %s." % (first, last, first) if not err else "Router refused it: %s" % err))
+
     def undo_optimize(self):
         self._send(self._OPT_UNDO, "Undo optimize (remove the fair-share queue)",
                    lambda err: self.var_msg.set("Optimize removed - the router is back as it was."
@@ -514,6 +538,7 @@ class BandwidthPage:
                          ("Resolve conflicts automatically", lambda: self.make_ips(auto_resolve=True)),
                          ("Change IP of selected...", self.change_ip),
                          ("Reserve on the router now", self.apply_ips),
+                         ("Set DHCP pool (.102-.251)", self.set_dhcp_pool),
                          ("Show free IPs", lambda: self.app.show_free_ips()),
                          ("Restart cameras", self.restart_cameras),
                          ("Bind confirmed (already in range)", self.bind_confirmed),

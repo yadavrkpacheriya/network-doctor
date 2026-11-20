@@ -213,11 +213,17 @@ class FixedIPs(unittest.TestCase):
     ranges = B.default_ranges("192.168.0.0/24")
 
     def test_default_blocks(self):
-        self.assertEqual(self.ranges["cam"], ("192.168.0.71", "192.168.0.140"))
-        self.assertEqual(self.ranges["nvr"], ("192.168.0.141", "192.168.0.150"))
-        self.assertEqual(self.ranges["pc"], ("192.168.0.26", "192.168.0.70"))
-        self.assertEqual(self.ranges["mobile"], ("192.168.0.200", "192.168.0.250"))
+        # Rakesh's layout (20 Nov): ~100 low addresses reserved for fixed infra, 150 upper for PCs+mobiles (pool)
+        self.assertEqual(self.ranges["nvr"], ("192.168.0.11", "192.168.0.20"))
+        self.assertEqual(self.ranges["printer"], ("192.168.0.21", "192.168.0.25"))
+        self.assertEqual(self.ranges["cam"], ("192.168.0.26", "192.168.0.101"))
+        self.assertEqual(self.ranges["pc"], ("192.168.0.102", "192.168.0.151"))
+        self.assertEqual(self.ranges["mobile"], ("192.168.0.152", "192.168.0.251"))
         self.assertEqual(B.default_ranges("10.0.0.0/28"), {})
+
+    def test_dhcp_pool_is_the_150_upper_addresses(self):
+        self.assertEqual(B.dhcp_pool_range("192.168.0.0/24"), ("192.168.0.102", "192.168.0.251"))
+        self.assertIsNone(B.dhcp_pool_range("10.0.0.0/28"))
 
     def test_keep_everything_by_default(self):
         rows = B.ip_plan(NET, "192.168.0.1", self.ranges, set())
@@ -227,15 +233,15 @@ class FixedIPs(unittest.TestCase):
     def test_move_phone_into_its_block(self):
         rows = B.ip_plan(NET, "192.168.0.1", self.ranges, {"mobile"}, net="192.168.0.0/24")
         r = next(x for x in rows if x["dev"]["ip"] == "192.168.0.101")
-        self.assertEqual((r["action"], r["ip_new"]), ("move", "192.168.0.200"))
+        self.assertEqual((r["action"], r["ip_new"]), ("move", "192.168.0.152"))
         self.assertEqual(B.extra_ips(rows), {r["dev"]["mac"]: ["192.168.0.101"]})
         res = B.reservation_rows(rows)
-        self.assertIn("192.168.0.200", [x["ip"] for x in res])
+        self.assertIn("192.168.0.152", [x["ip"] for x in res])
 
     def test_two_moves_get_different_ips(self):
         devs = [dev("192.168.0.7", core.CAT_PHONE), dev("192.168.0.8", core.CAT_PHONE)]
         rows = B.ip_plan(devs, "192.168.0.1", self.ranges, {"mobile"}, net="192.168.0.0/24")
-        self.assertEqual([r["ip_new"] for r in rows], ["192.168.0.200", "192.168.0.201"])
+        self.assertEqual([r["ip_new"] for r in rows], ["192.168.0.152", "192.168.0.153"])
 
     def test_skips(self):
         devs = [dev("192.168.0.7", core.CAT_PC, random=True), dev("192.168.0.8", core.CAT_PC, conflict=True),

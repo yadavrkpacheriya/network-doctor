@@ -251,11 +251,11 @@ class Page(unittest.TestCase):
         self.page.var_move["mobile"].set(True)
         self.page.make_ips()
         row = next(r for r in self.page.plan_rows if r["group"] == "mobile")
-        self.assertEqual(row["ip_new"], "192.168.0.200")
+        self.assertEqual(row["ip_new"], "192.168.0.152")
         path = os.path.join(tempfile.mkdtemp(), "ip.csv")
         self.bw.filedialog.path = path
         self.page.save_ips()
-        self.assertIn("192.168.0.200", open(path, encoding="utf-8-sig").read())
+        self.assertIn("192.168.0.152", open(path, encoding="utf-8-sig").read())
 
     def test_camera_isolation_and_undo(self):
         self.page.apply_cams()
