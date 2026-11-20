@@ -2132,6 +2132,15 @@ def _update_db(db, raw, devices):
             h["names"] = (h["names"] + [n])[-5:]
         if d["ip"] not in h["ips"]:
             h["ips"] = (h["ips"] + [d["ip"]])[-5:]
+        # If this IP just changed hands to a DIFFERENT real device (not a phone rotating its private MAC), flag it
+        # so the live monitor drops the old owner's cached usage/rate at once - the new device starts from zero
+        # instead of inheriting the previous device's data (Rakesh, 20 Nov).
+        prev_owner = db["ip_owner"].get(d["ip"])
+        if (prev_owner and d["mac"] and prev_owner.get("mac") and prev_owner["mac"] != d["mac"]
+                and not is_random_mac(prev_owner["mac"])):
+            db.setdefault("ip_flipped", [])
+            if d["ip"] not in db["ip_flipped"]:
+                db["ip_flipped"].append(d["ip"])
         db["ip_owner"][d["ip"]] = {"mac": d["mac"], "time": ts, "name": d["name"]}
     # snapshot of who answered THIS scan, for the next scan to diff against (new_macs/missing_macs in
     # NetworkDoctor.py's _worker) - taken before db["scans"] below so callers compare against the previous

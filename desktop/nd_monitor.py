@@ -690,6 +690,16 @@ class TrafficStore:
             d = self.dev[ip] = {"up": 0, "down": 0, "buckets": deque(), "remotes": {}, "threats": {}, "risks": {}}
         return d
 
+    def forget_ip(self, ip):
+        """Drop ALL cached usage/rate data for an IP - call this the moment the IP changes hands to a new device
+        (DHCP gave it away), so the new device's figures start from zero instead of inheriting the old device's
+        usage, rate and remote-peer history (Rakesh, 20 Nov). Safe to call for an IP we have nothing on."""
+        with self.lock:
+            self.dev.pop(ip, None)
+            # also drop any NAT-matching state still keyed to the old owner of this IP
+            for k in [k for k in self.nat if (isinstance(k, tuple) and ip in k) or k == ip]:
+                self.nat.pop(k, None)
+
     def add(self, f):
         b = int(f.get("bytes") or 0)
         if b <= 0:

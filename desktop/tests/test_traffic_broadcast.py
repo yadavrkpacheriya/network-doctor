@@ -50,6 +50,15 @@ class AddFiltersNoise(unittest.TestCase):
         self.assertEqual(rem, [])
         self.assertNotIn("Torrent / peer-to-peer download", risks)
 
+    def test_forget_ip_clears_an_ips_cached_usage(self):
+        # when an IP changes hands, forget_ip drops the old owner's usage so the new device starts from zero
+        s = store()
+        s.add(flow("192.168.0.44", "8.8.8.8", 443, 40000))   # real internet traffic -> recorded under .44
+        self.assertIn("192.168.0.44", s.dev)
+        s.forget_ip("192.168.0.44")
+        self.assertNotIn("192.168.0.44", s.dev)
+        s.forget_ip("192.168.0.99")                          # unknown IP -> no crash
+
     def test_the_subnets_own_broadcast_is_filtered_the_same_way(self):
         s = store()
         s.add(flow("192.168.0.44", "192.168.0.255", 6881, 6881))

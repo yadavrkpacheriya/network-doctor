@@ -61,6 +61,21 @@ class CategoryBreakdown(unittest.TestCase):
 
 
 class LastOnlineSnapshot(unittest.TestCase):
+    def test_ip_flip_to_a_new_device_is_recorded(self):
+        # IP .10 was device AA; now a DIFFERENT real device BB has it -> flagged so its stale usage gets dropped
+        db = fresh_db()
+        # real (universally-administered) OUIs, so neither is treated as a rotating private MAC
+        db["ip_owner"]["192.168.0.10"] = {"mac": "00:12:31:84:0B:C0", "time": core.now_s(), "name": "old"}
+        core._update_db(db, raw_with(), [dev("00:48:D6:4D:D3:FB", core.CAT_PHONE, name="new")])
+        self.assertEqual(db.get("ip_flipped"), ["192.168.0.10"])
+
+    def test_phone_rotating_its_private_mac_is_not_a_flip(self):
+        # a randomized (locally-administered) MAC changing is the same phone, not a new device -> NOT flagged
+        db = fresh_db()
+        db["ip_owner"]["192.168.0.10"] = {"mac": "5A:5A:02:8C:D5:F2", "time": core.now_s(), "name": "phone"}
+        core._update_db(db, raw_with(), [dev("5A:5A:02:8C:D6:15", core.CAT_PHONE, name="phone")])
+        self.assertNotIn("ip_flipped", db)
+
     def test_update_db_records_last_online_macs(self):
         db = fresh_db(scans=0, last_online_macs=["old1"])
         raw = raw_with()

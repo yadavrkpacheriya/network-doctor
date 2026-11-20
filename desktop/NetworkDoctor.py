@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.36"
+VERSION = "4.37"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2757,6 +2757,12 @@ class App(tk.Tk):
             now_online = {d["mac"] for d in devices if d.get("online") and d.get("mac")}
             raw["meta"]["missing_macs"] = sorted(was_online - now_online) if was_online else []
             core.update_db(self.db, raw, devices)
+            # An IP that just changed hands to a new device: drop the old owner's cached usage/rate now, so the
+            # new device's data is immediate and correct, not inherited (Rakesh, 20 Nov).
+            flipped = self.db.pop("ip_flipped", None)
+            if flipped and getattr(self, "mon", None) and getattr(self.mon, "traffic", None):
+                for ip in flipped:
+                    self.mon.traffic.forget_ip(ip)
             self.q.put(("done", raw, devices, issues, checks))
         except core.Stopped:
             self.q.put(("stopped",))
