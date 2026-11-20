@@ -11,15 +11,23 @@ def dev(ip, mac, cat="Cameras", name="", online=True):
     return {"ip": ip, "ips": [ip], "mac": mac, "category": cat, "name": name, "online": online}
 
 
-def test_bogus_camera_macs_flagged():
+def test_bogus_camera_macs_flagged_only_when_they_clash():
+    # current behaviour: a fake OUI (A0:00:00:xx) is only a WARNING when two devices actually share one MAC
+    # (unique bogus MACs are harmless and used to nag every scan). Here two cameras share one MAC -> flagged.
     devs = [dev("192.168.0.76", "A0:00:00:01:81:0E", name="Office Cam"),
-            dev("192.168.0.77", "A0:00:00:01:7F:F0"),
+            dev("192.168.0.77", "A0:00:00:01:81:0E", name="Gate Cam"),      # SAME bogus MAC -> clash
             dev("192.168.0.70", "F8:75:A4:8D:B7:FA", cat="Computers", name="RAKESH-IT")]
     out = T.mac_health_issues(devs)
-    titles = [i["title"] for i in out]
     bogus = next(i for i in out if "fake / cloned" in i["title"])
-    assert "(2)" in bogus["title"] and any("Office Cam" in x for x in bogus["items"])
+    assert any("Office Cam" in x for x in bogus["items"])
     assert not any("RAKESH-IT" in x for i in out for x in i["items"])        # real vendor MAC is fine
+
+def test_unique_bogus_macs_are_not_flagged():
+    # each camera has its OWN unique (if fake) MAC and IP -> harmless, no nagging warning
+    devs = [dev("192.168.0.76", "A0:00:00:01:81:0E", name="Office Cam"),
+            dev("192.168.0.77", "A0:00:00:01:7F:F0", name="Gate Cam")]
+    out = T.mac_health_issues(devs)
+    assert not any("fake / cloned" in i["title"] for i in out)
 
 
 def test_duplicate_mac_flagged():

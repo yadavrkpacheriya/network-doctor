@@ -19,11 +19,11 @@ def _cam(mac, ip):
     return {"online": True, "mac": mac, "ip": ip, "category": "CCTV cameras / DVR / NVR", "name": ""}
 
 
-def test_unique_bogus_macs_are_info_not_warning():
+def test_unique_bogus_macs_are_not_reported():
+    # unique (if fake) MACs don't clash, so they are harmless and no longer surfaced at all (not even info)
     devs = [_cam("A0:00:00:01:7F:EB", "192.168.0.123"), _cam("A0:00:00:01:7F:EF", "192.168.0.125")]
     issues = T.mac_health_issues(devs)
-    bog = [i for i in issues if "fake / cloned" in i["title"]]
-    assert bog and bog[0]["sev"] == "info"       # unique -> harmless info
+    assert not [i for i in issues if "fake / cloned" in i["title"]]
 
 
 def test_duplicated_bogus_macs_stay_warning():

@@ -30,29 +30,31 @@ class Plan(unittest.TestCase):
     def plan(self, results):
         return CL.line_plan(self.devs, "192.168.0.1", NET, self.ranges, results)
 
-    def test_block_is_71_to_140_and_only_cameras_are_listed(self):
-        self.assertEqual(self.ranges["cam"], ("192.168.0.71", "192.168.0.140"))
+    def test_block_is_the_camera_range_and_only_cameras_are_listed(self):
+        self.assertEqual(self.ranges["cam"], ("192.168.0.26", "192.168.0.101"))  # Rakesh's layout (20 Nov)
         rows = self.plan([])
         self.assertEqual({r["ip_now"] for r in rows}, {"192.168.0.64", "192.168.0.71", "192.168.0.180", "192.168.0.201"})
 
-    def test_cameras_get_the_next_free_ips_in_order_and_one_in_the_block_stays(self):
+    def test_cameras_get_the_next_free_ips_in_order_and_ones_in_the_block_stay(self):
         rows = self.plan([res("AA:00:00:00:00:64"), res("AA:00:00:00:02:01", "dahua")])
         by = {r["ip_now"]: r for r in rows}
+        # .64 and .71 are already inside the camera block (.26-.101) -> keep; .201 is outside -> moves to first free
         self.assertEqual(by["192.168.0.71"]["action"], "keep")
-        self.assertEqual((by["192.168.0.64"]["action"], by["192.168.0.64"]["ip_new"]), ("move", "192.168.0.72"))
-        self.assertEqual(by["192.168.0.201"]["ip_new"], "192.168.0.74")
+        self.assertEqual(by["192.168.0.64"]["action"], "keep")
+        self.assertEqual((by["192.168.0.201"]["action"], by["192.168.0.201"]["ip_new"]), ("move", "192.168.0.27"))
         self.assertEqual(len({r["ip_new"] for r in rows}), len(rows))  # never the same IP twice
 
     def test_no_login_or_unknown_brand_is_by_hand_never_moved(self):
-        rows = self.plan([res("AA:00:00:00:00:64", "web"), res("AA:00:00:00:01:80", status=S.AUTH)])
+        # use a camera OUTSIDE the block (.180) so "would move" is meaningful; no-login -> manual, never moved
+        rows = self.plan([res("AA:00:00:00:01:80", "web"), res("AA:00:00:00:02:01", status=S.AUTH)])
         by = {r["ip_now"]: r for r in rows}
-        self.assertEqual(by["192.168.0.64"]["action"], "manual")
         self.assertEqual(by["192.168.0.180"]["action"], "manual")
+        self.assertEqual(by["192.168.0.201"]["action"], "manual")
 
     def test_csv_has_old_and_new(self):
-        rows = self.plan([res("AA:00:00:00:00:64")])
+        rows = self.plan([res("AA:00:00:00:02:01")])   # .201 is outside the block -> moves to .26
         text = CL.old_new_csv(rows)
-        self.assertIn("192.168.0.64,192.168.0.72", text)
+        self.assertIn("192.168.0.201,192.168.0.27", text)
 
 
 class FakeCam:
@@ -310,9 +312,9 @@ class Onvif(unittest.TestCase):
             CL.onvif_set_dhcp("192.168.0.64", 80, False, "admin", "x", call=call)
 
     def test_onvif_cameras_are_planned_as_movable(self):
-        devs = [dev("192.168.0.31", "AA:00:00:00:00:31")]
-        rows = CL.line_plan(devs, "192.168.0.1", NET, B.default_ranges(NET), [res("AA:00:00:00:00:31", "onvif")])
-        self.assertEqual((rows[0]["action"], rows[0]["ip_new"]), ("move", "192.168.0.71"))
+        devs = [dev("192.168.0.201", "AA:00:00:00:02:01")]   # outside the camera block -> should move in
+        rows = CL.line_plan(devs, "192.168.0.1", NET, B.default_ranges(NET), [res("AA:00:00:00:02:01", "onvif")])
+        self.assertEqual((rows[0]["action"], rows[0]["ip_new"]), ("move", "192.168.0.26"))
 
     def test_sweep_keeps_onvif_first_and_reads_the_cameras_own_name(self):
         m = S.methods_for({"category": core.CAT_CAM, "ports": [80, 554, 34567]})
