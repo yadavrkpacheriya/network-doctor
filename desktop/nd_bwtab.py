@@ -585,8 +585,11 @@ class BandwidthPage:
                      "must be added again in the NVR / DVR. Continue?"):
             self.var_move["cam"].set(False)
             move.discard("cam")
+        # IPs locked to a specific device, never auto-assigned elsewhere (Rakesh's own PC = .70, 20 Nov)
+        reserved = set(self.app._settings().get("reserved_ips") or [])
         self.plan_rows = B.ip_plan(self.app.devices, self.app.gw, ranges, move, self.tags(), self.over(),
-                                   self.app.ip_type_of, self.lan(), self.want, auto_resolve=auto_resolve)
+                                   self.app.ip_type_of, self.lan(), self.want, auto_resolve=auto_resolve,
+                                   reserved_ips=reserved)
         tv = self.tv_ip
         tv.delete(*tv.get_children())
         self.ip_rows = {}

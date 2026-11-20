@@ -400,17 +400,20 @@ def _free_ip(taken, nw, rng=None):
 
 
 def ip_plan(devices, gw_ip, ranges, move, tags=None, over=None, ip_type_of=None, net=None, want=None,
-            auto_resolve=False):
+            auto_resolve=False, reserved_ips=None):
     """One row per live device: keep its IP, or move it into its group's block. Every row ends up as a DHCP
     reservation on the router (the router always hands the same IP to the same MAC - also after a power cut).
     move: groups whose devices are moved into their block. Cameras should normally NOT be moved: the NVR / DVR stores
     each camera's IP. A device with a hand-typed IP cannot be changed from the router: it is marked 'manual'.
-    want: {mac: IP} chosen by the person for single devices (for example the phone that took the recorder's IP)."""
+    want: {mac: IP} chosen by the person for single devices (for example the phone that took the recorder's IP).
+    reserved_ips: IPs locked to one device (e.g. .70 is Rakesh's own PC) - the planner never auto-assigns them to
+    any OTHER device (Rakesh, 20 Nov)."""
     live = live_devices(devices, gw_ip)
     want = want or {}
     moving = {d["mac"] for d in live if d["mac"] in want and want[d["mac"]] != d["ip"]}
     cnt = Counter(d["ip"] for d in live if d["mac"] not in moving)  # a device that is moving away no longer clashes
-    taken = {d["ip"] for d in live} | ({gw_ip} if gw_ip else set())
+    # never hand a reserved IP (e.g. .70 = Rakesh's PC) to a different device, so keep it out of the free pool
+    taken = {d["ip"] for d in live} | ({gw_ip} if gw_ip else set()) | set(reserved_ips or ())
     try:
         nw = ipaddress.ip_network(net, strict=False) if net else None
     except ValueError:

@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.38"
+VERSION = "4.39"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -5852,6 +5852,10 @@ class App(tk.Tk):
             # ignored problem (a "new bug every day with no update"). See _save_settings for the atomic write.
             p = os.path.join(core.DATA_DIR, "settings.json")
             self._set = self._read_json(p) or self._read_json(p + ".bak") or {}
+            # .70 is reserved for Rakesh's own PC - the IP planner must never auto-assign it to another device
+            # (Rakesh, 20 Nov). Seed it once; after that the user's own edits to reserved_ips are kept.
+            if "reserved_ips" not in self._set:
+                self._set["reserved_ips"] = ["192.168.0.70"]
         return self._set
 
     def _save_settings(self):

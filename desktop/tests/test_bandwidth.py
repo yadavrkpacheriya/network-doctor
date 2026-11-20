@@ -221,6 +221,16 @@ class FixedIPs(unittest.TestCase):
         self.assertEqual(self.ranges["mobile"], ("192.168.0.152", "192.168.0.251"))
         self.assertEqual(B.default_ranges("10.0.0.0/28"), {})
 
+    def test_reserved_ip_is_never_given_to_another_device(self):
+        # a reserved IP (e.g. .102, first in the PC block) must never be auto-assigned to another device
+        devs = [dev("192.168.0.9", core.CAT_PC, mac="BB:00:00:00:00:09")]  # a PC being moved into the pc block
+        got = [r["ip_new"] for r in B.ip_plan(devs, "192.168.0.1", self.ranges, {"pc"}, net="192.168.0.0/24",
+                                              reserved_ips={"192.168.0.102"})]
+        self.assertNotIn("192.168.0.102", got)              # skipped the reserved one -> next free (.103)
+        # without the reservation it WOULD have taken .102
+        got2 = [r["ip_new"] for r in B.ip_plan(devs, "192.168.0.1", self.ranges, {"pc"}, net="192.168.0.0/24")]
+        self.assertEqual(got2, ["192.168.0.102"])
+
     def test_dhcp_pool_is_the_150_upper_addresses(self):
         self.assertEqual(B.dhcp_pool_range("192.168.0.0/24"), ("192.168.0.102", "192.168.0.251"))
         self.assertIsNone(B.dhcp_pool_range("10.0.0.0/28"))
