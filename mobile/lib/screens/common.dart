@@ -139,7 +139,7 @@ class DeviceTile extends StatelessWidget {
       d.ip,
       if (d.ipType.isNotEmpty) d.ipType,
       if (d.vendor.isNotEmpty) d.vendor,
-      if (d.downBps != null) '↓ ${fmtRate(d.downBps)}  ↑ ${fmtRate(d.upBps)}',
+      if (d.online && d.downBps != null) '↓ ${fmtRate(d.downBps)}  ↑ ${fmtRate(d.upBps)}', // live rate only when online
       if (!d.fromPc && d.services.isNotEmpty) d.services.take(3).join(', '),
     ];
     final newBadge = Container(

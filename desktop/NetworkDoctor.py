@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.35"
+VERSION = "4.36"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2901,7 +2901,10 @@ class App(tk.Tk):
                       for c in core.CAT_ORDER]
         for c, ds in groups:
             if self.var_sort_bw.get():
-                ds.sort(key=lambda d: -sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps")))
+                # rank by LIVE rate only; an offline device has no live rate (its IP's traffic may now be another
+                # device's), so it sorts to the bottom instead of above real talkers on stale numbers
+                ds.sort(key=lambda d: -(sum((rates.get(d["ip"]) or {}).get(k, 0) for k in ("down_bps", "up_bps"))
+                                        if d["online"] else 0))
             if not ds:
                 continue
             n_recent = sum(1 for d in ds if d.get("recent") and d["online"])
@@ -2924,14 +2927,19 @@ class App(tk.Tk):
                     svc = (svc + "; " if svc else "") + "web: " + (d["http"].get("title") or d["http"].get("server"))
                 typ, _ = M.ip_type(d, self.mon, self.db, self.raw) if d["online"] else ("", "")
                 typ = "Not known yet" if typ == "Unknown" else typ
-                r = rates.get(d["ip"])
+                # "Bandwidth now" is a LIVE rate - only meaningful for a device that is online right now. An
+                # offline device shows nothing (its old rate, or traffic from whatever took over its IP, must not
+                # be shown as if it were live - Rakesh, 20 Nov: offline devices showed kbps "now").
+                r = rates.get(d["ip"]) if d["online"] else None
                 if r:
                     bw = f"\u2193 {M.fmt_rate(r['down_bps'])}  \u2191 {M.fmt_rate(r['up_bps'])}"
-                else:
+                elif d["online"]:
                     sr = (getattr(self, "_snmp_bw_cache", None) or {}).get(d.get("mac")) \
                         if time.time() - getattr(self, "_snmp_bw_cache_t", 0) < 90 else None
                     bw = (f"\u2193 {M.fmt_rate(sr['down_bps'])}  \u2191 {M.fmt_rate(sr['up_bps'])}  (switch)"
                           if sr else "")
+                else:
+                    bw = ""
                 recent = d.get("recent") if d["online"] else ""
                 tag = ("off" if not d["online"] else bad.get(d["ip"], "")
                        or ("new" if (d.get("mac") in new_macs or recent) else ""))
@@ -3334,7 +3342,7 @@ class App(tk.Tk):
                         "Computer name", "First seen", "Notes"])
             for d in self.devices:
                 typ, ev = M.ip_type(d, self.mon, self.db, self.raw) if d["online"] else ("", "")
-                r = rates.get(d["ip"]) or {}
+                r = (rates.get(d["ip"]) or {}) if d["online"] else {}   # no live rate for an offline device
                 w.writerow([d["category"], d["status"], d["name"], d["ip"], " ".join(sorted(d["ips"], key=core.ip_key)),
                             typ, ev, d["mac"], "yes" if d["random"] else "", d["vendor"],
                             M.fmt_rate(r["down_bps"]) if r else "", M.fmt_rate(r["up_bps"]) if r else "",
@@ -5703,7 +5711,7 @@ class App(tk.Tk):
         devs = []
         for d in list(self.devices):
             typ, why = M.ip_type(d, mon, self.db, self.raw) if d.get("online") else ("", "")
-            r = rates.get(d.get("ip")) or {}
+            r = (rates.get(d.get("ip")) or {}) if d.get("online") else {}   # live rate only for online devices
             devs.append({"name": d.get("name", ""), "ip": d.get("ip", ""),
                          "ips": sorted(d.get("ips", []), key=core.ip_key), "mac": d.get("mac") or "",
                          "vendor": d.get("vendor", ""), "category": d.get("category", ""),

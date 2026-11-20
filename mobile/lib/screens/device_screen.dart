@@ -66,7 +66,7 @@ class DeviceScreen extends StatelessWidget {
         row('DNS name', d.dns),
         row('UPnP', [d.upnpName, d.upnpMaker, d.upnpModel].where((x) => x.isNotEmpty).join(' · ')),
         row('Services', d.services.join(', ')),
-        if (d.downBps != null) row('Bandwidth now', '↓ ${fmtRate(d.downBps)}   ↑ ${fmtRate(d.upBps)}'),
+        if (d.online && d.downBps != null) row('Bandwidth now', '↓ ${fmtRate(d.downBps)}   ↑ ${fmtRate(d.upBps)}'),
         if (d.rttMs != null) row('Reply time', '${d.rttMs} ms (during scan)'),
         row('Notes', d.notes.join('; ')),
         if (d.safetyNotes.isNotEmpty) ...[
