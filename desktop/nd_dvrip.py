@@ -120,6 +120,28 @@ class DvrIp:
     def _sid(self):
         return "0x%08X" % self.session
 
+    _tree = None
+
+    def get_all_tree(self):
+        """Dump the recorder's WHOLE config in one shot (CONFIG_GETALL / 1046 with an empty Name). Many XMeye /
+        Sofia NVRs return empty [] for each named channel node via CONFIG_GET (1042), yet still hand back the
+        full tree here - the per-channel camera IPs and titles are inside it under a firmware-specific key. Cached
+        per session. Returns a dict (possibly {}); never raises."""
+        if self._tree is not None:
+            return self._tree
+        tree = {}
+        for nm in ("", "All"):                       # empty Name = everything; some firmwares want "All"
+            try:
+                r = self.call(CONFIG_GETALL, {"Name": nm, "SessionID": self._sid()})
+            except (OSError, DvrError):
+                continue
+            if r.get("Ret") in OK:
+                tree = {k: v for k, v in r.items() if k not in ("Ret", "SessionID", "Name")} or tree
+                if tree:
+                    break
+        self._tree = tree
+        return tree
+
     def get(self, name, msg=CONFIG_GET):
         r = self.call(msg, {"Name": name, "SessionID": self._sid()})
         # 607 = this login can't read config via GET (1042). Many XMeye recorders still answer the SAME config
@@ -256,6 +278,18 @@ def raw_config(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connect
             except (TypeError, ValueError):
                 txt = str(sample)[:600]
             out.append("  %s: %s" % (node, txt))
+        # If every named node was empty, show what the whole-config dump actually holds, so the real channel
+        # table (under whatever key this firmware uses) is visible and the harvester can be checked/taught.
+        if all(s.endswith(": []") or s.endswith(": null") or "(not available" in s for s in out[1:]):
+            tree = c.get_all_tree()
+            rows = _harvest_channels(tree)
+            out.append("  -- named nodes all empty; whole-config dump --")
+            out.append("  top-level keys: %s" % ", ".join(sorted(tree.keys()))[:500])
+            if rows:
+                out.append("  harvested %d channel(s); first: %s" %
+                           (len(rows), _json.dumps(rows[min(rows)], ensure_ascii=False)[:300]))
+            else:
+                out.append("  harvester found no channel table in the tree")
     return "\n".join(out)
 
 
@@ -333,6 +367,49 @@ def _find_key(node, keys):
     return None
 
 
+_CH_HINTS = ("digital", "channel", "netdigital", "channeldev", "opdigital", "dev")
+
+
+def _harvest_channels(tree):
+    """Walk a whole-config tree and pull out per-channel camera IPs/names, wherever this firmware hides them.
+    Returns {index0: {"ip": str, "name": str, "enable": bool|None}}. Firmware-independent: it looks for any list
+    whose entries carry a camera IP (known IP keys, incl. little-endian hex) under a key that looks channel-ish,
+    and reads the title/enable from the same entry. This is why the fix is permanent - no single node name to
+    chase. Prefers the longest such list (the real channel table, not a 1-element sub-block)."""
+    best = {}
+    best_len = 0
+
+    def consider(key, lst):
+        nonlocal best, best_len
+        rows = {}
+        for i, entry in enumerate(lst):
+            got = _ip_in(entry)
+            nm = _find_key(entry, ("Name", "ChannelName", "Title", "name")) if isinstance(entry, (dict, list)) else None
+            en = _find_key(entry, ("Enable", "enable")) if isinstance(entry, (dict, list)) else None
+            if got or nm is not None:
+                rows[i] = {"ip": got, "name": (str(nm).strip() if nm is not None else ""),
+                           "enable": (bool(en) if en is not None else None)}
+        # keep the list that yields the most channels with an IP (ties -> most rows)
+        ipc = sum(1 for r in rows.values() if r["ip"])
+        score = (ipc, len(rows))
+        if rows and score > (sum(1 for r in best.values() if r["ip"]), best_len):
+            best, best_len = rows, len(rows)
+
+    def walk(node, parent_key=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list) and node:
+            pk = parent_key.lower()
+            if any(h in pk for h in _CH_HINTS) and any(isinstance(e, (dict, list)) for e in node):
+                consider(parent_key, node)
+            for e in node:
+                walk(e, parent_key)
+
+    walk(tree)
+    return best
+
+
 def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
     """List the channels configured on a recorder (NVR/DVR) - i.e. the cameras already added to it. Returns a
     list of {"chan": 1-based, "name": str, "ip": str, "online": bool|None}. The channel names come straight
@@ -372,6 +449,19 @@ def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_conn
                         online[i] = bool(e.get("Online", e.get("Status", online.get(i))))
         except DvrError:
             pass
+        # Permanent fallback: when the named config nodes came back empty (this NVR's firmware - every node
+        # was null/[] in the raw dump), dump the WHOLE config tree once and harvest channels from it.
+        if not ips or not any(names):
+            rows = _harvest_channels(c.get_all_tree())
+            for i, r in rows.items():
+                if r.get("ip") and i not in ips:
+                    ips[i] = r["ip"]
+                if r.get("name") and (i >= len(names) or not names[i]):
+                    while len(names) <= i:
+                        names.append("")
+                    names[i] = r["name"]
+                if r.get("enable") is not None and i not in online:
+                    online[i] = r["enable"]
         out = []
         for i in range(max(len(names), len(ips))):
             nm = names[i].strip() if i < len(names) and names[i] else "CAM%d" % (i + 1)

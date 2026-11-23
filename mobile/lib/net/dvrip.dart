@@ -184,6 +184,32 @@ class DvrIp {
     return r[name];
   }
 
+  Map<String, dynamic>? _tree;
+
+  /// Whole-config dump (GETALL/1046 with empty Name). When named channel nodes come back empty on this
+  /// firmware, the real per-channel camera IPs/titles are still inside this tree. Cached. Never throws.
+  Future<Map<String, dynamic>> getAllTree() async {
+    if (_tree != null) return _tree!;
+    var tree = <String, dynamic>{};
+    for (final nm in const ['', 'All']) {
+      try {
+        final r = await _call(_configGetAll, {'Name': nm, 'SessionID': _sid()});
+        if (_ok.contains(r['Ret'])) {
+          final t = <String, dynamic>{};
+          r.forEach((k, v) {
+            if (k != 'Ret' && k != 'SessionID' && k != 'Name') t[k] = v;
+          });
+          if (t.isNotEmpty) {
+            tree = t;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    _tree = tree;
+    return tree;
+  }
+
   Future<dynamic> getTitles() async {
     final r = await _call(_titles, {'Name': 'ChannelTitle', 'SessionID': _sid()});
     if (!_ok.contains(r['Ret'])) return null;
@@ -281,6 +307,49 @@ String _ipIn(dynamic entry) {
   return '';
 }
 
+const List<String> _chHints = ['digital', 'channel', 'netdigital', 'channeldev', 'opdigital', 'dev'];
+
+/// Walk a whole-config tree and pull per-channel camera IPs/names wherever this firmware hides them.
+/// Returns {index0: {ip, name, enable}}. Firmware-independent twin of the desktop harvester (Rakesh, 23 Nov):
+/// no single node name to chase, so empty-node NVRs still yield their camera list.
+Map<int, Map<String, dynamic>> _harvestChannels(dynamic tree) {
+  var best = <int, Map<String, dynamic>>{};
+  var bestIpc = 0;
+
+  void consider(List list) {
+    final rows = <int, Map<String, dynamic>>{};
+    for (var i = 0; i < list.length; i++) {
+      final e = list[i];
+      final ip = _ipIn(e);
+      final nm = (e is Map || e is List) ? _findKey(e, {'Name', 'ChannelName', 'Title', 'name'}) : null;
+      final en = (e is Map || e is List) ? _findKey(e, {'Enable', 'enable'}) : null;
+      if (ip.isNotEmpty || nm != null) {
+        rows[i] = {'ip': ip, 'name': nm?.toString().trim() ?? '', 'enable': en == null ? null : en == true};
+      }
+    }
+    final ipc = rows.values.where((r) => (r['ip'] as String).isNotEmpty).length;
+    if (rows.isNotEmpty && (ipc > bestIpc || (ipc == bestIpc && rows.length > best.length))) {
+      best = rows;
+      bestIpc = ipc;
+    }
+  }
+
+  void walk(dynamic node, String parentKey) {
+    if (node is Map) {
+      node.forEach((k, v) => walk(v, k.toString()));
+    } else if (node is List && node.isNotEmpty) {
+      final pk = parentKey.toLowerCase();
+      if (_chHints.any(pk.contains) && node.any((e) => e is Map || e is List)) consider(node);
+      for (final e in node) {
+        walk(e, parentKey);
+      }
+    }
+  }
+
+  walk(tree, '');
+  return best;
+}
+
 /// One camera already configured on a recorder's channel.
 class NvrChannel {
   NvrChannel(this.chan, this.name, this.ip, this.online);
@@ -336,6 +405,20 @@ Future<List<NvrChannel>> listChannels(String ip, String user, String pw,
         }
       }
     } catch (_) {}
+    // Permanent fallback: named nodes empty on this firmware -> harvest the whole-config tree once.
+    if (ips.isEmpty || !names.any((x) => x.isNotEmpty)) {
+      final rows = _harvestChannels(await c.getAllTree());
+      rows.forEach((i, r) {
+        if ((r['ip'] as String).isNotEmpty && !ips.containsKey(i)) ips[i] = r['ip'] as String;
+        if ((r['name'] as String).isNotEmpty && (i >= names.length || names[i].isEmpty)) {
+          while (names.length <= i) {
+            names.add('');
+          }
+          names[i] = r['name'] as String;
+        }
+        if (r['enable'] != null && !online.containsKey(i)) online[i] = r['enable'] as bool;
+      });
+    }
     final n = names.length > ips.length ? names.length : ips.length;
     final out = <NvrChannel>[];
     for (var i = 0; i < n; i++) {

@@ -2,7 +2,13 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.43, latest session)
+## Done (v4.40–4.44, latest session)
+- **NVR empty-config PERMANENT fix** (v4.44, mobile 1.32.1) — raw dump showed every named channel node
+  null/[] (not 607). Added `DvrIp.get_all_tree()` (CONFIG_GETALL 1046, empty Name = whole config) +
+  `_harvest_channels()` that walks the WHOLE tree for any channel-ish list carrying camera IPs
+  (hex-decoded) / names / enable. Wired as fallback in `list_channels` when named nodes are empty;
+  `raw_config` now also prints the whole-tree keys + harvest result. Mirrored into `mobile/.../dvrip.dart`.
+  No more node-name whack-a-mole. Tests: test_dvrip.py +2 (buried tree, longest-list).
 - **Watch for drops** (v4.43) `nd_slow.watch_probe()` + `summarize_watch()`, wired into SlowTab
   (`nd_tabs.py` `toggle_watch`/`_watch_tick`/`_watch_result`). Catches INTERMITTENT site drops the
   one-shot test misses — checks the site every 20s in the background, logs each failure by cause

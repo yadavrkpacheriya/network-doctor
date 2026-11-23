@@ -178,3 +178,34 @@ class LineUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- whole-config-tree harvest (NVR 607 / empty-node firmwares) -------------
+def test_harvest_channels_from_buried_tree():
+    import nd_dvrip as D
+    tree = {
+        "NetWork.NetDigital": [],                       # named node empty (the real NVR symptom)
+        "VirtualHost": {"DigitalChannel": [
+            {"DeviceInfo": {"Enable": True, "DevIP": "0x4A00A8C0", "Name": "FG AREA"}},  # hex IP -> .74
+            {"DeviceInfo": {"Enable": True, "DevIP": "192.168.0.80", "Name": "GATE"}},
+            {"DeviceInfo": {"Enable": False, "DevIP": "", "Name": ""}},
+        ]},
+    }
+    rows = D._harvest_channels(tree)
+    assert rows[0]["ip"] == "192.168.0.74" and rows[0]["name"] == "FG AREA"
+    assert rows[1]["ip"] == "192.168.0.80"
+    assert rows[2]["enable"] is False
+
+
+def test_harvest_prefers_longest_ip_bearing_list():
+    import nd_dvrip as D
+    tree = {
+        "SomeDigital": [{"DevIP": "192.168.0.9", "Name": "one"}],         # short decoy
+        "NetDigitalChannel": [
+            {"DevIP": "192.168.0.11", "Name": "a"},
+            {"DevIP": "192.168.0.12", "Name": "b"},
+            {"DevIP": "192.168.0.13", "Name": "c"},
+        ],
+    }
+    rows = D._harvest_channels(tree)
+    assert len(rows) == 3 and rows[2]["ip"] == "192.168.0.13"
