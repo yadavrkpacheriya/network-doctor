@@ -98,3 +98,10 @@ def test_seeded_blocking_kinds_never_auto_apply():
         assert kind not in B.AUTO_SAFE
         d = B.decide(kb, "x", recipe_kind=kind, cat="cam", src="int", sev="warning")
         assert d["auto_ok"] is False
+
+
+def test_dhcp_full_is_now_auto_permanent_and_in_auto_safe():
+    import nd_alerts as AL
+    rec = B.RECIPES["dhcp_full"]
+    assert rec["auto"] is True and rec["permanent"] is True   # self-applies, not just logs
+    assert "dhcp_full" in AL.AUTO_SAFE                         # the app will actually run it

@@ -27,7 +27,7 @@ SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 # exposes anything. Kinds that block/expose a device (torrent, malware, exposed, rogue_dhcp, arp_spoof) or
 # touch DNS/UPnP are deliberately NOT here - those can affect a real user or widen what reaches this
 # network from outside, so they stay manual even with a clean track record.
-AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu"}
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_full"}
 
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
@@ -199,13 +199,27 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "is always headroom (check your current range first; keep reserved IPs outside it).",
                      "If phones keep churning, give them a separate SSID with its own larger pool.",
                      "On managed office phones, turn off 'Private Wi-Fi address' for the office network."],
-                    auto=[("Shorten DHCP lease to 30m (rotated-MAC ghosts expire fast)", "router",
-                           # The permanent cure for rotating private MACs is a SHORT lease: at 30m a phone's old
-                           # ghost leases free up within half an hour instead of sitting for a day, so the pool
-                           # stops filling. 30m (was 2h) because 2h still let a busy phone network pile up ghosts
-                           # faster than they expired (Rakesh, 19 Nov: pool still filling after the 2h fix).
-                           "/ip dhcp-server set [find] lease-time=30m",
-                           "/ip dhcp-server set [find] lease-time=1d")])
+                    auto=[("Fix DHCP-full permanently (reserve fixed gear + short lease for phones)", "router",
+                           # PERMANENT fix, root cause (Rakesh, 23 Nov: still recurred after the 30m-lease patch).
+                           # Shortening the lease alone never worked, because the pool was ALSO being eaten by
+                           # fixed gear (cameras/NVR/PCs/printers) that sits on a dynamic lease forever. So this
+                           # one script does all three real cures at once:
+                           #  1) make-static every CURRENT lease whose MAC is a real (not randomized) device -
+                           #     a locally-administered MAC (2nd nibble 2/6/A/E) is a rotating phone, skip those;
+                           #     everything else is fixed gear and gets reserved OUT of the dynamic pool for good.
+                           #  2) drop ghost/expired dynamic leases so rotated-MAC junk frees immediately.
+                           #  3) set a short 30m lease on the dynamic pool so future phone-MAC churn self-clears.
+                           ':foreach L in=[/ip dhcp-server lease find where dynamic=yes status=bound] do={'
+                           ':local m [/ip dhcp-server lease get $L mac-address]; '
+                           ':local n [:pick $m 1 2]; '
+                           ':if ($n!="2" and $n!="6" and $n!="a" and $n!="e" and $n!="A" and $n!="E") do={'
+                           ':do {/ip dhcp-server lease make-static $L} on-error={}; '
+                           ':do {/ip dhcp-server lease set $L comment="ND: reserved fixed device"} on-error={}}}; '
+                           ':do {/ip dhcp-server lease remove [find where dynamic=yes and status!=bound]} on-error={}; '
+                           '/ip dhcp-server set [find] lease-time=30m',
+                           # undo: give reserved fixed leases back to dynamic and restore the day lease
+                           ':do {/ip dhcp-server lease remove [find where comment="ND: reserved fixed device"]} '
+                           'on-error={}; /ip dhcp-server set [find] lease-time=1d')])
 
     if "ip conflict" in low or "conflict on" in low or "used by another device" in low:
         return _fix(1, "ip_conflict", f"Two devices use the same IP {ip}",

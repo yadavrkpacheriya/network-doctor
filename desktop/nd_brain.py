@@ -305,8 +305,9 @@ RECIPES = {
                       "permanent": True, "where": "arpblock"},
     "loop":          {"fix": "rate-limit or shut the switch port the loop/storm is on", "auto": False,
                       "permanent": False, "where": "switchbw"},
-    "dhcp_full":     {"fix": "widen the DHCP pool or clear stale leases so new devices get an address",
-                      "auto": False, "permanent": True, "where": "router"},
+    "dhcp_full":     {"fix": "reserve fixed gear (cameras/NVR/PCs/printers) OUT of the dynamic pool and set a "
+                             "short 30m lease, so rotating phone MACs self-clear instead of filling the pool",
+                      "auto": True, "permanent": True, "where": "router"},
     "camera_down":   {"fix": "restart the frozen camera (ONVIF reboot / PoE cycle) once it still answers ping",
                       "auto": False, "permanent": False, "where": "camline.reboot"},
 }

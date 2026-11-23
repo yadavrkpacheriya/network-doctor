@@ -2,7 +2,14 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.44, latest session)
+## Done (v4.40–4.45, latest session)
+- **DHCP-full PERMANENT fix** (v4.45) — root cause: 150-wide phone pool + rotating private MACs + fixed gear
+  (cams/NVR/PCs/printers) still sitting on dynamic leases. The old 30m-lease patch kept recurring (brain
+  logged 30x, auto was False so it never self-applied). Now: `dhcp_full` auto fix = one RouterOS script that
+  (1) make-static every bound DYNAMIC lease whose MAC is NOT locally-administered (fixed gear reserved out of
+  the pool), (2) removes ghost/expired dynamic leases, (3) sets lease-time=30m on the dynamic pool. Reversible
+  undo. Flipped `nd_brain.RECIPES["dhcp_full"]` auto=True + added to `nd_alerts.AUTO_SAFE` so it self-applies.
+  Tests: test_assistant (make-static/30m/dynamic=yes/undo), test_brain (auto+permanent+AUTO_SAFE).
 - **NVR empty-config PERMANENT fix** (v4.44, mobile 1.32.1) — raw dump showed every named channel node
   null/[] (not 607). Added `DvrIp.get_all_tree()` (CONFIG_GETALL 1046, empty Name = whole config) +
   `_harvest_channels()` that walks the WHOLE tree for any channel-ish list carrying camera IPs

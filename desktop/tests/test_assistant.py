@@ -69,8 +69,13 @@ class Plan(unittest.TestCase):
         # the pool text contains "new devices may get no address" - must classify as dhcp_full, not new_device
         r = AL.recipe("The DHCP pool is almost full - new devices may get no address. Widen the range.")
         self.assertEqual(r["kind"], "dhcp_full")
-        self.assertTrue(r["auto"])                      # offers the lease-time fix
-        self.assertIn("lease", r["auto"][0]["cmd"])
+        self.assertTrue(r["auto"])                      # offers the permanent fix
+        cmd = r["auto"][0]["cmd"]
+        # permanent fix must do all three: reserve fixed gear, drop ghosts, short lease
+        self.assertIn("make-static", cmd)               # reserve fixed devices out of the pool
+        self.assertIn("lease-time=30m", cmd)            # short lease for the dynamic (phone) pool
+        self.assertIn("dynamic=yes", cmd)               # only touches dynamic leases, never static reservations
+        self.assertIn("lease-time=1d", r["auto"][0]["undo"])  # reversible
 
     def test_real_new_device_still_classifies(self):
         r = AL.recipe("6 new device(s) on the network (3 Phones): iPhone-16 192.168.0.17")
