@@ -2116,6 +2116,25 @@ def update_db(db, raw, devices):
 
 def _update_db(db, raw, devices):
     ts = raw["meta"]["started"]
+    # A device that is ONLINE but whose MAC this scan couldn't read (ARP miss on a flat network, or it just
+    # changed IP) must still count as "seen", or its MAC-keyed history goes stale and it is wrongly reported as
+    # "offline 2+ days" while it is actually running (Rakesh, 23 Nov). So first, for every online device without a
+    # MAC, find its history entry by the IP it is answering on now, or by a matching name, and refresh last_seen.
+    online_macs_now = {d["mac"] for d in devices if d["online"] and d["mac"]}
+    for d in devices:
+        if not d["online"] or d["mac"]:
+            continue
+        ip, nm = d.get("ip", ""), (d.get("name") or "").strip().lower()
+        for mac, h in db["devices"].items():
+            if mac in online_macs_now:
+                continue
+            same_ip = ip and (h.get("ip") == ip or ip in (h.get("ips") or []))
+            same_nm = nm and nm in [(x or "").strip().lower() for x in (h.get("names") or [])]
+            if same_ip or same_nm:
+                h["last_seen"] = ts            # the same physical device is alive, just MAC-less this scan
+                if ip and ip not in (h.get("ips") or []):
+                    h["ips"] = ((h.get("ips") or []) + [ip])[-5:]
+                break
     for d in devices:
         if not d["online"] or not d["mac"]:
             continue

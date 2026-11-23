@@ -16,6 +16,7 @@ const int dvripPort = 34567;
 // message ids (nd_dvrip.py)
 const int _login = 1000;
 const int _configGet = 1042;
+const int _configGetAll = 1046; // XMeye GETALL - answers config even when GET (1042) returns 607
 const int _titles = 1048;
 const Set<int> _ok = {100, 515};
 
@@ -172,6 +173,12 @@ class DvrIp {
   Future<dynamic> get(String name) async {
     final r = await _call(_configGet, {'Name': name, 'SessionID': _sid()});
     if (!_ok.contains(r['Ret'])) {
+      // 607: this login can't read config via GET (1042); many XMeye recorders answer the same config over
+      // GETALL (1046), so fall back before giving up (Rakesh, 23 Nov).
+      try {
+        final r2 = await _call(_configGetAll, {'Name': name, 'SessionID': _sid()});
+        if (_ok.contains(r2['Ret'])) return r2[name];
+      } catch (_) {}
       throw DvrError("the device did not give '$name' (code ${r['Ret']})");
     }
     return r[name];

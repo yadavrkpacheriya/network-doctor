@@ -154,3 +154,20 @@ class DevicesTabFilters(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_online_without_mac_refreshes_history_by_ip():
+    # a PC seen before at .88; now it answers (online) but the scan read NO MAC and it's at a new IP .150.
+    # Its history must be refreshed so it is NOT reported offline.
+    db = fresh_db()
+    old = core.now_s()
+    db["devices"]["00:11:22:33:44:88"] = {"first_seen": old, "last_seen": "2000-01-01 00:00",
+                                           "ip": "192.168.0.88", "ips": ["192.168.0.88"],
+                                           "names": ["RAKESH-IT"], "category": core.CAT_PC}
+    # online device, no MAC, same name as the history entry
+    r = raw_with()
+    d = dev("", core.CAT_PC, ip="192.168.0.150", name="RAKESH-IT")
+    core._update_db(db, r, [d])
+    h = db["devices"]["00:11:22:33:44:88"]
+    assert h["last_seen"] == r["meta"]["started"]          # refreshed -> not stale
+    assert "192.168.0.150" in h["ips"]                     # learned the new IP

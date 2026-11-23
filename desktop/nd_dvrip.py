@@ -16,6 +16,7 @@ import struct
 
 PORT = 34567
 LOGIN, INFO, CONFIG_SET, CONFIG_GET, TITLES, MACHINE = 1000, 1020, 1040, 1042, 1048, 1450
+CONFIG_GETALL = 1046   # some XMeye firmwares answer config on GETALL (1046) even when GET (1042) returns 607
 OK = (100, 515)
 NEEDS_RESTART = (603,)
 REFUSED = {203: "password refused", 205: "user name refused", 206: "account locked by the device",
@@ -121,6 +122,16 @@ class DvrIp:
 
     def get(self, name, msg=CONFIG_GET):
         r = self.call(msg, {"Name": name, "SessionID": self._sid()})
+        # 607 = this login can't read config via GET (1042). Many XMeye recorders still answer the SAME config
+        # over GETALL (1046), so fall back to it before giving up (Rakesh, 23 Nov: NVRs returned 607 on every
+        # node, leaving camera IPs blank). Only retry on the default GET path.
+        if r.get("Ret") not in OK and msg == CONFIG_GET:
+            try:
+                r2 = self.call(CONFIG_GETALL, {"Name": name, "SessionID": self._sid()})
+                if r2.get("Ret") in OK:
+                    return r2.get(name)
+            except (OSError, DvrError):
+                pass
         if r.get("Ret") not in OK:
             raise DvrError(f"the device did not give '{name}' (code {r.get('Ret')})")
         return r.get(name)
