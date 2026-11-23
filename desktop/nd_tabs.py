@@ -1621,6 +1621,10 @@ class SlowTab:
         self.btn = ttk.Button(r3, text="Find the cause", style="Big.TButton", command=self.start)
         self.btn.pack(side="left")
         ttk.Button(r3, text="Stop", command=lambda: self.stop and self.stop.set()).pack(side="left", padx=6)
+        self.btn_watch = ttk.Button(r3, text="Watch for drops", command=self.toggle_watch)
+        self.btn_watch.pack(side="left", padx=6)
+        self._watch_on = False
+        self._watch_events = []
         self.var_prog = tk.StringVar(value="")
         ttk.Label(r3, textvariable=self.var_prog, foreground="#5b21b6").pack(side="left", padx=8)
         self.btn_fix = ttk.Button(r3, text="Fix this on the router", command=self.fix, state="disabled")
@@ -1659,6 +1663,74 @@ class SlowTab:
                 return d
         hits = [d for k, d in self.devmap.items() if all(w in k.lower() for w in low.split())]
         return hits[0] if len(hits) == 1 else None
+
+    def toggle_watch(self):
+        """Start/stop a continuous watch that catches INTERMITTENT drops a one-shot test misses: it checks the
+        site every 20 s in the background and logs each failure with its cause (Rakesh, 23 Nov - Google Sheets
+        drops many times a day at random moments)."""
+        if self._watch_on:
+            self._watch_on = False
+            self.btn_watch.config(text="Watch for drops")
+            self._show_watch_summary(final=True)
+            return
+        url = self.S.norm_url(self.var_url.get())
+        if not url:
+            messagebox.showinfo(APP, "Type the website first, for example docs.google.com")
+            return
+        self._watch_url = url
+        self._watch_events = []
+        self._watch_checks = 0
+        self._watch_on = True
+        self.btn_watch.config(text="Stop watching")
+        self.var_prog.set("Watching %s for drops... leave this running." % url)
+        self._watch_tick()
+
+    def _watch_tick(self):
+        if not self._watch_on:
+            return
+        import threading as _th
+
+        def probe():
+            try:
+                r = self.S.watch_probe(self._watch_url)
+            except Exception as e:  # noqa: BLE001
+                r = {"ok": False, "cause": "connect", "detail": str(e)}
+            self.app.q.put(("call", lambda: self._watch_result(r)))
+        _th.Thread(target=probe, daemon=True).start()
+
+    def _watch_result(self, r):
+        if not self._watch_on:
+            return
+        import time as _t
+        self._watch_checks += 1
+        if not r.get("ok") or r.get("cause") == "slow":
+            self._watch_events.append({"ts": int(_t.time()), "cause": r.get("cause", "?"),
+                                       "detail": r.get("detail", "")})
+        self._show_watch_summary()
+        self.app.after(20000, self._watch_tick)      # next check in 20 s
+
+    def _show_watch_summary(self, final=False):
+        import datetime as _dt
+        s = self.S.summarize_watch(self._watch_events, day=_dt.date.today().isoformat())
+        lines = ["WATCH on %s" % self._watch_url,
+                 "Checks: %d    Drops today: %d" % (self._watch_checks, s["total"])]
+        if s["total"]:
+            by = ", ".join("%s x%d" % (c, n) for c, n in sorted(s["by_cause"].items(), key=lambda x: -x[1]))
+            hrs = ", ".join("%s(%d)" % (h, n) for h, n in sorted(s["by_hour"].items()))
+            lines += ["By cause: " + by, "By hour: " + hrs, "", "Most likely fix:", s["likely_fix"]]
+            lines.append("")
+            lines.append("Recent drops:")
+            for e in self._watch_events[-10:]:
+                when = _dt.datetime.fromtimestamp(e["ts"]).strftime("%H:%M:%S")
+                lines.append("  %s  %s - %s" % (when, e["cause"], e["detail"][:70]))
+        else:
+            lines.append("No drops seen yet - keep it running; it logs each one the moment it happens.")
+        self.txt.config(state="normal")
+        self.txt.delete("1.0", "end")
+        self.txt.insert("1.0", "\n".join(lines))
+        self.txt.config(state="disabled")
+        self.var_prog.set(("Watching... " if not final else "Watch stopped. ") +
+                          "%d drop(s) logged today." % s["total"])
 
     def start(self):
         url = self.S.norm_url(self.var_url.get())

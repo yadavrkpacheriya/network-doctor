@@ -39,6 +39,84 @@ def norm_url(text):
     return urllib.parse.urlunsplit((u.scheme, u.netloc, u.path or "/", u.query, ""))
 
 
+# ---- continuous site watch: catch INTERMITTENT drops a one-shot test misses (Rakesh, 23 Nov) -----------------
+# Google Sheets etc. fail "many times a day" at random moments - a single Find-the-cause test runs when the line
+# happens to be fine and sees nothing. watch_probe() is a fast, light check meant to run on a timer; it says
+# whether the site is reachable RIGHT NOW and, if not, WHY, so every real drop is logged with its cause.
+
+def watch_probe(url, dns_server="1.1.1.1", timeout=6):
+    """One quick reachability check of `url`. Returns {ok, cause, detail, ms} where cause is one of:
+       'ok', 'dns' (name lookup failed/slow), 'connect' (TCP blocked/timeout), 'tls' (SSL failed),
+       'slow' (reachable but first byte very slow), 'http' (server returned an error). Light enough to run
+       every 15-30 s. Also probes a DNS lookup separately so a DNS blip is told apart from a line drop."""
+    import urllib.parse as _up
+    u = _up.urlsplit(url if "://" in url else "https://" + url)
+    host = u.hostname or ""
+    port = u.port or (443 if u.scheme != "http" else 80)
+    t0 = time.perf_counter()
+    # 1) DNS
+    try:
+        ip = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "cause": "dns", "detail": f"name lookup failed for {host} ({e})",
+                "ms": (time.perf_counter() - t0) * 1000}
+    dns_ms = (time.perf_counter() - t0) * 1000
+    # 2) connect
+    t1 = time.perf_counter()
+    try:
+        s = socket.create_connection((ip, port), timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "cause": "connect", "detail": f"cannot reach {host} ({ip}) ({e})",
+                "ms": (time.perf_counter() - t1) * 1000}
+    try:
+        # 3) TLS + first byte
+        if u.scheme != "http":
+            try:
+                s = ssl.create_default_context().wrap_socket(s, server_hostname=host)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "cause": "tls", "detail": f"secure handshake failed ({e})", "ms": 0}
+        s.settimeout(timeout)
+        t2 = time.perf_counter()
+        s.sendall(f"GET {(u.path or '/')} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: NetworkDoctor-watch\r\n"
+                  "Connection: close\r\n\r\n".encode())
+        first = s.recv(64)
+        fb_ms = (time.perf_counter() - t2) * 1000
+        if not first:
+            return {"ok": False, "cause": "connect", "detail": "connection dropped with no reply", "ms": fb_ms}
+        if fb_ms > 3000:
+            return {"ok": True, "cause": "slow", "detail": f"reachable but slow (first byte {fb_ms:.0f} ms)",
+                    "ms": fb_ms}
+        return {"ok": True, "cause": "ok", "detail": "reachable", "ms": dns_ms + fb_ms}
+    finally:
+        try: s.close()
+        except Exception: pass
+
+
+def summarize_watch(events, day=None):
+    """Turn a list of logged drop events into a per-cause daily summary for the UI.
+    events: [{"ts": epoch, "cause": str, "detail": str}] (only DROPS are logged, not OKs).
+    Returns {"total", "by_cause": {cause: n}, "by_hour": {hour: n}, "worst_cause", "likely_fix"}."""
+    import datetime as _dt
+    from collections import Counter
+    if day:
+        events = [e for e in events if _dt.datetime.fromtimestamp(e["ts"]).strftime("%Y-%m-%d") == day]
+    by_cause = Counter(e.get("cause", "?") for e in events)
+    by_hour = Counter(_dt.datetime.fromtimestamp(e["ts"]).strftime("%H:00") for e in events)
+    worst = by_cause.most_common(1)[0][0] if by_cause else ""
+    fix = {
+        "dns": "DNS is failing intermittently. Set the router's DHCP DNS to 1.1.1.1 and 8.8.8.8 (not the ISP's), "
+               "and make sure only ONE DNS server is handing out addresses.",
+        "connect": "The internet line or router is dropping briefly. Check the ISP line/cable and the router "
+                   "CPU; a saturated 100 Mbps line during backups also causes this.",
+        "tls": "Secure handshake fails - usually a firewall/antivirus doing SSL inspection, or wrong clock on "
+               "the PC. Check Date/Time and any 'web protection' on the PCs.",
+        "slow": "Reachable but slow - the line is likely saturated at times. Use the Bandwidth plan to stop one "
+                "device hogging it, and check the usage peaks.",
+    }.get(worst, "")
+    return {"total": len(events), "by_cause": dict(by_cause), "by_hour": dict(by_hour),
+            "worst_cause": worst, "likely_fix": fix}
+
+
 def http_timing(url, timeout=12, max_bytes=600_000):
     """dns / connect / tls / first byte / total in ms and download speed, like a browser's first request."""
     u = urllib.parse.urlsplit(url)
