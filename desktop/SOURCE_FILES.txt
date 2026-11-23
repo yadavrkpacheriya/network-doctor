@@ -59,3 +59,4 @@ nd_camreg.py
 nd_secscan.py
 nd_nvrdup.py
 nd_issues.py
+nd_power.py

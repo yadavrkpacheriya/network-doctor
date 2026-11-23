@@ -2092,6 +2092,7 @@ class HistoryTab:
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         ttk.Button(top, text="Export (CSV)", command=self.export).pack(side="right")
+        ttk.Button(top, text="Power / UPS report", command=self.power_report).pack(side="right", padx=4)
         ttk.Label(parent, text="One row per day: how many alerts fired, and which kind was busiest. Open "
                                "alerts you've since fixed still count on the day they happened.",
                   foreground="#667085").pack(anchor="w")
@@ -2114,6 +2115,87 @@ class HistoryTab:
         if p:
             AL.export_trend_csv(p, getattr(self, "rows", []))
             messagebox.showinfo(APP, f"Saved {p}")
+
+    def power_report(self):
+        PowerReportWindow(self.app)
+
+
+class PowerReportWindow(tk.Toplevel):
+    """Power-cut / UPS report: when many devices dropped together (a cut), which rode it out on UPS, and how much
+    each device is offline per day / on average (Rakesh, 23 Nov)."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Power & UPS report")
+        self.transient(app)
+        self.geometry("860x600")
+        self.minsize(640, 420)
+        import nd_power as P
+        import nd_core as core
+        samples = (app.db or {}).get("power_log", [])
+        names = {}
+        for mac, h in (app.db or {}).get("devices", {}).items():
+            names[mac] = app.db.get("labels", {}).get(mac) or (h.get("names") or [""])[-1] or mac
+        data = P.summarize(samples, names=names)
+        self._data = data
+        self._samples = samples
+
+        fr = ttk.Frame(self, padding=12)
+        fr.pack(fill="both", expand=True)
+        cov = data["coverage"]
+        if not samples:
+            ttk.Label(fr, text="No power data yet. Keep the app running (Live monitor on) - it records every "
+                      "scan, and a report builds up over a day or two.", wraplength=800,
+                      foreground="#667085").pack(anchor="w")
+            return
+        head = ("Power cuts seen: %d     On UPS (rode out a cut): %d     NOT on UPS (dropped): %d"
+                % (cov["events"], len(cov["on_ups"]), len(cov["not_on_ups"])))
+        ttk.Label(fr, text=head, font=("", 11, "bold"), foreground="#0f766e").pack(anchor="w", pady=(0, 2))
+        ttk.Label(fr, text="A 'power cut' = several fixed devices going offline in the same scan. Devices that "
+                  "stayed up through a cut are on a UPS; the rest are not. Below: how long each device is offline "
+                  "per day, and its monthly average.", wraplength=820, foreground="#667085").pack(anchor="w")
+
+        # devices NOT on UPS - the actionable list
+        if cov["not_on_ups"]:
+            box = ttk.LabelFrame(fr, text="Not on UPS (these die in a power cut)", padding=6)
+            box.pack(fill="x", pady=8)
+            txt = ", ".join(sorted(data["name_of"](m) for m in cov["not_on_ups"]))
+            ttk.Label(box, text=txt, wraplength=800, foreground="#b91c1c").pack(anchor="w")
+
+        # downtime table
+        tv = UI["make_tree"](fr, ("avg", "total", "ups"),
+                             ("Avg min/day", "Total min offline", "On UPS?"), (110, 140, 90),
+                             first=("Device", 240), height=12)
+        for d in data["devices"]:
+            tv.insert("", "end", text=(d["name"] or d["mac"]),
+                      values=("%.1f" % d["avg_min_per_day"], "%.0f" % d["total_min"], "yes" if d["on_ups"] else "no"),
+                      tags=() if d["on_ups"] else ("warn",))
+        tv.tag_configure("warn", foreground="#b91c1c")
+
+        bar = ttk.Frame(fr)
+        bar.pack(fill="x", pady=(8, 0))
+        ttk.Button(bar, text="Export (CSV)", command=self._export).pack(side="right")
+
+    def _export(self):
+        p = filedialog.asksaveasfilename(initialfile="power-ups-report.csv", defaultextension=".csv",
+                                          filetypes=[("CSV", "*.csv")])
+        if not p:
+            return
+        import csv
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["Device", "MAC", "On UPS", "Avg min offline/day", "Total min offline"])
+            for d in self._data["devices"]:
+                w.writerow([d["name"] or d["mac"], d["mac"], "yes" if d["on_ups"] else "no",
+                            d["avg_min_per_day"], round(d["total_min"])])
+            w.writerow([])
+            w.writerow(["Power cut at", "Devices dropped", "Survived (on UPS)"])
+            for e in self._data["events"]:
+                import datetime as _dt
+                when = _dt.datetime.fromtimestamp(e["ts"]).strftime("%Y-%m-%d %H:%M") if e.get("ts") else ""
+                w.writerow([when, e["count"], len(e["survived"])])
+        messagebox.showinfo(APP, f"Saved {p}")
 
 
 class AutoFixWindow(tk.Toplevel):

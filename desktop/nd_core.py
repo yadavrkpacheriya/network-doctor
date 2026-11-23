@@ -2167,6 +2167,30 @@ def _update_db(db, raw, devices):
     db["last_online_macs"] = sorted({d["mac"] for d in devices if d.get("online") and d.get("mac")})
     db["scans"] += 1
 
+    # Power / UPS log: record which FIXED devices are up vs down this scan, so nd_power can spot a power cut
+    # (many drop together), show which rode it out on UPS, and chart downtime (Rakesh, 23 Nov). Fixed devices
+    # only - phones/random-MAC come and go on their own. Kept ~45 days, pruned here so the db stays small.
+    try:
+        import time as _t
+        epoch = int(_t.time())
+        up, down = [], []
+        present = {d["mac"]: d for d in devices if d.get("mac")}
+        # devices currently classified as fixed and online
+        for d in devices:
+            if d.get("mac") and d.get("category") in (FIXED_MAC_CATS + (CAT_PC,)) and not is_random_mac(d["mac"]):
+                (up if d.get("online") else down).append(d["mac"])
+        # fixed devices known from history but absent from this scan entirely = down
+        for mac, h in db["devices"].items():
+            if (mac not in present and not is_random_mac(mac)
+                    and h.get("category") in (FIXED_MAC_CATS + (CAT_PC,))):
+                down.append(mac)
+        plog = db.setdefault("power_log", [])
+        plog.append({"ts": epoch, "up": sorted(set(up)), "down": sorted(set(down))})
+        cutoff = epoch - 45 * 86400
+        db["power_log"] = [s for s in plog if s.get("ts", 0) >= cutoff][-20000:]
+    except Exception:  # noqa: BLE001
+        pass
+
 
 # ==========================================================================
 # exports
