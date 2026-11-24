@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.51"
+VERSION = "4.52"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3802,10 +3802,14 @@ class App(tk.Tk):
         src = "external" if "internet" in (e.get("text") or "").lower() else ""
         d = BR.decide(brain, e.get("text", ""), r["kind"], e.get("category", ""), src, e.get("sev", "warning"))
         BR.recurrence(brain, f"{r['kind']}|{e.get('category', '')}")
+        has_safe_router_fix = r["kind"] in AL.AUTO_SAFE and \
+            any(a["where"] == "router" for a in r["auto"]) and self.router_client(ask=False) is not None
         if d.get("apply_now"):
             need = 1                     # a PERMANENT self-healing recipe for a recurring issue: act on sight
-        elif d["recurring"] or d["confidence"] < 0.4:
-            need += 2                    # keeps coming back, or the brain is unsure here: be more careful
+        elif d["confidence"] < 0.4:
+            need += 2                    # the brain is unsure here: be more careful (never for a recurring one)
+        elif has_safe_router_fix:
+            need = 1                     # a safe router fix exists and the router login is saved: fix on sight
         elif d["auto_ok"]:
             need = min(need, 1)          # a proven-safe fix for this exact situation: act sooner
         if e.get("count", 1) < need:
@@ -4862,10 +4866,17 @@ class App(tk.Tk):
                     self.alerts_active.pop(f"watch:{mac}", None)
                     # Also close the alert in the LOG (the list the user sees). Popping alerts_active only
                     # cleared the in-memory tracker, so the "not answering" alert stayed open forever after the
-                    # device came back (Rakesh, 24 Nov). Match the open alert by this device's IP/MAC.
-                    if self.alert_log.resolve_matching("answering", ip) or \
-                            self.alert_log.resolve_matching("offline", ip) or \
-                            (mac and self.alert_log.resolve_matching("responding", mac)):
+                    # device came back (Rakesh, 24 Nov). The alert title is "name (OLD ip)", so match by the
+                    # device NAME and its MAC - both survive an IP change, which the old-IP text would not.
+                    did = False
+                    for word in ("answering", "offline", "responding", "OFFLINE"):
+                        if name and self.alert_log.resolve_matching(word, name, delete=True):
+                            did = True
+                        if mac and self.alert_log.resolve_matching(word, mac, delete=True):
+                            did = True
+                        if ip and self.alert_log.resolve_matching(word, ip, delete=True):
+                            did = True
+                    if did:
                         self.alert_log.save()
                         self.q.put(("call", self._refresh_alerts))
                     self._log_event("info", f"Back up: {name} ({ip}) answers again after {mins:.0f} min", "Device watch")
@@ -5021,7 +5032,7 @@ class App(tk.Tk):
         closed = False
         for mac, ip in online_now:
             for key in (mac, ip):
-                if key and self.alert_log.resolve_matching("stopped answering", key):
+                if key and self.alert_log.resolve_matching("stopped answering", key, delete=True):
                     closed = True
         if closed:
             self.alert_log.save()

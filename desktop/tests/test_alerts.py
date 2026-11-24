@@ -149,3 +149,32 @@ class ResolveMatchingTests(unittest.TestCase):
         log = AL.AlertLog(p)
         log.add("warning", "device stopped answering 7C:57:58:B1:57:F0", "Full scan", now=1)
         self.assertEqual(log.resolve_matching("answering", "7c:57:58:b1:57:f0"), 1)  # lowercased MAC still matches
+
+
+class ResolveDeleteAndIpChange(unittest.TestCase):
+    def test_delete_removes_the_line_entirely(self):
+        import tempfile, os
+        p = os.path.join(tempfile.mkdtemp(), "alerts.json")
+        log = AL.AlertLog(p)
+        log.add("warning", "device stopped answering 192.168.0.58 7C:57:58:B1:57:F0", "Full scan", now=1)
+        self.assertEqual(len(log.items), 1)
+        self.assertEqual(log.resolve_matching("stopped answering", "7C:57:58:B1:57:F0", delete=True), 1)
+        self.assertEqual(len(log.items), 0)   # gone, not just marked fixed
+
+    def test_ip_change_still_resolves_by_mac(self):
+        import tempfile, os
+        p = os.path.join(tempfile.mkdtemp(), "alerts.json")
+        log = AL.AlertLog(p)
+        # alert raised with OLD ip .151; device returns at NEW ip .160 - MAC is the stable match
+        log.add("critical", "Critical device not answering: Gate No 2 (192.168.0.151) AA:BB:CC:DD:EE:01",
+                "Device watch", now=1)
+        self.assertEqual(log.resolve_matching("answering", "192.168.0.160", delete=True), 0)  # new IP: no match
+        self.assertEqual(log.resolve_matching("answering", "AA:BB:CC:DD:EE:01", delete=True), 1)  # MAC matches
+        self.assertEqual(len(log.items), 0)
+
+    def test_resolve_by_name_survives_ip_change(self):
+        import tempfile, os
+        p = os.path.join(tempfile.mkdtemp(), "alerts.json")
+        log = AL.AlertLog(p)
+        log.add("critical", "Critical device not answering: Gate No 2 (192.168.0.151)", "Device watch", now=1)
+        self.assertEqual(log.resolve_matching("answering", "Gate No 2", delete=True), 1)  # name is stable

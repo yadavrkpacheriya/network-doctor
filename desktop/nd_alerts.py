@@ -619,20 +619,29 @@ class AlertLog:
                     n += 1
         return n
 
-    def resolve_matching(self, must_contain, also_contain, now=None):
-        """Mark fixed any OPEN alert whose text contains BOTH strings (case-insensitive on the second, which is
-        usually a MAC or IP). Used to auto-close a 'stopped answering' alert when that exact device is back."""
+    def resolve_matching(self, must_contain, also_contain, now=None, delete=False):
+        """Close any OPEN alert whose text contains BOTH strings (case-insensitive on the second, usually a MAC,
+        IP or name). Used to auto-clear a 'stopped answering' / 'not answering' alert when that device is back.
+        delete=True removes the alert line entirely (Rakesh wants connect/disconnect noise gone, not just
+        marked fixed); otherwise it is marked 'fixed' and kept for history."""
         now = time.time() if now is None else now
         a, b = (must_contain or "").lower(), (also_contain or "").lower()
         if not a or not b:
             return 0
         n = 0
         with self.lock:
+            keep = []
             for x in self.items:
                 t = (x.get("text") or "").lower()
-                if x.get("status") == "open" and a in t and b in t:
-                    x["status"], x["fixed_t"], x["fixed_by"] = "fixed", now, "device came back online"
+                hit = x.get("status") == "open" and a in t and b in t
+                if hit:
                     n += 1
+                    if delete:
+                        continue           # drop the line
+                    x["status"], x["fixed_t"], x["fixed_by"] = "fixed", now, "device came back online"
+                keep.append(x)
+            if delete and n:
+                self.items = keep
         return n
 
     def set_status(self, ids, status, by="you"):

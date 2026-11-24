@@ -2,7 +2,15 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.51, latest session)
+## Done (v4.40–4.52, latest session)
+- **More aggressive auto-fix + auto-delete connect/disconnect alerts** (v4.52): _auto_fix now fires on FIRST
+  sight (need=1) for any AUTO_SAFE kind that has a router fix AND a saved router login (removed the backwards
+  recurring+2 penalty). resolve_matching gained delete=True - connect/disconnect ("answering"/"offline"/
+  "responding") alerts are now REMOVED from the log (not just marked fixed) when the device returns. Watch
+  "Back up" path matches by NAME + MAC + IP so an IP-change-then-reconnect still clears the stale alert
+  (old-IP text wouldn't match the new IP). Tests: delete mode, IP-change-by-MAC, resolve-by-name.
+- **(IN PROGRESS) Approval push to phone**: issues needing approval -> PC pushes a notification to the phone;
+  user approves/rejects/forwards to Claude. [building next]
 - **PC app "stops responding" fix** (v4.51): two main-thread UI freezes. (1) `_poll` drained the WHOLE queue
   every 100ms tick with no cap - a burst (event storm, many job results) froze the window. Now capped at
   POLL_BUDGET=40 msgs/tick, reschedules in 10ms when more remain. (2) AlertsTab.refresh inserted up to 1500
