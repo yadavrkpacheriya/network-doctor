@@ -253,6 +253,7 @@ class _PcDashboardState extends State<PcDashboard> {
   static const _failsBeforeErr = 3;
   String _query = '';
   Timer? _timer;
+  Timer? _ka;                  // keep-alive: a cheap /api/hello every 3s so the link never idles out
 
   @override
   void initState() {
@@ -260,12 +261,31 @@ class _PcDashboardState extends State<PcDashboard> {
     PcLink.current = widget.pc;
     _load();
     _timer = Timer.periodic(const Duration(seconds: 6), (_) => _load());
+    _ka = Timer.periodic(const Duration(seconds: 3), (_) => _pingAlive());
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _ka?.cancel();
     super.dispose();
+  }
+
+  /// Between the 6s data polls, a tiny /api/hello keeps the connection warm and catches a drop early. On a
+  /// success it clears the failure count (the link is alive); it never surfaces its own error - the data
+  /// poll owns the "disconnected" screen.
+  Future<void> _pingAlive() async {
+    if (_loading) return;      // a data poll is already in flight - it is the better liveness signal
+    final ok = await PcLink.keepAlive(widget.pc);
+    if (!mounted) return;
+    if (ok) {
+      if (_fails != 0 || _err.isNotEmpty) {
+        setState(() { _fails = 0; _err = ''; });
+        _load();               // link just came back - refresh the data now, don't wait for the next poll
+      }
+    } else {
+      _fails++;                // let the normal threshold decide when to show "disconnected"
+    }
   }
 
   Future<void> _load() async {

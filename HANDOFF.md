@@ -11,6 +11,9 @@ _Last updated: 2026-11-23 (v4.43)_
     "Fix website & app names" (new PC action `name_traffic` = v4.48 DNS-log+redirect+DoH-block) and
     "Hardening commands" (existing PC `hardening`, now shown via new `_showCommands` copyable dialog).
     runOnPc now renders a `{commands:[...]}` result instead of dropping it.
+- **Keep-alive ping** (mobile 1.33.1): pc_screen runs a cheap `/api/hello` every 3s (PcLink.keepAlive, never
+  throws) between the 6s data polls, so the phone↔PC link never idles out; on success it clears the fail
+  count and, if it had been showing an error, reloads data immediately (fast recovery instead of waiting ≤6s).
 - **Website/app naming fix + verify** (v4.48) — root cause of "finding/verifying website & app still an issue":
   usage names depend on the router's DNS log, but DoH (port 443) and devices using their own DNS hide names,
   so traffic shows as 'other'/CDN. Added `nd_tools.block_doh_commands` (drops 443 to public DoH/DoT resolver

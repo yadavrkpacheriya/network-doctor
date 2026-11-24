@@ -249,6 +249,19 @@ class PcLink {
     pc.role = '';
   }
 
+  /// Lightweight keep-alive: a bare /api/hello against the current best address, no body parsing, never
+  /// throws. Returns true if the PC answered. Used on a short timer between data polls so the link does not
+  /// idle out and a drop is noticed (and the other address tried) quickly (Rakesh, 24 Nov).
+  static Future<bool> keepAlive(PairedPc pc) async {
+    final base = viaRemote.contains(pc.host) && pc.remote.isNotEmpty ? pc.uriVia('/api/hello', true) : pc.uri('/api/hello');
+    try {
+      final r = await http.get(base, headers: _h(pc)).timeout(const Duration(seconds: 4));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// State fetch that reports whether the PC wants a sign-in (Pro with accounts).
   static Future<Map<String, dynamic>> hello2(PairedPc pc) async {
     final r = await _send(() => http.get(pc.uri('/api/hello')), 'reach the PC');
