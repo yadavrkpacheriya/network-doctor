@@ -2,6 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
+import '../net/pc_link.dart';
 import 'common.dart';
 import 'pc_actions.dart' show runOnPc;
 
@@ -126,6 +129,8 @@ class SummaryTab extends StatelessWidget {
               ],
             ),
           ),
+        const SizedBox(height: 8),
+        _PushSetupCard(topic: '${s['push_topic'] ?? ''}'),
         const SizedBox(height: 8),
         Text('Setup checklist', style: t.titleMedium),
         if (checklist.isEmpty)
@@ -421,6 +426,111 @@ class _InventoryTabState extends State<InventoryTab> {
             ),
           ),
       ]),
+    );
+  }
+}
+
+/// Background push setup: shows the ntfy topic the PC will push approvals to, lets the user subscribe in the
+/// free ntfy app (which delivers even when Network Doctor is closed) and send a test. (Rakesh, 24 Nov.)
+class _PushSetupCard extends StatefulWidget {
+  const _PushSetupCard({required this.topic});
+  final String topic;
+  @override
+  State<_PushSetupCard> createState() => _PushSetupCardState();
+}
+
+class _PushSetupCardState extends State<_PushSetupCard> {
+  String _topic = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _topic = widget.topic;
+  }
+
+  Future<void> _setup({bool test = false}) async {
+    final pc = PcLink.current;
+    if (pc == null) return;
+    setState(() => _busy = true);
+    try {
+      final r = await PcLink.action(pc, 'push_setup', {if (test) 'test': true});
+      if (!mounted) return;
+      setState(() => _topic = '${r['topic'] ?? _topic}');
+      if (test) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(r['test_sent'] == true
+                ? 'Test push sent - you should see it on this phone in a moment.'
+                : 'Could not send the test (the PC may be offline).')));
+      }
+    } catch (_) {
+      // best-effort
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _subscribe() async {
+    if (_topic.isEmpty) return;
+    // Deep-link into the ntfy Android app's subscribe screen; if not installed, send to its Play Store page.
+    final ntfyApp = Uri.parse('ntfy://ntfy.sh/$_topic');
+    final store = Uri.parse('https://play.google.com/store/apps/details?id=io.heckel.ntfy');
+    if (!await launchUrl(ntfyApp, mode: LaunchMode.externalApplication)) {
+      await launchUrl(store, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.notifications_active, size: 20),
+            const SizedBox(width: 8),
+            Text('Background alerts (push)', style: t.titleMedium),
+          ]),
+          const SizedBox(height: 4),
+          const Text(
+            'Get a notification on this phone - even when the app is closed - when a fix needs your approval. '
+            'Uses the free ntfy app to deliver in the background.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          if (_topic.isEmpty)
+            FilledButton.icon(
+              onPressed: _busy ? null : () => _setup(),
+              icon: const Icon(Icons.add_alert),
+              label: const Text('Turn on background push'),
+            )
+          else ...[
+            SelectableText('Topic: $_topic', style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _subscribe,
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('Subscribe in ntfy app'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : () => copyText(context, _topic),
+                icon: const Icon(Icons.copy, size: 18),
+                label: const Text('Copy topic'),
+              ),
+              TextButton.icon(
+                onPressed: _busy ? null : () => _setup(test: true),
+                icon: const Icon(Icons.send, size: 18),
+                label: const Text('Send test'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            const Text('In the ntfy app, this phone stays subscribed in the background. One-time: install ntfy '
+                'from the Play Store if asked, then tap Subscribe.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ],
+        ]),
+      ),
     );
   }
 }

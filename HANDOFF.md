@@ -9,6 +9,14 @@ _Last updated: 2026-11-23 (v4.43)_
   "responding") alerts are now REMOVED from the log (not just marked fixed) when the device returns. Watch
   "Back up" path matches by NAME + MAC + IP so an IP-change-then-reconnect still clears the stale alert
   (old-IP text wouldn't match the new IP). Tests: delete mode, IP-change-by-MAC, resolve-by-name.
+- **Background push via ntfy** (v4.54, mobile 1.36.0): FULL background push (buzzes phone when app closed),
+  no Firebase. New `nd_push.py` (ntfy.sh client: new_topic/send/approval_push, injectable opener, never
+  raises, ascii-safe). PC: _flush_alerts -> _maybe_push_approvals pushes when the pending-approval count GOES
+  UP (debounced via _pushed_approvals); settings push_topic/push_enabled; snapshot sends push_topic; new
+  remote actions push_setup (makes a secret topic, optional test push). Phone: _PushSetupCard in pc_more
+  SummaryTab - "Turn on background push" -> push_setup, shows topic, "Subscribe in ntfy app" (ntfy:// deep
+  link, Play Store fallback io.heckel.ntfy), Send test. Delivery is by the ntfy app (survives app-closed);
+  our app just sets the topic + deep-links. nd_push.py in both SOURCE_FILES. Tests: test_push (7). Suite 1022.
 - **Approval queue on phone** (v4.53, mobile 1.35.0): snapshot now sends `pending_approval` = open alerts that
   HAVE a router fix but are NOT auto-safe (need a human yes) and aren't rejected. Phone AlertsTab shows a
   "Needs your approval" block with Approve (runs alert_fix), Reject (new `approve_reject` action sets

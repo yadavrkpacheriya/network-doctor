@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.53"
+VERSION = "4.54"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3764,6 +3764,33 @@ class App(tk.Tk):
         except Exception:
             pass
         self._refresh_alerts()
+        self._maybe_push_approvals()
+
+    def _maybe_push_approvals(self):
+        """If new fixes are waiting for the user's OK, buzz the phone via ntfy (background push, works when the
+        app is closed). Debounced by count so it only pushes when the number of pending approvals GOES UP, not
+        on every flush (Rakesh, 24 Nov: full background push)."""
+        st = self._settings()
+        if not st.get("push_enabled", True):
+            return
+        topic = st.get("push_topic")
+        if not topic:
+            return  # no topic set up yet (Setup > Phone alerts) - nothing to push to
+        try:
+            pend = [x for x in self.alert_log.recent(200)
+                    if x.get("status") == "open" and x.get("approval") != "rejected"
+                    and AL.explain(x["text"], x["sev"], self.lip, self.gw, self.net)["kind"] not in AL.AUTO_SAFE
+                    and any(f["where"] == "router"
+                            for f in AL.explain(x["text"], x["sev"], self.lip, self.gw, self.net)["auto"])]
+        except Exception:  # noqa: BLE001
+            return
+        n = len(pend)
+        last = getattr(self, "_pushed_approvals", 0)
+        self._pushed_approvals = n
+        if n > last and n > 0:
+            import nd_push as PUSH
+            first = AL.explain(pend[0]["text"], pend[0]["sev"], self.lip, self.gw, self.net)["title"]
+            threading.Thread(target=lambda: PUSH.approval_push(topic, n, first), daemon=True).start()
 
     # 3.24.1 and earlier waited for the same alert to repeat 5 times before touching it - safe with no
     # undo, but on a network with many DIFFERENT one-off alerts (a different camera each time) that
@@ -5403,6 +5430,22 @@ class App(tk.Tk):
                 return {"ok": False, "message": "this fix has no undo command"}
             self.q.put(("call", lambda: self._undo_fix(fid)))
             return {"ok": True, "message": "Undoing on the PC..."}
+        if name == "push_setup":
+            # Phone asks the PC to set up background push: make a secret ntfy topic if there isn't one, and
+            # (optionally) send a test push so the user confirms the phone receives it.
+            import nd_push as PUSH
+            st = self._settings()
+            topic = st.get("push_topic")
+            if not topic:
+                topic = PUSH.new_topic()
+                st["push_topic"] = topic
+                st["push_enabled"] = True
+                self._save_settings()
+            ok = True
+            if a.get("test"):
+                ok = PUSH.approval_push(topic, 1, "Test: push is working")
+            return {"ok": True, "topic": topic, "url": PUSH.topic_url(topic),
+                    "test_sent": bool(a.get("test")) and ok}
         if name == "approve_reject":
             # The user rejected a pending-approval fix from the phone: mark it so it stops being offered.
             x = self.alert_log.get(str(a.get("id")))
@@ -5831,6 +5874,7 @@ class App(tk.Tk):
                                 "title": r["title"], "text": x["text"], "fix": fx[0]["label"],
                                 "why": r["why"], "ip": x.get("ip", "")})
         snap["pending_approval"] = pending
+        snap["push_topic"] = self._settings().get("push_topic", "")   # phone subscribes to this ntfy topic
         snap["fixes"] = [{"id": e["id"], "kind": e["kind"], "title": e["title"], "mac": e.get("mac"),
                           "ip": e.get("ip"), "status": e["status"], "at": e["at"], "note": e.get("note", ""),
                           "undoable": bool(e.get("undo_cmd"))}
