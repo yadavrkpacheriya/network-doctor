@@ -75,6 +75,68 @@ TASK_FIX = "NetworkDoctor Fix"
 _PS = r"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File"
 
 
+def _tr_escape(cmd):
+    r"""Escape a command for use inside schtasks /TR "..." written in a .cmd file: the inner double quotes
+    around the .ps1 path must become \" so cmd.exe keeps them as part of the one /TR argument."""
+    return cmd.replace('"', '\\"')
+
+
+def enabler_script(central):
+    r"""A self-contained, self-elevating one-time setup a PC runs LOCALLY (double-click, GPO startup script, or
+    pushed once). It does two jobs so a workgroup PC becomes fully remote-manageable AND gets the agent:
+      1. opens the doors Windows shuts by default - admin shares, Remote Registry, File & Printer Sharing +
+         WMI firewall rules, and LocalAccountTokenFilterPolicy=1 - so Network Doctor's remote push works forever
+         after;
+      2. installs the Network Doctor agent (copies it to ProgramData, registers the logon + fix tasks, starts
+         it) pointed at the IT share, so this PC starts reporting full details immediately.
+    After this runs once per PC, the agent self-updates from the share with no further per-PC visit. `central` is
+    the IT share path written to central.txt. Returns the .cmd text. The agent .ps1 is expected next to this
+    script as networkdoctor-agent.ps1 (the caller writes both into the same folder)."""
+    share = (central or "").replace("^", "^^").replace("&", "^&")
+    return (
+        "@echo off\r\n"
+        "setlocal EnableExtensions\r\n"
+        "title Network Doctor - one-time setup\r\n"
+        ":: self-elevate to admin\r\n"
+        'net session >nul 2>&1\r\n'
+        "if %errorlevel% NEQ 0 (\r\n"
+        '  powershell -NoProfile -Command "Start-Process \'%~f0\' -Verb RunAs"\r\n'
+        "  exit /b\r\n"
+        ")\r\n"
+        "echo(\r\n"
+        "echo   Setting up this PC for Network Doctor... please wait.\r\n"
+        "echo(\r\n"
+        ":: 1) open the doors Windows closes by default (so remote management works from now on)\r\n"
+        'echo   - Admin shares + remote UAC token\r\n'
+        'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f >nul 2>&1\r\n'
+        'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters" /v AutoShareWks /t REG_DWORD /d 1 /f >nul 2>&1\r\n'
+        'echo   - Remote Registry service\r\n'
+        'sc config RemoteRegistry start= auto >nul 2>&1 & sc start RemoteRegistry >nul 2>&1\r\n'
+        'echo   - File ^& Printer Sharing + WMI through the firewall\r\n'
+        'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes >nul 2>&1\r\n'
+        'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=Yes >nul 2>&1\r\n'
+        'netsh advfirewall firewall set rule group="Remote Administration" new enable=Yes >nul 2>&1\r\n'
+        ":: 2) install the Network Doctor agent locally and point it at the IT share\r\n"
+        'echo   - Installing the Network Doctor agent\r\n'
+        'set "ND=%ProgramData%\\NetworkDoctor"\r\n'
+        'if not exist "%ND%" md "%ND%" >nul 2>&1\r\n'
+        'copy /y "%~dp0networkdoctor-agent.ps1" "%ND%\\networkdoctor-agent.ps1" >nul 2>&1\r\n'
+        'if exist "%~dp0fix-launch.cmd" copy /y "%~dp0fix-launch.cmd" "%ND%\\fix-launch.cmd" >nul 2>&1\r\n'
+        '> "%ND%\\central.txt" echo ' + share + "\r\n"
+        'schtasks /Create /TN "' + TASK_BG + '" /TR "' + _tr_escape(agent_run_cmd("background")) + '" '
+        '/RU SYSTEM /RL HIGHEST /F /SC ONLOGON >nul 2>&1\r\n'
+        'schtasks /Create /TN "' + TASK_FIX + '" /TR "' + _tr_escape(agent_run_cmd("fix")) + '" '
+        '/RU SYSTEM /RL HIGHEST /F /SC ONCE /ST 00:00 >nul 2>&1\r\n'
+        'schtasks /Run /TN "' + TASK_BG + '" >nul 2>&1\r\n'
+        "echo(\r\n"
+        "echo   Done. This PC is now set up and reporting to Network Doctor.\r\n"
+        "echo   You can close this window.\r\n"
+        "echo(\r\n"
+        "timeout /t 8 >nul 2>&1\r\n"
+        "exit /b 0\r\n"
+    )
+
+
 def qualify_user(ip, user):
     r"""Qualify a BARE local-admin name with the target host, so a workgroup PC knows which account authority to
     use. An unqualified "Administrator" against \\ip\C$ is exactly what makes Windows answer "The request is not

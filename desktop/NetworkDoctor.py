@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.60"
+VERSION = "4.61"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2026,6 +2026,8 @@ class App(tk.Tk):
             ttk.Entry(dep, textvariable=var, width=w, show=show).pack(side="left")
         ttk.Button(dep, text="Save login", command=self._agent_cred_save).pack(side="left", padx=4)
         ttk.Button(dep, text="Install / update agent on all PCs", command=self._agent_deploy_all).pack(side="left", padx=4)
+        ttk.Button(dep, text="Make one-time setup file (for PCs the push can't reach)",
+                   command=self._make_enabler).pack(side="left", padx=4)
         self.var_dep_info = tk.StringVar(value=self._agent_cred_summary())
         ttk.Label(f, textvariable=self.var_dep_info, foreground="#0f766e").pack(anchor="w", padx=8)
         ttk.Label(f, text="Saves an encrypted Windows admin login and installs the agent on every online PC over "
@@ -2096,6 +2098,38 @@ class App(tk.Tk):
         self.var_dep_info.set(self._agent_cred_summary())
         messagebox.showinfo(APP, "Admin login saved (encrypted on this PC).\n\nNow click 'Install / update agent "
                                  "on all PCs'.")
+
+    def _make_enabler(self):
+        """Write a one-time setup folder (Enable-NetworkDoctor.cmd + the agent files) that any PC can run once -
+        locally, by GPO startup script, or copied via the common admin - to open the remote-admin doors AND
+        install the agent. After a PC runs it once, the normal push and the agent's self-update reach it with no
+        further visit. This is the reliable way onto workgroup PCs Windows blocks by default (Rakesh, 24 Nov)."""
+        from tkinter import filedialog
+        central = self._settings().get("endpoint_dir") or r"\\RAKESH-IT\LeakLog"
+        folder = filedialog.askdirectory(title="Choose a folder to save the one-time setup file "
+                                               "(e.g. a USB drive or your IT share)")
+        if not folder:
+            return
+        try:
+            out = os.path.join(folder, "NetworkDoctor-Setup")
+            os.makedirs(out, exist_ok=True)
+            for name, text in nd_agent.FILES.items():
+                with open(os.path.join(out, name), "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+            with open(os.path.join(out, "Enable-NetworkDoctor.cmd"), "w", encoding="utf-8", newline="") as fh:
+                fh.write(DP.enabler_script(central))
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP, f"Could not write the setup file: {e}")
+            return
+        messagebox.showinfo(APP, "One-time setup saved to:\n" + out + "\n\n"
+                            "Run 'Enable-NetworkDoctor.cmd' ONCE on each PC the push can't reach - it asks for "
+                            "admin, opens the remote-management doors, and installs the agent (reporting to\n" +
+                            central + ").\n\nWays to run it on all PCs at once:\n"
+                            "  - Put it in a domain/GPO Startup script, or\n"
+                            "  - Copy the folder to each PC (USB or \\\\pc\\C$) and double-click it, or\n"
+                            "  - Drop it in each PC's Startup folder once.\n\n"
+                            "After a PC runs it once, Network Doctor reaches it remotely from then on and the "
+                            "agent self-updates from the share - no more per-PC visits.")
 
     def _agent_deploy_all(self):
         creds = DP.admin_creds(self._settings().get("admin_logins") or [])

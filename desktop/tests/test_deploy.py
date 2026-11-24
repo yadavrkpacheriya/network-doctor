@@ -135,3 +135,29 @@ class Sweep(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_enabler_script_opens_doors_and_installs():
+    import nd_deploy as D
+    s = D.enabler_script(r"\\RAKESH-IT\LeakLog")
+    # self-elevates
+    assert "RunAs" in s and "net session" in s
+    # opens every door Windows shuts by default
+    assert "LocalAccountTokenFilterPolicy" in s
+    assert "AutoShareWks" in s
+    assert "RemoteRegistry" in s
+    assert "File and Printer Sharing" in s
+    assert "Windows Management Instrumentation (WMI)" in s
+    # installs + starts the agent pointed at the share
+    assert "networkdoctor-agent.ps1" in s
+    assert r"\\RAKESH-IT\LeakLog" in s
+    assert 'schtasks /Create /TN "%s"' % D.TASK_BG in s
+    assert 'schtasks /Run /TN "%s"' % D.TASK_BG in s
+    # /TR inner quotes are escaped for cmd.exe
+    assert '-File \\"C:\\ProgramData\\NetworkDoctor\\networkdoctor-agent.ps1\\"' in s
+
+
+def test_enabler_script_handles_bare_share():
+    import nd_deploy as D
+    s = D.enabler_script("")
+    assert "central.txt" in s   # still writes the config file even if empty
