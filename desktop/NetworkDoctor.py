@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.59"
+VERSION = "4.60"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3909,7 +3909,12 @@ class App(tk.Tk):
         default). How many repeats it takes starts at AUTO_FIX_AFTER and is adjusted per fix-kind by its
         own track record (nd_autofix.repeat_threshold) - a kind that has needed an Undo is tried more
         cautiously, one with a clean record is tried sooner."""
-        if e.get("autofix") or e.get("status") == "fixed" or not self._settings().get("auto_fix", True):
+        # Don't block forever on a PAST FAILURE: if a previous auto-fix attempt failed, allow a retry on a
+        # later repeat (the router login may have been added since, or a transient error cleared). Only an
+        # in-progress ("trying") or successful ("done") attempt, or a fixed alert, stops a new attempt
+        # (Rakesh, 24 Nov: DHCP auto-fix stuck open after a failed attempt).
+        af = e.get("autofix")
+        if af in ("trying", "done") or e.get("status") == "fixed" or not self._settings().get("auto_fix", True):
             return
         r = AL.explain(e["text"], e["sev"], self.lip, self.gw, self.net)
         need = AF.repeat_threshold(self._fix_stats(), r["kind"], self.AUTO_FIX_AFTER)
@@ -4048,8 +4053,18 @@ class App(tk.Tk):
 
         def done(err):
             e["autofix"] = "failed: " + err[:120] if err else "done"
+            if err:
+                # Make the real reason visible ON the alert (not just the event log), so a failing auto-fix is
+                # diagnosable - the common one is a router login without write/policy rights (Rakesh, 24 Nov).
+                hint = ""
+                low = err.lower()
+                if "policy" in low or "permission" in low or "not enough" in low or "access" in low:
+                    hint = " - the router login needs write+policy rights; use the full admin account in " \
+                           "Setup > Router login."
+                e["auto_note"] = "Auto-fix tried but the router refused: " + err[:160] + hint
             AF.mark_result(self._fix_history(), fix_entry["id"], not err, err[:200] if err else "")
             if not err:
+                e.pop("auto_note", None)
                 self.alert_log.set_status({e["id"]}, "fixed", f"auto-fixed after {e['count']} repeats: {label}")
                 self.after(AF.REGRESSION_WINDOW * 1000 + 2000, lambda: self._check_fix_regression(fix_entry["id"]))
             self.alert_log.save()
