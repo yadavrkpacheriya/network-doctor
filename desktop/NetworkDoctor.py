@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.58"
+VERSION = "4.59"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1100,6 +1100,7 @@ class App(tk.Tk):
              ("Direct camera check (PoE, no router)", self._direct_camera_check),
              ("Cameras in this NVR / DVR", self._nvr_cameras),
              ("Check NVRs for duplicate cameras", self._nvr_dupes),
+             ("Cameras NOT recorded on any NVR", self._nvr_missing),
              ("Restart & fix camera IPs", lambda: self.show_tab("bwplan")),
              ("PoE & camera settings", lambda: self.show_tab("setup"))],
             intro="Every CCTV camera and recorder on the network. DVR / NVR recorders are told apart from cameras "
@@ -1298,6 +1299,55 @@ class App(tk.Tk):
             self.q.put(("call", show))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _nvr_missing(self):
+        """The camera every site worries about: one that is LIVE on the network but recorded on NO NVR/DVR.
+        A cross-recorder duplicate (same camera on two NVRs) wastes a channel, so a duplicate usually means one
+        other camera went un-added - this finds it (Rakesh, 24 Nov). Uses the saved NVR channel maps + the live
+        scan; no recorder login needed."""
+        import nd_nvrmap as NMAP
+        from collections import Counter
+        maps = self.db.get("nvr_map") or {}
+        if not maps:
+            messagebox.showinfo(APP, "No NVR camera lists saved yet. Open 'Cameras in this NVR / DVR' first, "
+                                     "or ask Claude to read your recorders once.")
+            return
+        # every camera live on the network right now
+        live_cams = [{"ip": d.get("ip"), "name": d.get("name") or d.get("ip")}
+                     for d in (getattr(self, "devices", []) or [])
+                     if d.get("online") and d.get("ip") and core.CAT_CAM in str(d.get("category", ""))
+                     and core.cctv_role(d) != "nvr"]
+        mapped = NMAP.all_mapped_ips(self.db)                 # ip -> (nvr, chan, name)
+        missing = [c for c in live_cams if c["ip"] not in mapped]
+        # cross-recorder duplicates (same camera IP on >1 recorder) - these "use up" the slots
+        allrec = [(ip, c["ip"]) for ip, rec in maps.items() for c in rec["channels"]]
+        ipcount = Counter(ip for _, ip in allrec)
+        dupes = {ip: [nv for nv, cip in allrec if cip == ip] for ip, n in ipcount.items() if n > 1}
+
+        win = tk.Toplevel(self)
+        win.title("Cameras not recorded on any NVR")
+        win.transient(self)
+        fr = ttk.Frame(win, padding=12)
+        fr.pack(fill="both", expand=True)
+        head = ("%d camera(s) are LIVE on the network but recorded on NO NVR." % len(missing)) if missing \
+            else "Every live camera is recorded on an NVR."
+        if dupes:
+            head += "\n%d camera(s) are recorded on TWO NVRs (a wasted channel each): %s" % (
+                len(dupes), ", ".join("%s (on %s)" % (ip, " & ".join(nv)) for ip, nv in dupes.items()))
+            if missing:
+                head += "\nThat's why a camera is un-recorded: free a duplicate channel and add the missing one."
+        ttk.Label(fr, textvariable=tk.StringVar(value=head), foreground="#b91c1c" if missing else "#0f766e",
+                  wraplength=560, justify="left").pack(anchor="w", pady=(0, 8))
+        tv = make_tree(fr, ("camip", "name"), ("Camera IP", "Name on network"), (160, 320),
+                       first=("#", 40), height=12, sr=False)
+        for i, c in enumerate(sorted(missing, key=lambda x: core.ip_key(x["ip"])), 1):
+            tv.insert("", "end", text=str(i), values=(c["ip"], c["name"]))
+        if missing:
+            def copy_list():
+                self.clipboard_clear()
+                self.clipboard_append("\n".join(c["ip"] for c in missing))
+                messagebox.showinfo(APP, "Copied the missing camera IP(s) - add them to an NVR channel.")
+            ttk.Button(fr, text="Copy missing IPs", command=copy_list).pack(anchor="w", pady=(8, 0))
 
     def _nvr_dupes(self):
         """Read every NVR/DVR on the network and find cameras added twice: within one recorder (offer to switch
