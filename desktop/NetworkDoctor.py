@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.50"
+VERSION = "4.51"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2771,9 +2771,18 @@ class App(tk.Tk):
             self.q.put(("error", f"{e}\n\n{traceback.format_exc()[-1500:]}"))
 
     def _poll(self):
+        # Drain at most POLL_BUDGET messages per tick so a burst (event storm, many job results) can never
+        # freeze the window - the UI gets to repaint between batches. If more are waiting, come back in 10ms
+        # instead of the usual 100ms so nothing lags (Rakesh, 24 Nov: PC app stops responding many times a day).
+        processed = 0
+        more = False
         try:
             while True:
+                if processed >= self.POLL_BUDGET:
+                    more = True
+                    break
                 msg = self.q.get_nowait()
+                processed += 1
                 k = msg[0]
                 if k == "call":  # a background job's result, run here in the window's thread
                     msg[1]()
@@ -2818,7 +2827,7 @@ class App(tk.Tk):
                     self._auto_label()
         except queue.Empty:
             pass
-        self.after(100, self._poll)
+        self.after(10 if more else 100, self._poll)
 
     def _reset(self, text):
         self.scanning = False
@@ -3764,6 +3773,7 @@ class App(tk.Tk):
     # kind that turns out to need an undo, so a bad fix-kind is throttled automatically rather than by
     # waiting up front.
     AUTO_FIX_AFTER = 1
+    POLL_BUDGET = 40        # max queue messages handled per 100ms UI tick (keeps the window responsive)
 
     def _fix_history(self):
         return self._settings().setdefault("fix_history", [])

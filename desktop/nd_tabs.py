@@ -1993,7 +1993,12 @@ class AlertsTab:
         xs = self.items()
         xs.sort(key=lambda x: (x.get("status") != "open", x["prio"], -x["last"]))
         seen = set()
-        for x in xs[:1500]:
+        # Insert only what a person will actually look at. Building 1500 Tk tree rows on the UI thread was a
+        # real freeze as the alert log grew; the most important (open, high-priority, recent) are first after
+        # the sort, so cap the render and show a note if more exist (Rakesh, 24 Nov: PC app stops responding).
+        CAP = 300
+        total = len(xs)
+        for x in xs[:CAP]:
             dev = (names.get(x.get("ip")) or "-") + (f"  {x['ip']}" if x.get("ip") else "")
             # a tree row id must be unique; older logs can hold two alerts with the same id (both created in
             # the same millisecond), so suffix any repeat here. x["id"] itself is untouched, so set_status works.
@@ -2013,8 +2018,9 @@ class AlertsTab:
                 tv.selection_add(i)
         allx = self.app.alert_log.recent(3000)
         op = [x for x in allx if x.get("status") == "open"]
+        more = f"  |  showing first {CAP} of {total}" if total > CAP else ""
         self.var_sum.set(f"{len(op)} open  |  P1 fix now: {sum(x['prio'] == 1 for x in op)}  |  "
-                         f"P2 today: {sum(x['prio'] == 2 for x in op)}  |  {len(allx)} alerts kept  |  "
+                         f"P2 today: {sum(x['prio'] == 2 for x in op)}  |  {len(allx)} alerts kept{more}  |  "
                          "the same alert within an hour is counted, not repeated")
 
     def selected(self):

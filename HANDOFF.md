@@ -2,7 +2,13 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.50, latest session)
+## Done (v4.40–4.51, latest session)
+- **PC app "stops responding" fix** (v4.51): two main-thread UI freezes. (1) `_poll` drained the WHOLE queue
+  every 100ms tick with no cap - a burst (event storm, many job results) froze the window. Now capped at
+  POLL_BUDGET=40 msgs/tick, reschedules in 10ms when more remain. (2) AlertsTab.refresh inserted up to 1500
+  Tk tree rows on the UI thread each refresh as the alert log grew - capped render to 300 (sorted so open/
+  high-prio/recent come first) with a "showing first 300 of N" note. Scans/router calls were already threaded;
+  alerts flush already debounced (400ms). Suite 1012.
 - **Phone router fixes parity** (mobile 1.34.0): new `mobile/lib/net/router_fixes.dart` with (apply,undo) RouterOS
   scripts mirroring desktop nd_tools: "Fix website & app names" (DNS-log+redirect+DoH-block, ND-DOH list),
   "Fix DHCP-full permanently" (reserve fixed gear + 30m lease), "Block torrents", "Block rogue DHCP". Added a
