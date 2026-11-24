@@ -2,7 +2,18 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.56, latest session)
+## Done (v4.40–4.57, latest session)
+- **NVR camera coverage via saved channel map** (v4.57): NVR .74's web API is FULLY ENCRYPTED (RSA key +
+  per-request AES; crypto-js) - confirmed in browser, every getconfig body is a base64 blob, so no plaintext
+  Python read is viable. Instead: read the 32 channel IPs ONCE from the web UI (did it live via Chrome, cycling
+  the IP Channels dropdown) and bake them in. New `nd_nvrmap.py` (per-recorder channel->IP map in db["nvr_map"],
+  coverage() = live online/offline per channel vs scanned IPs, orphan_cameras()), `nd_nvrseed.py` (built-in map
+  for .74 FAN-AIR 32ch, apply() seeds only if user has none - never overwrites a live read/refresh). list_channels
+  in _nvr_cameras now SAVES any live read to the map and FALLS BACK to the saved map (with live online state)
+  when the read is empty. All 3 files in SOURCE_FILES. nd_nvrcgi.py (v4.56) stays as a best-effort path but won't
+  work on fully-encrypted firmwares. Tests: test_nvrmap (3), test_nvrcgi (4). Suite 1031.
+  TODO: pull the OTHER 2 recorders' channel lists via browser and add to nd_nvrseed.SEED (user asked). Mirror
+  map+seed into mobile.
 - **NVR camera read via WEB CGI - THE REAL FIX** (v4.56): proven in Rakesh's Chrome that NVR .74's DVRIP API
   (34567) is locked (every config node empty) but its WEB interface reads channels fine via
   POST /cgi-bin/login.cgi + /cgi-bin/getconfig.cgi (saw CH01=192.168.0.143, CH16=192.168.0.146). New

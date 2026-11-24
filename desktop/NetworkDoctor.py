@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.56"
+VERSION = "4.57"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -536,6 +536,11 @@ class App(tk.Tk):
         self.q = queue.Queue()
         self.stop_ev = threading.Event()
         self.db = core.load_db()
+        try:
+            import nd_nvrseed
+            nd_nvrseed.apply(self.db)        # built-in channel maps for recorders whose web API is encrypted
+        except Exception:  # noqa: BLE001
+            pass
         self.oui = {}
         self.raw = None
         try:
@@ -1221,11 +1226,40 @@ class App(tk.Tk):
         ttk.Button(fr, text="Copy raw NVR info (if Camera IP is blank)", command=copy_raw).pack(anchor="w", pady=(6, 0))
 
         def work():
+            import nd_nvrmap as _NMAP
             try:
                 chans = DV.list_channels(ip, cred[0], cred[1])
             except Exception as e:  # noqa: BLE001
-                self.q.put(("call", lambda: status.set("Could not read channels: " + str(e))))
-                return
+                chans = []
+                err = str(e)
+            else:
+                err = ""
+            # If the recorder gave us camera IPs, SAVE them as this NVR's channel map so future scans know the
+            # cameras even when the recorder can't be read again (encrypted/locked firmware). If the live read
+            # gave nothing, FALL BACK to the saved map (read earlier from the recorder's web page).
+            if any(c.get("ip") for c in chans):
+                _NMAP.set_map(self.db, ip, chans, name=ip)
+                try:
+                    core.save_db(self.db)
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                saved = _NMAP.get_map(self.db, ip)
+                if saved and saved.get("channels"):
+                    # Use the saved camera list, and set each channel's online state LIVE from this scan's
+                    # network view (the camera IP is up now or not) - so the saved map gives live health.
+                    live = {d.get("ip") for d in (getattr(self, "devices", []) or [])
+                            if d.get("online") and d.get("ip")}
+                    chans = [{"chan": c["chan"], "ip": c["ip"], "name": c.get("name", ""),
+                              "online": (c["ip"] in live) if c.get("ip") else None}
+                             for c in saved["channels"]]
+                    err = ""
+                elif err or not chans:
+                    self.q.put(("call", lambda: status.set(
+                        "Could not read channels live" + ((": " + err) if err else "") +
+                        ", and no saved camera list exists for this recorder yet. If its web page is encrypted, "
+                        "ask Claude to pull the list once via the browser - after that every scan uses it.")))
+                    return
 
             # fill blank channel IPs by matching the channel NAME to a scanned camera (for recorders that report
             # only names, e.g. code 607 on the config read)
