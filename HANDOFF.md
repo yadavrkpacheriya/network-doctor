@@ -9,6 +9,12 @@ _Last updated: 2026-11-23 (v4.43)_
   "responding") alerts are now REMOVED from the log (not just marked fixed) when the device returns. Watch
   "Back up" path matches by NAME + MAC + IP so an IP-change-then-reconnect still clears the stale alert
   (old-IP text wouldn't match the new IP). Tests: delete mode, IP-change-by-MAC, resolve-by-name.
+- **Camera count consistency** (v4.55): Home card showed a different CCTV count than the top bar (44 vs 43)
+  and didn't drop live when a camera went offline. Two fixes: (1) core.category_counts now splits DVR/NVR out
+  of CCTV cameras exactly like the top summary bar, so Home and top bar agree everywhere it's used; (2) the
+  quick-check liveness pass (every ~2 min, marks devices on/offline via ARP) now also refreshes the Home card
+  when on the Home tab, so the camera count updates between full scans instead of only on tab switch. Tests:
+  test_counts (NVR split). Suite 1024.
 - **Background push via ntfy** (v4.54, mobile 1.36.0): FULL background push (buzzes phone when app closed),
   no Firebase. New `nd_push.py` (ntfy.sh client: new_topic/send/approval_push, injectable opener, never
   raises, ascii-safe). PC: _flush_alerts -> _maybe_push_approvals pushes when the pending-approval count GOES

@@ -932,9 +932,16 @@ def short_category(cat):
 
 
 def category_counts(devices):
-    """{short category: count}, most common first."""
+    """{short category: count}, most common first. CCTV is split into cameras vs 'DVR / NVR' exactly like the
+    top summary bar, so the Home card and the top bar never disagree (Rakesh, 24 Nov: camera count differed)."""
     from collections import Counter
-    c = Counter(short_category(d.get("category", "")) for d in devices)
+    c = Counter()
+    for d in devices:
+        short = short_category(d.get("category", ""))
+        if short == short_category(CAT_CAM) and cctv_role(d) == "nvr":
+            c["DVR / NVR"] += 1
+        else:
+            c[short] += 1
     return dict(sorted(c.items(), key=lambda x: -x[1]))
 
 

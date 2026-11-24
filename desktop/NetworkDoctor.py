@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.54"
+VERSION = "4.55"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3535,6 +3535,10 @@ class App(tk.Tk):
         self.fill_checks()
         if changed:
             self.fill_devices()
+            # a device went on/offline since the last scan: refresh the Home cards too, so its counts (incl.
+            # the camera count) match reality instead of waiting for a tab switch (Rakesh, 24 Nov).
+            if getattr(self, "home", None) and self.nav.current() == "home":
+                self.home.refresh()
         bad = [i for i in issues if i["sev"] in ("critical", "warning")]
         self.quick_summary = "OK" if not bad else f"{len(bad)} problem(s)"
         self._health_log("Loop / conflict check", "ok" if not bad else max((i["sev"] for i in bad), key=lambda s: order[s] * -1),
