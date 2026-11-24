@@ -2,7 +2,15 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.52, latest session)
+## Done (v4.40–4.56, latest session)
+- **NVR camera read via WEB CGI - THE REAL FIX** (v4.56): proven in Rakesh's Chrome that NVR .74's DVRIP API
+  (34567) is locked (every config node empty) but its WEB interface reads channels fine via
+  POST /cgi-bin/login.cgi + /cgi-bin/getconfig.cgi (saw CH01=192.168.0.143, CH16=192.168.0.146). New
+  nd_nvrcgi.py: login()+read_config()+channels() over HTTP:80, parses NetWork.NetDigital/Digital/etc, handles
+  dotted + little-endian-hex IPs, never raises. Wired as the final fallback in nd_dvrip.list_channels when
+  DVRIP yields no IPs. nd_nvrcgi.py in both SOURCE_FILES. Tests: test_nvrcgi (4). Suite 1028.
+  VERIFY on real .74: the getconfig.cgi/login.cgi body is my reconstruction of the NetSurveillance CGI; if
+  login returns no SessionID, the login body (EncryptType/PassWord hashing) needs adjusting. Mirror into mobile next.
 - **More aggressive auto-fix + auto-delete connect/disconnect alerts** (v4.52): _auto_fix now fires on FIRST
   sight (need=1) for any AUTO_SAFE kind that has a router fix AND a saved router login (removed the backwards
   recurring+2 penalty). resolve_matching gained delete=True - connect/disconnect ("answering"/"offline"/

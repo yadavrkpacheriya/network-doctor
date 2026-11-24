@@ -62,3 +62,4 @@ nd_issues.py
 nd_power.py
 nd_ask.py
 nd_push.py
+nd_nvrcgi.py

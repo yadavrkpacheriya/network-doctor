@@ -466,7 +466,18 @@ def list_channels(ip, user, pw, port=PORT, timeout=6, connect=socket.create_conn
         for i in range(max(len(names), len(ips))):
             nm = names[i].strip() if i < len(names) and names[i] else "CAM%d" % (i + 1)
             out.append({"chan": i + 1, "name": nm, "ip": ips.get(i, ""), "online": online.get(i)})
-        return out
+    # Last resort: the DVRIP API gave no camera IPs (locked firmware - every config node empty, like Rakesh's
+    # NVR .74). The recorder's WEB CGI still has them (proven: its web page reads /cgi-bin/getconfig.cgi). So
+    # read the channels over HTTP the same way the browser does.
+    if not any(d.get("ip") for d in out):
+        try:
+            import nd_nvrcgi
+            cgi = nd_nvrcgi.channels(ip, user, pw, timeout=timeout)
+            if any(c.get("ip") for c in cgi):
+                return cgi
+        except Exception:  # noqa: BLE001 - CGI is a bonus path; never let it break the DVRIP result
+            pass
+    return out
 
 
 def set_dhcp(ip, user, pw, port=PORT, timeout=6, connect=socket.create_connection):
