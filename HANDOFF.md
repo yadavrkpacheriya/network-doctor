@@ -12,8 +12,13 @@ _Last updated: 2026-11-23 (v4.43)_
   in _nvr_cameras now SAVES any live read to the map and FALLS BACK to the saved map (with live online state)
   when the read is empty. All 3 files in SOURCE_FILES. nd_nvrcgi.py (v4.56) stays as a best-effort path but won't
   work on fully-encrypted firmwares. Tests: test_nvrmap (3), test_nvrcgi (4). Suite 1031.
-  TODO: pull the OTHER 2 recorders' channel lists via browser and add to nd_nvrseed.SEED (user asked). Mirror
-  map+seed into mobile.
+  Mirror map+seed into mobile (TODO).
+- **2nd recorder seeded + cross-NVR dup found** (v4.58): added NVR .22 (11 cameras, CH12-32 empty) to
+  nd_nvrseed.SEED, read live via browser. Now 2 recorders mapped = 43 camera bindings total (matches the "43
+  cameras" count). Seed caught a REAL cross-recorder duplicate: camera 192.168.0.157 is on BOTH .74 (CH23) and
+  .22 (CH03). DVR .73 is the OLD model - only opens in IE mode (ActiveX), can't read via Chrome; likely analog
+  (BNC) cameras with no per-channel IPs to map, so coverage doesn't apply. If .73 has IP cameras, user reads it
+  once in Edge/IE and sends IPs to add to SEED. Suite 1031.
 - **NVR camera read via WEB CGI - THE REAL FIX** (v4.56): proven in Rakesh's Chrome that NVR .74's DVRIP API
   (34567) is locked (every config node empty) but its WEB interface reads channels fine via
   POST /cgi-bin/login.cgi + /cgi-bin/getconfig.cgi (saw CH01=192.168.0.143, CH16=192.168.0.146). New
