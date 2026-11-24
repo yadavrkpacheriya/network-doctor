@@ -2,7 +2,15 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.45, latest session)
+## Done (v4.40–4.46, latest session)
+- **Brain now SELF-HEALS recurring permanent issues** (v4.46) — root cause the app "couldn't fix on its own":
+  (1) recurrence always added +2 to the auto-fix threshold (more recurrence = HARDER to fire), and alert
+  `count` is always 1 ("same alert within an hour counted, not repeated"), so count(1) < need(3+) → never fired;
+  (2) `dhcp_full` was missing from `nd_brain.AUTO_SAFE` (separate set from nd_alerts.AUTO_SAFE). Fix: `decide()`
+  now returns `apply_now=True` when the recipe is `permanent`+`auto`+AUTO_SAFE and the issue is recurring
+  (conf≥0.5); `_auto_fix` sets need=1 on apply_now (acts on sight). Added dhcp_full to nd_brain.AUTO_SAFE.
+  When apply_now but no router login saved, it now notes that ON the alert instead of silently re-logging.
+  Tests: test_brain (apply_now recurring / not one-off).
 - **DHCP-full PERMANENT fix** (v4.45) — root cause: 150-wide phone pool + rotating private MACs + fixed gear
   (cams/NVR/PCs/printers) still sitting on dynamic leases. The old 30m-lease patch kept recurring (brain
   logged 30x, auto was False so it never self-applied). Now: `dhcp_full` auto fix = one RouterOS script that

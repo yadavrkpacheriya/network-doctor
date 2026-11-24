@@ -153,11 +153,20 @@ def decide(kb, text, recipe_kind=None, cat="", src="", sev="warning", now=None):
         if recurring:
             why.append(f"this keeps coming back ({n}x) - a permanent fix is better than patching again")
 
-    out = {"kind": kind, "confidence": round(conf, 3), "why": why, "recurring": recurring,
-           "auto_ok": conf >= 0.8 and kind in AUTO_SAFE and src != "external"}
     rec = RECIPES.get(kind)
+    auto_ok = conf >= 0.8 and kind in AUTO_SAFE and src != "external"
+    # A recipe the master brain marks PERMANENT + auto is meant to end a recurring issue for good. For such a
+    # recipe, recurrence is the REASON to act, not a reason to wait: once it keeps coming back (and this exact
+    # situation has not previously needed an Undo, i.e. confidence hasn't collapsed), apply it now. This is what
+    # lets the brain actually self-heal dhcp_full etc. instead of only re-logging it (Rakesh, 24 Nov).
+    apply_now = bool(rec and rec.get("auto") and rec.get("permanent") and kind in AUTO_SAFE
+                     and src != "external" and recurring and conf >= 0.5)
+    out = {"kind": kind, "confidence": round(conf, 3), "why": why, "recurring": recurring,
+           "auto_ok": auto_ok, "apply_now": apply_now}
     if rec:
         out["recipe"] = dict(rec)           # the master brain's known fix for this kind, for the handler to run
+    if apply_now:
+        why.append("permanent self-healing fix for a recurring issue - applying now")
     return out
 
 
@@ -191,7 +200,7 @@ def parse_teach(text):
 
 # the kinds safe to apply automatically at high confidence - never ones that block or expose a device, touch
 # DNS, or face the internet (those always stay a reviewed, one-click action)
-AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "config_changed"})
+AUTO_SAFE = frozenset({"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "config_changed", "dhcp_full"})
 
 
 # -- built-in networking curriculum ------------------------------------------------------------------------

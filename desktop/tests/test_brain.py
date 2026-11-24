@@ -105,3 +105,25 @@ def test_dhcp_full_is_now_auto_permanent_and_in_auto_safe():
     rec = B.RECIPES["dhcp_full"]
     assert rec["auto"] is True and rec["permanent"] is True   # self-applies, not just logs
     assert "dhcp_full" in AL.AUTO_SAFE                         # the app will actually run it
+
+
+def test_recurring_permanent_recipe_self_applies():
+    """The brain must SELF-APPLY a permanent recipe once an issue keeps recurring - not keep re-logging it.
+    This is the dhcp_full self-heal fix (Rakesh, 24 Nov: 'brain is not fixing them')."""
+    import time
+    kb = {}
+    B.seed(kb)
+    now = time.time()
+    for i in range(4):                       # same situation came back 4x
+        B.recurrence(kb, "dhcp_full|", now=now - i * 3600)
+    d = B.decide(kb, "The DHCP pool is almost full - new devices may get no address",
+                 "dhcp_full", "", "", "warning", now=now)
+    assert d["recurring"] is True
+    assert d["apply_now"] is True            # <-- the self-heal signal the app acts on
+
+
+def test_apply_now_not_set_for_non_recurring():
+    kb = {}
+    B.seed(kb)
+    d = B.decide(kb, "The DHCP pool is almost full", "dhcp_full", "", "", "warning")
+    assert d["apply_now"] is False           # one-off: don't auto-apply yet

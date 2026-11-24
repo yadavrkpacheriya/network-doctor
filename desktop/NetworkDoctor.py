@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.45"
+VERSION = "4.46"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3792,7 +3792,9 @@ class App(tk.Tk):
         src = "external" if "internet" in (e.get("text") or "").lower() else ""
         d = BR.decide(brain, e.get("text", ""), r["kind"], e.get("category", ""), src, e.get("sev", "warning"))
         BR.recurrence(brain, f"{r['kind']}|{e.get('category', '')}")
-        if d["recurring"] or d["confidence"] < 0.4:
+        if d.get("apply_now"):
+            need = 1                     # a PERMANENT self-healing recipe for a recurring issue: act on sight
+        elif d["recurring"] or d["confidence"] < 0.4:
             need += 2                    # keeps coming back, or the brain is unsure here: be more careful
         elif d["auto_ok"]:
             need = min(need, 1)          # a proven-safe fix for this exact situation: act sooner
@@ -3805,6 +3807,12 @@ class App(tk.Tk):
         if fix:
             c = self.router_client(ask=False)
             if not c:
+                # The brain wanted to self-heal but has no router login to do it with: say so ON the alert
+                # (once) instead of silently re-logging, so the user knows the one thing to set (Rakesh, 24 Nov).
+                if not e.get("auto_note"):
+                    e["auto_note"] = ("Auto-fix is ready but no router login is saved - add it in "
+                                      "Setup > Router login and this fixes itself.")
+                    self._alerts_touched()
                 return
             e["autofix"] = "trying"
             self._apply_router_fix(e, r["kind"], fix["label"], fix["cmd"], fix.get("undo", ""), c)
