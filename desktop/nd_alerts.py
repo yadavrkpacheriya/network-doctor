@@ -619,6 +619,22 @@ class AlertLog:
                     n += 1
         return n
 
+    def resolve_matching(self, must_contain, also_contain, now=None):
+        """Mark fixed any OPEN alert whose text contains BOTH strings (case-insensitive on the second, which is
+        usually a MAC or IP). Used to auto-close a 'stopped answering' alert when that exact device is back."""
+        now = time.time() if now is None else now
+        a, b = (must_contain or "").lower(), (also_contain or "").lower()
+        if not a or not b:
+            return 0
+        n = 0
+        with self.lock:
+            for x in self.items:
+                t = (x.get("text") or "").lower()
+                if x.get("status") == "open" and a in t and b in t:
+                    x["status"], x["fixed_t"], x["fixed_by"] = "fixed", now, "device came back online"
+                    n += 1
+        return n
+
     def set_status(self, ids, status, by="you"):
         with self.lock:
             for x in self.items:

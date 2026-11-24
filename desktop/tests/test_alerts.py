@@ -126,3 +126,26 @@ class MtuFix(_ut.TestCase):
         cmd = [x for x in r["auto"] if x["where"] == "router"][0]["cmd"]
         self.assertIn("action=change-mss", cmd)
         self.assertIn("clamp-to-pmtu", cmd)
+
+
+class ResolveMatchingTests(unittest.TestCase):
+    def test_resolve_matching_closes_only_both_substrings(self):
+        import tempfile, os
+        p = os.path.join(tempfile.mkdtemp(), "alerts.json")
+        log = AL.AlertLog(p)
+        log.add("warning", "1 camera/network device(s) stopped answering since the last scan "
+                "(1 Printers): - 192.168.0.58 7C:57:58:B1:57:F0 HP Inc.", "Full scan", now=1000)
+        log.add("critical", "Critical device not answering: Gate No 2 (192.168.0.151)", "Device watch", now=1100)
+        # printer .58 is back -> its stopped-answering alert closes, the .151 one stays open
+        self.assertEqual(log.resolve_matching("stopped answering", "192.168.0.58"), 1)
+        self.assertEqual(log.resolve_matching("stopped answering", "192.168.0.151"), 0)  # not a stopped-answering line
+        self.assertEqual(log.resolve_matching("answering", "192.168.0.151"), 1)          # the watch line closes
+        open_now = [x for x in log.items if x["status"] == "open"]
+        self.assertEqual(open_now, [])
+
+    def test_resolve_matching_is_case_insensitive_on_mac(self):
+        import tempfile, os
+        p = os.path.join(tempfile.mkdtemp(), "alerts.json")
+        log = AL.AlertLog(p)
+        log.add("warning", "device stopped answering 7C:57:58:B1:57:F0", "Full scan", now=1)
+        self.assertEqual(log.resolve_matching("answering", "7c:57:58:b1:57:f0"), 1)  # lowercased MAC still matches

@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.49"
+VERSION = "4.50"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -4850,6 +4850,14 @@ class App(tk.Tk):
                 if st["down_since"]:
                     mins = (now - st["down_since"]) / 60
                     self.alerts_active.pop(f"watch:{mac}", None)
+                    # Also close the alert in the LOG (the list the user sees). Popping alerts_active only
+                    # cleared the in-memory tracker, so the "not answering" alert stayed open forever after the
+                    # device came back (Rakesh, 24 Nov). Match the open alert by this device's IP/MAC.
+                    if self.alert_log.resolve_matching("answering", ip) or \
+                            self.alert_log.resolve_matching("offline", ip) or \
+                            (mac and self.alert_log.resolve_matching("responding", mac)):
+                        self.alert_log.save()
+                        self.q.put(("call", self._refresh_alerts))
                     self._log_event("info", f"Back up: {name} ({ip}) answers again after {mins:.0f} min", "Device watch")
                     st["last_down"] = st["down_since"]
                     st["down_since"] = None
@@ -4995,6 +5003,19 @@ class App(tk.Tk):
         """The other half of "new device(s) since the last scan": devices that answered last scan and don't
         now. Without this, a camera dropping off the network (power cut, cable pulled, it died) is invisible
         until someone notices the total is lower - the exact gap that made "32 yesterday, 40 today" unreadable."""
+        # First, CLOSE any open "stopped answering" alert whose device is back online now. These alerts are
+        # raised by _record_alert (not tracked in alerts_active), so the normal resolve loop never cleared
+        # them - they stayed open forever after the device returned (Rakesh, 24 Nov). Match by MAC/IP in the
+        # alert text, which is exactly what _record_alert wrote.
+        online_now = [(d.get("mac"), d.get("ip")) for d in self.devices if d.get("online")]
+        closed = False
+        for mac, ip in online_now:
+            for key in (mac, ip):
+                if key and self.alert_log.resolve_matching("stopped answering", key):
+                    closed = True
+        if closed:
+            self.alert_log.save()
+            self._refresh_alerts()
         if not macs:
             return
         if self._offline_mode():          # disconnected on purpose: remembered devices dropping off is expected

@@ -2,7 +2,15 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.49, latest session)
+## Done (v4.40–4.50, latest session)
+- **Alerts now auto-close when the device returns** (v4.50) — "stopped answering" / "not answering" alerts
+  stayed open forever after the device came back. Two gaps: (1) _missing_devices raised them via _record_alert
+  (not tracked in alerts_active), so the resolve loop never saw them; (2) the device-watch "Back up" path only
+  popped alerts_active, never closed the LOG entry. Added `AlertLog.resolve_matching(must, also)` (both
+  substrings, case-insensitive on 2nd). _missing_devices now closes stopped-answering alerts for any MAC/IP
+  online now; the watch "Back up" path resolves the log entry by IP/MAC too. Tests: resolve_matching (2).
+  NOTE: screenshot still shows pre-v4.46 dhcp_full text + all open -> those are OLD log lines; verify the
+  v4.46 brain self-heal actually fires on a FRESH dhcp_full after v4.50 installs (needs saved router login).
 - **Phone↔PC stability + parity** (v4.49, mobile 1.33.0):
   - Disconnects: pc_screen._load tolerates `_failsBeforeErr`=3 consecutive failed polls before showing the
     "disconnected" screen, keeping the last good data meanwhile (one Wi-Fi blip no longer = disconnect).
