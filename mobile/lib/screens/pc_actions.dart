@@ -49,12 +49,56 @@ Future<void> runOnPc(BuildContext context, String action, Map<String, dynamic> a
     if (r['job'] != null) {
       await Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => JobPage(pc: pc, id: '${r['job']}', title: title ?? '${r['message'] ?? 'Working'}')));
+    } else if (r['commands'] is List && (r['commands'] as List).isNotEmpty) {
+      await _showCommands(context, title ?? 'Commands', (r['commands'] as List).cast<Map<String, dynamic>>());
     } else {
       _snack(context, '${r['message'] ?? (r['ok'] == true ? 'Done' : 'Failed')}');
     }
   } on PcError catch (e) {
     if (context.mounted) _snack(context, e.message);
   }
+}
+
+/// Show a list of {label, cmd} the PC returned (e.g. the hardening commands), each copyable.
+Future<void> _showCommands(BuildContext context, String title, List<Map<String, dynamic>> cmds) async {
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView(shrinkWrap: true, children: [
+          for (final c in cmds)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text('${c['label'] ?? ''}'),
+              subtitle: Text('${c['cmd'] ?? ''}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+              trailing: IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                tooltip: 'Copy',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: '${c['cmd'] ?? ''}'));
+                  _snack(ctx, 'Copied');
+                },
+              ),
+            ),
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(ClipboardData(
+                text: cmds.map((c) => '${c['label']}\n${c['cmd']}').join('\n\n')));
+            _snack(ctx, 'All copied');
+          },
+          child: const Text('Copy all'),
+        ),
+        FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+      ],
+    ),
+  );
 }
 
 class JobPage extends StatefulWidget {
@@ -1051,6 +1095,29 @@ class ProSecurityTab extends StatelessWidget {
               subtitle: const Text('20 seconds of traffic, explained'),
               trailing: const Icon(Icons.play_arrow),
               onTap: () => runOnPc(context, 'capture', {'seconds': 20}, title: 'Packet capture'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.label_important),
+              title: const Text('Fix website & app names'),
+              subtitle: const Text('Turn on the router DNS log + block secure-DNS so Usage can name sites'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () async {
+                if (!await _confirm(context, 'Fix website & app names',
+                    'The PC turns on the router DNS log, sends all DNS through the router, and blocks public '
+                    'secure-DNS (DoH). After this, Usage names each device\'s sites and apps. Reversible.')) {
+                  return;
+                }
+                if (context.mounted) {
+                  await runOnPc(context, 'name_traffic', const {}, title: 'Fix website & app names');
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.security),
+              title: const Text('Hardening commands'),
+              subtitle: const Text('The PC/GPO commands that close the common weaknesses (copy)'),
+              trailing: const Icon(Icons.play_arrow),
+              onTap: () => runOnPc(context, 'hardening', const {}, title: 'Hardening commands'),
             ),
           ]),
         ),

@@ -320,16 +320,28 @@ class PcLink {
   }
 
   static Future<http.Response> _send(Future<http.Response> Function() f, String what) async {
-    try {
-      return await f().timeout(const Duration(seconds: 8));
-    } on TimeoutException {
+    // One quick retry on a transient failure: Wi-Fi drops the odd packet, and without a retry every blip
+    // surfaced as a "disconnected" to the user (Rakesh, 24 Nov). 6s timeout so a blip recovers fast.
+    Object? lastErr;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await Future.delayed(const Duration(milliseconds: 600));
+      try {
+        return await f().timeout(const Duration(seconds: 6));
+      } on TimeoutException catch (e) {
+        lastErr = e;
+      } on SocketException catch (e) {
+        lastErr = e;
+      } on http.ClientException catch (e) {
+        lastErr = e;
+      }
+    }
+    if (lastErr is TimeoutException) {
       throw PcError('The PC did not answer. Is the phone on the office Wi-Fi and the PC app open with '
           '"Phone app link" switched on?');
-    } on SocketException {
-      throw PcError('Could not $what. Check that the phone is on the office Wi-Fi and the PC app is running '
-          'with "Phone app link" switched on.');
-    } on http.ClientException catch (e) {
-      throw PcError('Could not $what (${e.message}).');
+    } else if (lastErr is http.ClientException) {
+      throw PcError('Could not $what (${(lastErr as http.ClientException).message}).');
     }
+    throw PcError('Could not $what. Check that the phone is on the office Wi-Fi and the PC app is running '
+        'with "Phone app link" switched on.');
   }
 }

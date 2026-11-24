@@ -2,7 +2,15 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.48, latest session)
+## Done (v4.40–4.49, latest session)
+- **Phone↔PC stability + parity** (v4.49, mobile 1.33.0):
+  - Disconnects: pc_screen._load tolerates `_failsBeforeErr`=3 consecutive failed polls before showing the
+    "disconnected" screen, keeping the last good data meanwhile (one Wi-Fi blip no longer = disconnect).
+    pc_link._send now does one quick retry (600ms) on transient failure, 6s timeout (was 8s, no retry).
+  - Parity: audited all 31 PC remote actions vs phone. Added missing ones to phone Pc Tools > Checks:
+    "Fix website & app names" (new PC action `name_traffic` = v4.48 DNS-log+redirect+DoH-block) and
+    "Hardening commands" (existing PC `hardening`, now shown via new `_showCommands` copyable dialog).
+    runOnPc now renders a `{commands:[...]}` result instead of dropping it.
 - **Website/app naming fix + verify** (v4.48) — root cause of "finding/verifying website & app still an issue":
   usage names depend on the router's DNS log, but DoH (port 443) and devices using their own DNS hide names,
   so traffic shows as 'other'/CDN. Added `nd_tools.block_doh_commands` (drops 443 to public DoH/DoT resolver

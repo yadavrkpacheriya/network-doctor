@@ -249,6 +249,8 @@ class _PcDashboardState extends State<PcDashboard> {
   Map<String, dynamic>? _s;
   String _err = '';
   bool _loading = false;
+  int _fails = 0;              // consecutive failed polls - tolerate a Wi-Fi blip before showing "disconnected"
+  static const _failsBeforeErr = 3;
   String _query = '';
   Timer? _timer;
 
@@ -283,6 +285,7 @@ class _PcDashboardState extends State<PcDashboard> {
         setState(() {
           _s = s;
           _err = '';
+          _fails = 0;
         });
       }
     } on PcError catch (e) {
@@ -300,11 +303,20 @@ class _PcDashboardState extends State<PcDashboard> {
           _load();
           return;
         }
-        final msg = connErr ? await _withCgnatNote(e.message) : e.message;
-        if (mounted) setState(() => _err = msg);
+        // A single failed poll is usually just a Wi-Fi blip, not a real disconnect. Count consecutive
+        // failures and keep showing the last good data until several in a row fail - this stops the
+        // "disconnected" screen from flashing every few seconds (Rakesh, 24 Nov).
+        _fails++;
+        if (_fails >= _failsBeforeErr || _s == null) {
+          final msg = connErr ? await _withCgnatNote(e.message) : e.message;
+          if (mounted) setState(() => _err = msg);
+        }
       }
     } catch (e) {
-      if (mounted) setState(() => _err = 'Unexpected answer from the PC: $e');
+      _fails++;
+      if (_fails >= _failsBeforeErr || _s == null) {
+        if (mounted) setState(() => _err = 'Unexpected answer from the PC: $e');
+      }
     } finally {
       _loading = false;
     }

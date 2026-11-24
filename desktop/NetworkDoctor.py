@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.48"
+VERSION = "4.49"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -5686,6 +5686,14 @@ class App(tk.Tk):
                                     str(a.get("dept", "")) or "")
             self._usage_snap_cache = None
             return {"ok": True, "message": "Category saved"}
+        if name == "name_traffic":
+            # Phone parity for v4.48 "make website & app names visible": turn on the router DNS log, redirect
+            # all DNS to the router and block public DoH, so Usage can name each device's sites/apps.
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+            apply_s, _undo = T.name_traffic_commands()
+            return self._router_job("Make website & app names visible", apply_s)
         return {"ok": False, "message": f"unknown action '{name}'"}
 
     def _remote_hint(self):
