@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../net/routeros.dart';
+import '../net/router_fixes.dart';
 
 /// Direct MikroTik login from the phone over the office Wi-Fi (no PC, no Tailscale). Shows the router's DHCP
 /// leases and ARP table - which is how the phone gets IP <-> MAC, something Android cannot read on its own -
@@ -147,6 +148,30 @@ class _RouterScreenState extends State<RouterScreen> {
     await _task('Sending restart...', (r) async {
       await r.reboot();
       _set(() => _status = 'Restart sent - the router will be back in 1-2 minutes. Reconnect after that.');
+    });
+  }
+
+  Future<void> _applyFix(RouterFix fix, {required bool undo}) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(undo ? 'Undo: ${fix.title}' : fix.title),
+        content: Text(undo
+            ? 'Remove this fix from the router and put things back as they were?'
+            : '${fix.subtitle}.\n\nApply this on the router now? It is reversible with Undo.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: Text(undo ? 'Undo' : 'Apply')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    _set(() => _cmdOut = '');
+    await _task(undo ? 'Undoing ${fix.title}...' : 'Applying ${fix.title}...', (r) async {
+      await r.runScript(undo ? fix.undo : fix.apply);
+      _set(() => _status = undo
+          ? '${fix.title}: removed from the router.'
+          : '${fix.title}: applied. You can Undo it here anytime.');
     });
   }
 
@@ -348,6 +373,25 @@ class _RouterScreenState extends State<RouterScreen> {
               icon: const Icon(Icons.restart_alt),
               label: const Text('Restart router')),
         ]),
+        const SizedBox(height: 8),
+        Text('Fix problems (on the router)', style: Theme.of(context).textTheme.titleMedium),
+        const Text('These apply the same tested fixes as the PC app, straight on the router. Each is reversible.',
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+        for (final fix in routerFixes())
+          Card(
+            child: ListTile(
+              title: Text(fix.title),
+              subtitle: Text(fix.subtitle),
+              trailing: Wrap(spacing: 4, children: [
+                TextButton(onPressed: _busy ? null : () => _applyFix(fix, undo: false), child: const Text('Apply')),
+                IconButton(
+                    tooltip: 'Undo',
+                    onPressed: _busy ? null : () => _applyFix(fix, undo: true),
+                    icon: const Icon(Icons.undo, size: 18)),
+              ]),
+            ),
+          ),
+        const Divider(),
         for (final m in _rows) _rowCard(m),
         const Divider(),
         TextField(

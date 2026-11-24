@@ -3,6 +3,11 @@
 _Last updated: 2026-11-23 (v4.43)_
 
 ## Done (v4.40–4.50, latest session)
+- **Phone router fixes parity** (mobile 1.34.0): new `mobile/lib/net/router_fixes.dart` with (apply,undo) RouterOS
+  scripts mirroring desktop nd_tools: "Fix website & app names" (DNS-log+redirect+DoH-block, ND-DOH list),
+  "Fix DHCP-full permanently" (reserve fixed gear + 30m lease), "Block torrents", "Block rogue DHCP". Added a
+  "Fix problems (on the router)" section to router_screen with Apply/Undo per fix, run via r.runScript() over
+  the direct MikroTik API (no PC needed). `$L/$m/$n` escaped as `\$` so RouterOS gets literal vars.
 - **Phone router login "dropped the connection"** (mobile 1.33.3): RouterOs.connect split into connect (retries
   the handshake once, 500ms apart) + _connectOnce. A reset DURING login (not a !trap) is now caught and turned
   into a specific message: check IP>Services>api "Available From" includes this phone's /24, and that the phone
