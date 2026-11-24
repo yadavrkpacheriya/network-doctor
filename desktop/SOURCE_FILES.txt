@@ -60,3 +60,4 @@ nd_secscan.py
 nd_nvrdup.py
 nd_issues.py
 nd_power.py
+nd_ask.py

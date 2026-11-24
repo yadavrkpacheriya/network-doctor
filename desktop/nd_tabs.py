@@ -55,6 +55,13 @@ def section_card(parent, title, color="#475569", pady=(0, 10)):
     return body
 APP = "Network Doctor"
 
+
+def _looks_like_question(text):
+    """A plain question for the data layer (nd_ask) rather than a fix request."""
+    low = (text or "").lower()
+    return (low.startswith(("which", "what", "who", "how many", "how much", "where")) or low.endswith("?")
+            or any(w in low for w in ("most", "least", "top", "disconnect", "uses the", "using the")))
+
 # colours: fill, outline
 STYLE = {"cloud": ("#e8f1fb", "#0b6bcb"), "router": ("#dbeafe", "#1d4ed8"), "port": ("#f2f4f7", "#667085"),
          "gear": ("#e0f2fe", "#0369a1"), "dev": ("#ffffff", "#98a2b3"), "off": ("#f2f4f7", "#c0c5cc"),
@@ -2586,7 +2593,9 @@ class AssistantTab:
         self.var_status = tk.StringVar(value="")
         intro = ('Tell me the problem in your own words and I\'ll fix it using Network Doctor\'s built-in, tested '
                  'fixes - for example "block YouTube on the Wi-Fi", "internet is slow and pages hang", '
-                 '"a camera is open to the internet", or "check my network for problems". Every fix can be undone.')
+                 '"a camera is open to the internet", or "check my network for problems". Every fix can be undone. '
+                 'You can also just ASK: "which website uses the most data", "which device disconnects the most", '
+                 '"which devices are not on UPS".')
         ttk.Label(parent, text=intro, wraplength=1250, foreground="#344054", padding=(0, 6)).pack(anchor="w")
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
@@ -2611,6 +2620,13 @@ class AssistantTab:
             return
         p = self.A.plan(text, getattr(self.app, "net", ""), getattr(self.app, "lip", ""),
                         getattr(self.app, "gw", ""))
+        # If it's not a fix request, it may be a plain question about what the app records
+        # ("which website uses the most data", "which device disconnects the most"): answer from stored data.
+        if not p.get("understood") and _looks_like_question(text):
+            qa = self._answer_question(text)
+            if qa and qa.get("understood"):
+                self._show_answer(text, qa)
+                return
         for w in self.out.winfo_children():
             w.destroy()
         self.var_status.set("")
@@ -2644,6 +2660,47 @@ class AssistantTab:
             ttk.Button(self._btns, text="Undo last fix", command=self._undo).pack(side="left", padx=8)
         ttk.Label(card, textvariable=self.var_status, foreground="#047857", wraplength=1150).pack(anchor="w",
                                                                                                   pady=(6, 0))
+
+    def _answer_question(self, text):
+        import nd_ask
+        ctx = {"usage": getattr(self.app, "usage", None), "db": getattr(self.app, "db", None),
+               "names": self._mac_names(), "watch_events": self._watch_events()}
+        try:
+            return nd_ask.answer(text, ctx)
+        except Exception:  # noqa: BLE001 - a question must never crash the tab
+            return None
+
+    def _mac_names(self):
+        """mac -> display name, for the power/downtime answers."""
+        out = {}
+        db = getattr(self.app, "db", None) or {}
+        for mac, h in (db.get("devices") or {}).items():
+            nm = (db.get("labels") or {}).get(mac) or (h.get("names") or [""])[-1] if isinstance(h, dict) else ""
+            if nm:
+                out[mac] = nm
+        return out
+
+    def _watch_events(self):
+        slow = getattr(self.app, "slow", None)
+        return getattr(slow, "_watch_events", None) if slow else None
+
+    def _show_answer(self, text, qa):
+        for w in self.out.winfo_children():
+            w.destroy()
+        card = ttk.Frame(self.out)
+        card.pack(fill="x", anchor="w")
+        ttk.Label(card, text=text, font=("Segoe UI", 12, "bold"), wraplength=1150).pack(anchor="w")
+        ttk.Label(card, text=qa["text"], wraplength=1150, foreground="#344054").pack(anchor="w", pady=(4, 6))
+        rows = qa.get("rows") or []
+        if rows:
+            cols = list(rows[0].keys())
+            tbl = ttk.Treeview(card, columns=cols, show="headings", height=min(len(rows), 6))
+            for col in cols:
+                tbl.heading(col, text=col.replace("_", " ").title())
+                tbl.column(col, width=max(120, 900 // len(cols)), anchor="w")
+            for r in rows:
+                tbl.insert("", "end", values=[r.get(c, "") for c in cols])
+            tbl.pack(anchor="w", fill="x", pady=4)
 
     def _apply(self, script, label, undo):
         def done(err):

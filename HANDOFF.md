@@ -2,7 +2,14 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.46, latest session)
+## Done (v4.40–4.47, latest session)
+- **Ask-the-brain questions** (v4.47) — NEW `nd_ask.py`: answers plain-English questions from data the app
+  already stores. "which website/app/device uses the most data" (nd_usage.summary), "which device
+  disconnects the most" / "not on UPS" (nd_power.summarize over db.power_log), "which site is dropping"
+  (SlowTab watch events). Keyword intent-routing over STRUCTURED data (offline, exact, testable - not an LLM),
+  handles most/least + day ranges. Wired into AssistantTab: when a typed line isn't a fix request but looks
+  like a question, it answers with text + a small table. Intro/examples updated. nd_ask.py added to both
+  SOURCE_FILES lists. Tests: new test_ask.py (9).
 - **Brain now SELF-HEALS recurring permanent issues** (v4.46) — root cause the app "couldn't fix on its own":
   (1) recurrence always added +2 to the auto-fix threshold (more recurrence = HARDER to fire), and alert
   `count` is always 1 ("same alert within an hour counted, not repeated"), so count(1) < need(3+) → never fired;
