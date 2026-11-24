@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.52"
+VERSION = "4.53"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -5403,6 +5403,15 @@ class App(tk.Tk):
                 return {"ok": False, "message": "this fix has no undo command"}
             self.q.put(("call", lambda: self._undo_fix(fid)))
             return {"ok": True, "message": "Undoing on the PC..."}
+        if name == "approve_reject":
+            # The user rejected a pending-approval fix from the phone: mark it so it stops being offered.
+            x = self.alert_log.get(str(a.get("id")))
+            if not x:
+                return {"ok": False, "message": "alert not found"}
+            x["approval"] = "rejected"
+            self.alert_log.save()
+            self._refresh_alerts()
+            return {"ok": True, "message": "Rejected - this fix won't be offered again"}
         if name == "alert_status":
             self.alert_log.set_status({str(a.get("id"))}, "fixed" if a.get("status") == "fixed" else "open",
                                       "marked on the phone")
@@ -5808,6 +5817,20 @@ class App(tk.Tk):
                            "fixes": [f["label"] for f in r["auto"] if f["where"] in ("router", "router_read")],
                            "pc_fixes": [f["label"] + ": " + f["cmd"] for f in r["auto"] if f["where"] == "pc"]})
         snap["alerts"] = alerts
+        # Approval queue: open alerts that HAVE a one-press router/PC fix but were NOT auto-applied (not auto-
+        # safe, or no router login). The phone surfaces these for the user to Approve / Reject / Ask Claude
+        # (Rakesh, 24 Nov). Each carries the fix label the phone will run via alert_fix if approved.
+        pending = []
+        for x in self.alert_log.recent(200):
+            if x.get("status") != "open" or x.get("approval") == "rejected":
+                continue
+            r = AL.explain(x["text"], x["sev"], self.lip, self.gw, self.net)
+            fx = [f for f in r["auto"] if f["where"] == "router"]
+            if fx and r["kind"] not in AL.AUTO_SAFE:          # has a fix but needs a human yes
+                pending.append({"id": x["id"], "prio": x["prio"], "prio_text": AL.PRIO[x["prio"]],
+                                "title": r["title"], "text": x["text"], "fix": fx[0]["label"],
+                                "why": r["why"], "ip": x.get("ip", "")})
+        snap["pending_approval"] = pending
         snap["fixes"] = [{"id": e["id"], "kind": e["kind"], "title": e["title"], "mac": e.get("mac"),
                           "ip": e.get("ip"), "status": e["status"], "at": e["at"], "note": e.get("note", ""),
                           "undoable": bool(e.get("undo_cmd"))}

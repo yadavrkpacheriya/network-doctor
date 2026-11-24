@@ -190,6 +190,57 @@ class _AlertsTabState extends State<AlertsTab> {
           onSelectionChanged: (v) => setState(() => _open = v.first),
         ),
         const SizedBox(height: 8),
+        if (_ms(widget.s['pending_approval']).isNotEmpty) ...[
+          Text('Needs your approval', style: t.titleMedium?.copyWith(color: Colors.orange.shade800)),
+          const Text('The brain found a fix but wants your OK before changing the router.',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
+          for (final p in _ms(widget.s['pending_approval']))
+            Card(
+              color: Colors.orange.withValues(alpha: 0.08),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${p['title'] ?? p['text']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text('Fix: ${p['fix']}', style: t.bodySmall),
+                  const SizedBox(height: 8),
+                  Wrap(spacing: 8, children: [
+                    FilledButton.icon(
+                      icon: const Icon(Icons.check, size: 18),
+                      label: const Text('Approve'),
+                      onPressed: () async {
+                        if (!await _confirm(context, 'Approve fix',
+                            '${p['fix']}.\n\nThe PC applies this on the router now.')) return;
+                        if (context.mounted) {
+                          await runOnPc(context, 'alert_fix', {'id': p['id'], 'n': 0}, title: '${p['fix']}');
+                          await widget.onRefresh();
+                        }
+                      },
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.close, size: 18),
+                      label: const Text('Reject'),
+                      onPressed: () async {
+                        await runOnPc(context, 'approve_reject', {'id': p['id']});
+                        await widget.onRefresh();
+                      },
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('Ask Claude'),
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(
+                            text: 'Network Doctor alert needs a decision:\n'
+                                '${p['title'] ?? p['text']}\n${p['why'] ?? ''}\nProposed fix: ${p['fix']}'));
+                        _snack(context, 'Copied - paste it to Claude');
+                      },
+                    ),
+                  ]),
+                ]),
+              ),
+            ),
+          const Divider(),
+        ],
         if (all.isNotEmpty && all.first['id'] == null)
           const Card(child: ListTile(title: Text('Update Network Doctor on the PC to 3.16 to fix alerts from the phone.'))),
         if (shown.isEmpty) const Card(child: ListTile(leading: Icon(Icons.check_circle, color: Colors.green), title: Text('No alerts'))),

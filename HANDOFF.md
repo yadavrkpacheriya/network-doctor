@@ -9,8 +9,12 @@ _Last updated: 2026-11-23 (v4.43)_
   "responding") alerts are now REMOVED from the log (not just marked fixed) when the device returns. Watch
   "Back up" path matches by NAME + MAC + IP so an IP-change-then-reconnect still clears the stale alert
   (old-IP text wouldn't match the new IP). Tests: delete mode, IP-change-by-MAC, resolve-by-name.
-- **(IN PROGRESS) Approval push to phone**: issues needing approval -> PC pushes a notification to the phone;
-  user approves/rejects/forwards to Claude. [building next]
+- **Approval queue on phone** (v4.53, mobile 1.35.0): snapshot now sends `pending_approval` = open alerts that
+  HAVE a router fix but are NOT auto-safe (need a human yes) and aren't rejected. Phone AlertsTab shows a
+  "Needs your approval" block with Approve (runs alert_fix), Reject (new `approve_reject` action sets
+  alert.approval=rejected so it stops being offered), and "Ask Claude" (copies the alert+fix to share). NOTE:
+  this surfaces via the phone's existing 6s poll (seen when the app is open); TRUE background push (phone
+  asleep) would need FCM/Firebase - not built, told the user.
 - **PC app "stops responding" fix** (v4.51): two main-thread UI freezes. (1) `_poll` drained the WHOLE queue
   every 100ms tick with no cap - a burst (event storm, many job results) froze the window. Now capped at
   POLL_BUDGET=40 msgs/tick, reschedules in 10ms when more remain. (2) AlertsTab.refresh inserted up to 1500
