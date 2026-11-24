@@ -648,6 +648,53 @@ def force_dns_commands(lan_iface_list=""):
     return "\n".join(apply), rm
 
 
+# Public DNS-over-HTTPS / DNS-over-TLS resolver IPs. Blocking these on 443 forces a device whose browser or
+# "Private DNS" points at one to fall back to the router's plain DNS - which the router can then LOG by name.
+# This is the missing piece that keeps usage "blind" (no site/app names) even after DNS is redirected to the
+# router, because DoH rides on 443 and looks like ordinary HTTPS (Rakesh, 24 Nov: finding/verifying still an
+# issue). It does NOT break normal browsing: only these resolver addresses are blocked, so devices simply use
+# the router's DNS instead. Reversible. It cannot catch a DoH provider that shares a general CDN IP, or a VPN.
+DOH_IPS = (
+    "8.8.8.8", "8.8.4.4",                      # Google
+    "1.1.1.1", "1.0.0.1",                      # Cloudflare
+    "9.9.9.9", "149.112.112.112",              # Quad9
+    "208.67.222.222", "208.67.220.220",        # OpenDNS
+    "94.140.14.14", "94.140.15.15",            # AdGuard
+    "185.228.168.9", "185.228.169.9",          # CleanBrowsing
+)
+
+
+def block_doh_commands(doh_ips=DOH_IPS):
+    """RouterOS (apply, undo): drop HTTPS (and DoT) to the well-known public DNS-over-HTTPS resolvers, so devices
+    using 'Private DNS' / browser Secure-DNS fall back to the router's DNS and their site names become visible.
+    Reversible. Pair with force_dns_commands (plain-53 redirect) for the full 'name every connection' fix."""
+    lst = ",".join(doh_ips)
+    rm = ':do {/ip firewall filter remove [find where comment~"^ND doh-block"]} on-error={}'
+    apply = [rm,
+             f'/ip firewall filter add chain=forward protocol=tcp dst-port=443 dst-address-list=ND-DOH '
+             f'action=drop comment="ND doh-block 443"',
+             ':do {/ip firewall address-list remove [find where list=ND-DOH]} on-error={}',
+             "\n".join(f'/ip firewall address-list add list=ND-DOH address={ip} comment="ND doh-block"'
+                       for ip in doh_ips)]
+    undo = (rm + '\n:do {/ip firewall address-list remove [find where list=ND-DOH]} on-error={}')
+    return "\n".join(apply), undo
+
+
+def name_traffic_commands(lan_iface_list=""):
+    """The complete 'make website & app names visible' fix, as one (apply, undo): (1) turn on the router's DNS
+    query log so the app sees which name each device looked up, (2) redirect all plain DNS (53) to the router,
+    (3) block the public DoH/DoT resolvers so Private-DNS devices fall back to the router. After this, new
+    connections get a real site/app name per device. Reversible. VPN/private-relay traffic still can't be named."""
+    dns_redirect, dns_undo = force_dns_commands(lan_iface_list)
+    doh_apply, doh_undo = block_doh_commands()
+    log_on = ('/system logging add topics=dns,!packet action=netdoctor '
+              'comment="ND dns-log"')  # harmless if an ND log action/rule already exists; replaced on re-apply
+    log_off = ':do {/system logging remove [find where comment="ND dns-log"]} on-error={}'
+    apply = log_on + "\n" + dns_redirect + "\n" + doh_apply
+    undo = log_off + "\n" + dns_undo + "\n" + doh_undo
+    return apply, undo
+
+
 def sites_for(groups=(), extra=()):
     """Expand group keys (social/chat/video/shopping) plus any extra typed domains into one site list."""
     out = []

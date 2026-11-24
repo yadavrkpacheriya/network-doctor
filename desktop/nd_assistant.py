@@ -27,6 +27,12 @@ _SCAN = ("scan", "check my network", "any problem", "any issue", "what is wrong"
          "health", "everything ok", "check network", "problems")
 _EXPOSED = ("exposed", "open to the internet", "from the internet", "port forward", "hacker",
             "reachable from outside", "accessible from outside", "open from outside")
+# "names / usage not showing": the fix is to make the router see & log the DNS each device uses
+_NAMING = ("website name", "site name", "app name", "name of the website", "name of the site", "names not",
+           "no website name", "cannot see website", "can't see website", "usage not showing", "not showing site",
+           "not showing which website", "which website is not", "finding website", "verify website", "verifying",
+           "blind", "no names", "fix naming", "name my traffic", "name the traffic", "site not detected",
+           "app not detected", "not detecting website", "not detecting app", "unknown sites", "other traffic")
 
 _DOMAIN_RE = re.compile(r"\b([a-z0-9][a-z0-9-]*\.(?:com|in|net|org|co|io|tv|me|app|gg))\b")
 _IP_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
@@ -88,6 +94,19 @@ def plan(text, net="", lip="", gw=""):
                 "title": "Find devices open to the internet",
                 "detail": "Runs a scan and lists any device (camera, NVR, PC) reachable from the internet, each "
                           "with a one-click 'close internet access' fix."}
+
+    # 2b) Website/app names not showing or unverifiable: make the router see & log every device's DNS.
+    #     This is the real cure for "finding/verifying website & app is still an issue" - without it, DoH and
+    #     devices using their own DNS hide the names, so usage shows 'other'/CDN only.
+    if any(w in low for w in _NAMING):
+        apply_s, undo_s = T.name_traffic_commands()
+        return {"kind": "naming", "understood": True,
+                "title": "Make website & app names visible (and verifiable)",
+                "detail": "Turns on the router's DNS log, sends every device's DNS through the router, and blocks "
+                          "the public DoH/secure-DNS resolvers that hide names. After this, each new connection "
+                          "gets a real site/app name per device. The app then tells you whether names started "
+                          "arriving. Reversible. VPN / private-relay traffic still can't be named by anyone.",
+                "router_script": apply_s, "undo_script": undo_s, "verify": "naming"}
 
     # 3) Slow / speed / MTU / DNS - the Slow-website tool measures and fixes this
     if any(w in low for w in _SLOW):

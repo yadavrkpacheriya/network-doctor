@@ -2647,6 +2647,10 @@ class AssistantTab:
             ttk.Button(self._btns, text="Apply on the router now", style="Big.TButton",
                        command=lambda: self._apply(p["router_script"], p["title"],
                                                    p.get("undo_script", ""))).pack(side="left")
+        elif kind == "naming":
+            ttk.Button(self._btns, text="Apply & verify naming", style="Big.TButton",
+                       command=lambda: self._apply_naming(p["router_script"], p["title"],
+                                                          p.get("undo_script", ""))).pack(side="left")
         elif kind == "slow":
             ttk.Button(self._btns, text="Open the slow-website fix", style="Big.TButton",
                        command=lambda: self.app.show_tab("slow")).pack(side="left")
@@ -2660,6 +2664,34 @@ class AssistantTab:
             ttk.Button(self._btns, text="Undo last fix", command=self._undo).pack(side="left", padx=8)
         ttk.Label(card, textvariable=self.var_status, foreground="#047857", wraplength=1150).pack(anchor="w",
                                                                                                   pady=(6, 0))
+
+    def _apply_naming(self, script, label, undo):
+        """Apply the make-names-visible fix, then VERIFY it actually worked by watching whether the router's
+        DNS log starts arriving (dns_log_rx climbs) - closing the 'finding/verifying' gap (Rakesh, 24 Nov)."""
+        store = getattr(self.app, "usage", None)
+        before = getattr(store, "dns_log_rx", 0) if store else 0
+
+        def done(err):
+            if err:
+                return
+            self._last_undo, self._last_undo_label = undo, label
+            if self._btns is not None and self._btns.winfo_exists():
+                ttk.Button(self._btns, text="Undo last fix", command=self._undo).pack(side="left", padx=8)
+            self.var_status.set("Applied. Checking whether website names start arriving (about a minute)...")
+            self.app.after(70000, lambda: self._verify_naming(before))
+        self.app.router_apply(script, label, done)
+
+    def _verify_naming(self, before):
+        store = getattr(self.app, "usage", None)
+        now = getattr(store, "dns_log_rx", 0) if store else 0
+        got = now - before
+        if got > 0:
+            self.var_status.set("Working: %d website look-ups seen since the fix. Names will now fill in per "
+                                "device - check Internet & Usage in a few minutes." % got)
+        else:
+            self.var_status.set("No DNS log arrived yet. Make sure the Live monitor is ON (Internet & Usage) so "
+                                "the app can receive the router's log, and that the router can reach this PC on "
+                                "UDP 514. If devices use a VPN or a private relay, their names can't be seen.")
 
     def _answer_question(self, text):
         import nd_ask

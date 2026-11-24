@@ -92,3 +92,35 @@ class Plan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NamingFixTests(unittest.TestCase):
+    def test_naming_intent_routes_to_name_traffic(self):
+        for q in ("website and app finding and verifying is still issue", "fix website names",
+                  "usage not showing which website", "it shows other traffic only"):
+            p = __import__("nd_assistant").plan(q)
+            self.assertEqual(p["kind"], "naming", q)
+            self.assertTrue(p["understood"])
+            # the one script must do all three: DNS log on, redirect 53, block DoH
+            s = p["router_script"]
+            self.assertIn("topics=dns", s)
+            self.assertIn("dst-port=53 action=redirect", s)
+            self.assertIn("ND-DOH", s)
+            self.assertIn("dst-port=443", s)
+            self.assertTrue(p["undo_script"])
+
+    def test_block_doh_and_undo(self):
+        T = __import__("nd_tools")
+        apply_s, undo = T.block_doh_commands()
+        self.assertIn("8.8.8.8", apply_s)
+        self.assertIn("1.1.1.1", apply_s)
+        self.assertIn("ND-DOH", apply_s)
+        self.assertIn("address-list remove", undo)
+
+    def test_name_traffic_is_reversible(self):
+        T = __import__("nd_tools")
+        apply_s, undo = T.name_traffic_commands()
+        self.assertIn("logging add topics=dns", apply_s)
+        self.assertIn("logging remove", undo)
+        self.assertIn("dns-force", undo)
+        self.assertIn("ND-DOH", undo)

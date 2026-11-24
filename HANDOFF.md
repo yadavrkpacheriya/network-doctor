@@ -2,7 +2,14 @@
 
 _Last updated: 2026-11-23 (v4.43)_
 
-## Done (v4.40–4.47, latest session)
+## Done (v4.40–4.48, latest session)
+- **Website/app naming fix + verify** (v4.48) — root cause of "finding/verifying website & app still an issue":
+  usage names depend on the router's DNS log, but DoH (port 443) and devices using their own DNS hide names,
+  so traffic shows as 'other'/CDN. Added `nd_tools.block_doh_commands` (drops 443 to public DoH/DoT resolver
+  IPs → devices fall back to router DNS) + `name_traffic_commands` (one apply/undo: DNS-log on + redirect 53 +
+  block DoH). New Assistant intent "naming": `_apply_naming` applies then VERIFIES by watching usage.dns_log_rx
+  climb (~70s) and reports whether names started arriving. List named `ND-DOH` (reset-contract convention).
+  Tests: test_assistant NamingFixTests (3). Full suite 1010.
 - **Ask-the-brain questions** (v4.47) — NEW `nd_ask.py`: answers plain-English questions from data the app
   already stores. "which website/app/device uses the most data" (nd_usage.summary), "which device
   disconnects the most" / "not on UPS" (nd_power.summarize over db.power_log), "which site is dropping"
