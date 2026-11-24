@@ -254,6 +254,8 @@ class _PcDashboardState extends State<PcDashboard> {
   String _query = '';
   Timer? _timer;
   Timer? _ka;                  // keep-alive: a cheap /api/hello every 3s so the link never idles out
+  bool _slowConnect = false;   // first connect is taking a while - show a hint + Retry instead of a bare spinner
+  Timer? _slowTimer;
 
   @override
   void initState() {
@@ -262,12 +264,18 @@ class _PcDashboardState extends State<PcDashboard> {
     _load();
     _timer = Timer.periodic(const Duration(seconds: 6), (_) => _load());
     _ka = Timer.periodic(const Duration(seconds: 3), (_) => _pingAlive());
+    // If the very first connect is still spinning after 8s, stop showing a bare spinner and offer a Retry +
+    // a hint - so the screen never sits on an endless "connecting" circle with no explanation (Rakesh, 24 Nov).
+    _slowTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && _s == null && _err.isEmpty) setState(() => _slowConnect = true);
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _ka?.cancel();
+    _slowTimer?.cancel();
     super.dispose();
   }
 
@@ -306,6 +314,7 @@ class _PcDashboardState extends State<PcDashboard> {
           _s = s;
           _err = '';
           _fails = 0;
+          _slowConnect = false;
         });
       }
     } on PcError catch (e) {
@@ -551,7 +560,38 @@ class _PcDashboardState extends State<PcDashboard> {
                 if (s != null && s['scanning'] == true) LinearProgressIndicator(color: col),
                 Expanded(
                   child: secs == null
-                      ? Center(child: _err.isEmpty ? const CircularProgressIndicator() : const SizedBox.shrink())
+                      ? Center(
+                          child: _err.isNotEmpty
+                              ? const SizedBox.shrink()
+                              : _slowConnect
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(24),
+                                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                        const CircularProgressIndicator(),
+                                        const SizedBox(height: 16),
+                                        const Text('Still connecting to the PC...', textAlign: TextAlign.center),
+                                        const SizedBox(height: 6),
+                                        const Text(
+                                          'Make sure the PC is on, Network Doctor is open, and "Phone app link" '
+                                          'is switched on. If you are away from the office, a remote address '
+                                          '(Setup > Remote access on the PC) is needed.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        FilledButton.icon(
+                                          onPressed: () {
+                                            _loading = false;   // clear any stuck in-flight guard
+                                            setState(() => _slowConnect = false);
+                                            _load();
+                                          },
+                                          icon: const Icon(Icons.refresh),
+                                          label: const Text('Retry now'),
+                                        ),
+                                      ]),
+                                    )
+                                  : const CircularProgressIndicator(),
+                        )
                       : TabBarView(children: [for (final sec in secs) SectionView(section: sec)]),
                 ),
               ]),

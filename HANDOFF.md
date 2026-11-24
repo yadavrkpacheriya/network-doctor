@@ -14,6 +14,11 @@ _Last updated: 2026-11-23 (v4.43)_
 - **Keep-alive ping** (mobile 1.33.1): pc_screen runs a cheap `/api/hello` every 3s (PcLink.keepAlive, never
   throws) between the 6s data polls, so the phone↔PC link never idles out; on success it clears the fail
   count and, if it had been showing an error, reloads data immediately (fast recovery instead of waiting ≤6s).
+- **Stuck "connecting" spinner fix** (mobile 1.33.2): the screen could sit on a bare spinner with no error
+  (first connect slow, or a PcError swallowed while `!mounted`). Now: an 8s `_slowTimer` replaces the bare
+  spinner with "Still connecting… + hint + Retry now" (Retry clears any stuck `_loading` guard); and
+  `_send` fails fast on SocketException/ClientException (connection refused = nothing listening, don't retry;
+  only a timeout gets the one retry), so first-load resolves in seconds instead of ~20s.
 - **Website/app naming fix + verify** (v4.48) — root cause of "finding/verifying website & app still an issue":
   usage names depend on the router's DNS log, but DoH (port 443) and devices using their own DNS hide names,
   so traffic shows as 'other'/CDN. Added `nd_tools.block_doh_commands` (drops 443 to public DoH/DoT resolver

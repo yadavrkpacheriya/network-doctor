@@ -341,11 +341,13 @@ class PcLink {
       try {
         return await f().timeout(const Duration(seconds: 6));
       } on TimeoutException catch (e) {
-        lastErr = e;
+        lastErr = e;                  // a timeout may be a blip - worth one retry
       } on SocketException catch (e) {
         lastErr = e;
+        break;                        // "connection refused": nothing is listening - fail fast, don't retry
       } on http.ClientException catch (e) {
         lastErr = e;
+        break;                        // the HTTP client gave up - a retry won't help on this address
       }
     }
     if (lastErr is TimeoutException) {
