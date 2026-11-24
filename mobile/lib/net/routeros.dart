@@ -155,6 +155,27 @@ class RouterOs {
   }
 
   Future<void> connect() async {
+    // The MikroTik API often resets the TCP session DURING the login handshake (not with a !trap) when the
+    // API service is restricted by "Available From" to addresses that don't include this phone, or on a brief
+    // glitch. So try the handshake up to twice and, if it still drops, say what to check (Rakesh, 24 Nov).
+    RosError? last;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        await close();
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      try {
+        await _connectOnce();
+        return;
+      } on RosError catch (e) {
+        if (e.message.startsWith('login refused')) rethrow;   // wrong user/pass - retrying won't help
+        last = e;
+      }
+    }
+    throw last ?? RosError('the router dropped the connection');
+  }
+
+  Future<void> _connectOnce() async {
     try {
       _sock = ssl
           ? await SecureSocket.connect(host, port,
@@ -165,7 +186,19 @@ class RouterOs {
           'Turn the API on in the router: IP > Services > api (8728).');
     }
     _in = _ByteStream(_sock!);
-    var r = await talk(['/login', '=name=$user', '=password=$password'], check: false);
+    List<(String, List<String>)> r;
+    try {
+      r = await talk(['/login', '=name=$user', '=password=$password'], check: false);
+    } on RosError {
+      // Reset mid-handshake: almost always the API "Available From" list blocks this phone's IP, or the
+      // phone is on a guest/VLAN that can't reach the router's API. Point the user straight at it.
+      await close();
+      final dot = host.lastIndexOf('.');
+      final subnet = dot > 0 ? '${host.substring(0, dot)}.0/24' : 'this phone';
+      throw RosError('the router dropped the connection during login. On the router, open '
+          'IP > Services > api and make sure "Available From" is empty or includes $subnet, '
+          'and that the phone is on the office Wi-Fi (not a guest network).');
+    }
     if (r.any((e) => e.$1 == '!trap')) {
       await close();
       throw RosError("login refused - check the user name and password (the user needs 'api' + read/write).");

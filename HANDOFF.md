@@ -3,6 +3,11 @@
 _Last updated: 2026-11-23 (v4.43)_
 
 ## Done (v4.40–4.50, latest session)
+- **Phone router login "dropped the connection"** (mobile 1.33.3): RouterOs.connect split into connect (retries
+  the handshake once, 500ms apart) + _connectOnce. A reset DURING login (not a !trap) is now caught and turned
+  into a specific message: check IP>Services>api "Available From" includes this phone's /24, and that the phone
+  is on the office Wi-Fi not a guest VLAN - the usual cause when the PC connects but the phone can't. A
+  'login refused' (wrong user/pass) still fails fast without retry.
 - **Alerts now auto-close when the device returns** (v4.50) — "stopped answering" / "not answering" alerts
   stayed open forever after the device came back. Two gaps: (1) _missing_devices raised them via _record_alert
   (not tracked in alerts_active), so the resolve loop never saw them; (2) the device-watch "Back up" path only
