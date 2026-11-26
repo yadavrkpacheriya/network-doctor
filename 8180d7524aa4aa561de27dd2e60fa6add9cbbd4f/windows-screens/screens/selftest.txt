@@ -1,0 +1,46 @@
+Network Doctor 4.73 self-test, 41 pages
+ok    Home > Overview
+ok    Assistant > Fix Assistant
+ok    Scan & Devices > All devices
+ok    Scan & Devices > Network map
+ok    Scan & Devices > Login sweep
+ok    Inventory > Inventory
+ok    Inventory > IP-MAC binding
+ok    Cameras > Cameras & DVR/NVR
+ok    Computers > PCs & laptops
+ok    Network Issues > Alerts
+ok    Network Issues > Problems
+ok    Network Issues > Root cause
+ok    Network Issues > Health checks
+ok    Network Issues > History & trends
+ok    Fixer > Commands
+ok    Fixer > PC Care (repair & clean-up)
+ok    Internet & Usage > Live monitor
+ok    Internet & Usage > Usage
+ok    Internet & Usage > Bandwidth plan
+ok    Internet & Usage > Slow website?
+ok    Advanced Network > Switches (SNMP)
+ok    Advanced Network > Port scanner
+ok    Advanced Network > MAC lookup
+ok    Advanced Network > Wake-on-LAN
+ok    Advanced Network > Remote access (VPN)
+ok    Advanced Network > DNS test
+ok    Advanced Network > Website check
+ok    Advanced Network > Speed test
+ok    This PC & Wi-Fi > LAN speed (PC to PC)
+ok    This PC & Wi-Fi > Wi-Fi analyzer
+ok    This PC & Wi-Fi > Network adapters
+ok    This PC & Wi-Fi > MTU finder
+ok    This PC & Wi-Fi > Subnet calculator
+ok    Security > Login attempts
+ok    Security > Critical devices
+ok    Firewall > Network guard
+ok    Firewall > Website firewall
+ok    Setup > Setup
+ok    Setup > What is missing
+ok    Setup > Config backup & diff
+ok    Setup > Pro / Activate
+ok    phone link /api/state: 48 kB, keys 33
+ok    phone link /api/action ping: Ping 127.0.0.1 from the PC started
+
+ERRORS: 0
