@@ -1053,6 +1053,41 @@ class UsageStore:
     def names(self):
         return {r[0]: {"name": r[1], "ip": r[2], "dept": r[3]} for r in self._rows("SELECT * FROM devices")}
 
+    def learned_priority_targets(self, days=14, top=25, min_visits=3):
+        """LEARN which sites this office actually relies on, and return their internet IPs so the QoS can give
+        them priority automatically - no hand-picked list (Rakesh, 26 Nov: brain should learn productivity
+        sites and prioritise them). A site qualifies when it is classed Productive (built-in rule or the user's
+        own override) AND the office really uses it (enough visits/bytes over `days`). Each site's IPs come from
+        the DNS->IP map the app already builds, so only sites seen on THIS network are returned.
+        Returns {"sites": [{"site","cat","visits","bytes"}], "ips": [sorted /32 ip strings]}."""
+        try:
+            s = self.summary(days=days)
+        except Exception:  # noqa: BLE001
+            return {"sites": [], "ips": []}
+        prod = [x for x in s.get("sites", [])
+                if x.get("cat") == WORK and (x.get("visits", 0) >= min_visits or x.get("bytes", 0) > 0)]
+        prod.sort(key=lambda x: (x.get("visits", 0), x.get("bytes", 0)), reverse=True)
+        prod = prod[:top]
+        # map each productive site to the internet IPs devices resolved it to (from ip_name: ip -> {name: seen})
+        want = {x["site"].lower() for x in prod}
+        ips = set()
+        with self.lock:
+            for ip, names in self.ip_name.items():
+                for nm in names:
+                    low = (nm or "").lower()
+                    if any(low == w or low.endswith("." + w) for w in want):
+                        ips.add(ip)
+                        break
+        # keep IPv4 only (queue tree targets), sorted for a stable script
+        def ip_key(x):
+            try:
+                return tuple(int(o) for o in x.split("."))
+            except ValueError:
+                return (999,)
+        v4 = sorted((ip for ip in ips if ip.count(".") == 3 and ":" not in ip), key=ip_key)
+        return {"sites": [{"site": x["site"], "cat": x["cat"], "visits": x.get("visits", 0),
+                           "bytes": x.get("bytes", 0)} for x in prod], "ips": v4}
+
     def summary(self, days=1, dev=None, end=None):
         """Everything the Usage tab and the dashboard show, for the last `days` days (1 = today)."""
         end = end or dt.date.today()

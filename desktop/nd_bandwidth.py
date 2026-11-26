@@ -235,7 +235,7 @@ BULK_PORTS = (
 )
 
 
-def qos_interactive_commands(wan_iface, lan="192.168.0.0/24", down_mbps=0, up_mbps=0):
+def qos_interactive_commands(wan_iface, lan="192.168.0.0/24", down_mbps=0, up_mbps=0, learned_ips=None):
     r"""Make interactive traffic (Google Sheets, web, DNS, VoIP) WIN over bulk backup traffic, without slowing
     the backup when nobody is working. Instead of capping the backup to a fixed slow rate (which would make
     backups crawl), it marks packets by kind and runs ONE queue-tree on the WAN interface where interactive
@@ -265,7 +265,19 @@ def qos_interactive_commands(wan_iface, lan="192.168.0.0/24", down_mbps=0, up_mb
          'action=mark-connection new-connection-mark=ND-bulk-con comment="ND: QOS big transfer = bulk"',
          # Google Sheets/Docs/Drive = interactive
          f'add chain=forward dst-address={goog} protocol=tcp '
-         f'action=mark-connection new-connection-mark=ND-int-con comment="ND: QOS google interactive"',
+         f'action=mark-connection new-connection-mark=ND-int-con comment="ND: QOS google interactive"',]
+    # LEARNED productive sites (from the office's own usage) get priority too - this is what makes the brain
+    # prioritise the sites people actually rely on, automatically, beyond the built-in Google list.
+    learned = sorted(set(learned_ips or []))
+    if learned:
+        # chunk to keep each address-list line reasonable; they go in a dedicated list the mangle rule matches
+        a.append(':do {/ip firewall address-list remove [find where list=ND-prio]} on-error={}')
+        for ip in learned:
+            a.append('/ip firewall address-list add list=ND-prio address=%s comment="ND: QOS learned productive"' % ip)
+        a.append('/ip firewall mangle add chain=forward dst-address-list=ND-prio protocol=tcp '
+                 'action=mark-connection new-connection-mark=ND-int-con comment="ND: QOS learned productive"')
+    a += [
+         "/ip firewall mangle",
          'add chain=forward protocol=udp port=53 action=mark-connection new-connection-mark=ND-int-con '
          'comment="ND: QOS dns"',
          # everything else interactive by default (small web, email) - low volume, safe as interactive
@@ -293,6 +305,7 @@ def qos_interactive_commands(wan_iface, lan="192.168.0.0/24", down_mbps=0, up_mb
     u = [_header("UNDO interactive-first QoS"),
          "/queue tree", ':do {remove [find where name~"^ND-QOS"]} on-error={}',
          "/ip firewall mangle", ':do {remove [find where comment~"^ND: QOS"]} on-error={}',
+         "/ip firewall address-list", ':do {remove [find where list=ND-prio]} on-error={}',
          "/ip firewall filter", _ros_on("/ip firewall filter")]
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 

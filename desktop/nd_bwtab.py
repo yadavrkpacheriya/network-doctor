@@ -383,17 +383,33 @@ class BandwidthPage:
         starves (Rakesh, 26 Nov)."""
         wan = self.var_wan.get().strip() or self.st().get("wan") or "ether1"
         p = self.plan()
+        # LEARN the office's productive sites and prioritise them too (not just Google). The usage store knows
+        # which sites are Productive and how much they're used; we take the top ones' IPs (Rakesh, 26 Nov).
+        learned, learned_sites = [], []
+        try:
+            usage = getattr(self.app, "usage", None)
+            if usage:
+                lp = usage.learned_priority_targets()
+                learned, learned_sites = lp.get("ips", []), lp.get("sites", [])
+        except Exception:  # noqa: BLE001
+            pass
         try:
             apply_s, undo_s = B.qos_interactive_commands(wan, self.lan(),
-                                                         down_mbps=_num(p.get("down"), 0), up_mbps=_num(p.get("up"), 0))
+                                                         down_mbps=_num(p.get("down"), 0), up_mbps=_num(p.get("up"), 0),
+                                                         learned_ips=learned)
         except Exception as e:  # noqa: BLE001
             self.var_msg.set("Could not build the QoS: %s" % e)
             return
         self._qos_undo = undo_s
+        extra = ""
+        if learned_sites:
+            names = ", ".join(x["site"] for x in learned_sites[:6])
+            extra = " It also learned and prioritised your most-used work sites (%s%s)." % (
+                names, ", ..." if len(learned_sites) > 6 else "")
         self._send(apply_s, "Keep Google Sheets fast while backups run (interactive-first QoS)",
                    lambda err: self.var_msg.set(
-                       "Done - Google Sheets and web now get priority on '%s'; the backup uses the spare line and "
-                       "steps aside when someone works. Undo removes it." % wan) if not err else None)
+                       ("Done - Google Sheets and web now get priority on '%s'; the backup uses the spare line and "
+                        "steps aside when someone works." % wan) + extra + " Undo removes it.") if not err else None)
 
     def undo_qos(self):
         wan = self.var_wan.get().strip() or self.st().get("wan") or "ether1"
