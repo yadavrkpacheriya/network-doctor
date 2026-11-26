@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.63"
+VERSION = "4.64"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2630,6 +2630,38 @@ class App(tk.Tk):
                     self.usage.learn_names(US.cache_pairs(rows))
                 except Exception:
                     pass
+        threading.Thread(target=work, daemon=True).start()
+        self._auto_name_traffic()
+
+    def _auto_name_traffic(self):
+        """Turn DNS naming ON automatically for everyone: if a lot of traffic has no name (the usage is 'blind'
+        because the router DNS log isn't arriving) and a router login is saved, apply the name-traffic fix once
+        so every device's sites get named - which feeds the usage data and the productivity learning (Rakesh,
+        26 Nov). Fires at most once per run and is skippable via settings auto_name_dns=False. Fully reversible
+        from the Assistant (it was applied there as 'naming')."""
+        if getattr(self, "_named_traffic_done", False):
+            return
+        if not self._settings().get("auto_name_dns", True):
+            return
+        if self.usage is None or self.usage.dns_log_rx > 0:
+            return                      # DNS log already arriving -> naming already works, nothing to do
+        if self.usage.naming_blindness() < 0.25:
+            return                      # most traffic is already named -> don't touch the router
+        c = self.router_client(ask=False)
+        if not c:
+            return                      # no login -> can't; the Assistant shows the manual option
+        self._named_traffic_done = True
+
+        def work():
+            try:
+                apply_s, _undo = T.name_traffic_commands()
+                with c:
+                    c.run_script(apply_s)
+                self.q.put(("call", lambda: self._log_event(
+                    "info", "DNS naming turned on automatically (so every device's sites get named for usage "
+                    "and productivity).", "Usage")))
+            except Exception:  # noqa: BLE001
+                self._named_traffic_done = False   # let it retry next time if the apply failed
         threading.Thread(target=work, daemon=True).start()
 
     def _tick_once(self):

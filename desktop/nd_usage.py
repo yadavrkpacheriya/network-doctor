@@ -1053,6 +1053,18 @@ class UsageStore:
     def names(self):
         return {r[0]: {"name": r[1], "ip": r[2], "dept": r[3]} for r in self._rows("SELECT * FROM devices")}
 
+    def naming_blindness(self, days=2):
+        """How much recent traffic the app can't put a name to (0-1), because the device used its own DNS or the
+        router DNS log isn't arriving. Used to decide whether to turn DNS naming on automatically. Safe: returns
+        0.0 on any error, so a bad read never triggers a router change."""
+        try:
+            import datetime as _dt
+            start = (_dt.date.today() - _dt.timedelta(days=days - 1)).isoformat()
+            rows = self._rows("SELECT day, hour, app, cat, dev, up+down FROM usage WHERE day >= ?", (start,))
+            return no_name_share(rows).get("share", 0.0)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
     def learned_priority_targets(self, days=14, top=25, min_visits=3):
         """LEARN which sites this office actually relies on, and return their internet IPs so the QoS can give
         them priority automatically - no hand-picked list (Rakesh, 26 Nov: brain should learn productivity
