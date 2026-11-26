@@ -73,6 +73,7 @@ def reset_commands(scopes=SCOPES):
             out.append(f':do {{ {p} remove [find where comment~"{COMMENT_RE}"] }} on-error={{}}')
         out.append(f':do {{ /queue simple remove [find where name~"{QUEUE_RE}" or comment~"{COMMENT_RE}"] }} on-error={{}}')
         out.append(f':do {{ /queue type remove [find where name~"^ND-"] }} on-error={{}}')
+        out.append(f':do {{ /queue tree remove [find where name~"^ND-" or comment~"{COMMENT_RE}"] }} on-error={{}}')
         out.append(f':do {{ /ip firewall address-list remove [find where list~"{LIST_RE}" or comment~"{COMMENT_RE}"] }} '
                    "on-error={}")
         out.append(":do { /ip dns cache flush } on-error={}")

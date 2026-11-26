@@ -247,6 +247,12 @@ class BandwidthPage:
             side="left", padx=(0, 8))
         ttk.Button(bar_opt, text="Optimize bandwidth", command=self.quick_optimize).pack(side="left", padx=(0, 6))
         ttk.Button(bar_opt, text="Undo optimize", command=self.undo_optimize).pack(side="left")
+        bar_qos = ttk.Frame(f)
+        bar_qos.pack(fill="x", pady=(4, 0))
+        ttk.Label(bar_qos, text="Keep Google Sheets fast while a backup runs:", foreground="#1d4ed8").pack(
+            side="left", padx=(0, 8))
+        ttk.Button(bar_qos, text="Prioritise Sheets over backups", command=self.apply_qos).pack(side="left", padx=(0, 6))
+        ttk.Button(bar_qos, text="Undo", command=self.undo_qos).pack(side="left")
         self.tv_live = nd_tabs.UI["make_tree"](f, ("group", "n", "pool", "each", "now"),
                                                ("Group", "Devices", "Guaranteed", "Each user up to", "Used now (10 min)"),
                                                (260, 80, 110, 130, 150), None, height=6)
@@ -369,6 +375,30 @@ class BandwidthPage:
     def _unapplied(self):
         self.st()["applied"] = False
         self.save()
+
+    # ---- Google Sheets stays fast while a backup runs (interactive-first QoS) --------------------------------
+    def apply_qos(self):
+        """Prioritise interactive traffic (Google Sheets/Docs/Drive, web, DNS) over bulk backups on the WAN, so
+        the backup fills spare bandwidth but yields to Sheets the instant someone works - both finish, neither
+        starves (Rakesh, 26 Nov)."""
+        wan = self.var_wan.get().strip() or self.st().get("wan") or "ether1"
+        p = self.plan()
+        try:
+            apply_s, undo_s = B.qos_interactive_commands(wan, self.lan(),
+                                                         down_mbps=_num(p.get("down"), 0), up_mbps=_num(p.get("up"), 0))
+        except Exception as e:  # noqa: BLE001
+            self.var_msg.set("Could not build the QoS: %s" % e)
+            return
+        self._qos_undo = undo_s
+        self._send(apply_s, "Keep Google Sheets fast while backups run (interactive-first QoS)",
+                   lambda err: self.var_msg.set(
+                       "Done - Google Sheets and web now get priority on '%s'; the backup uses the spare line and "
+                       "steps aside when someone works. Undo removes it." % wan) if not err else None)
+
+    def undo_qos(self):
+        wan = self.var_wan.get().strip() or self.st().get("wan") or "ether1"
+        _, undo_s = B.qos_interactive_commands(wan, self.lan())
+        self._send(undo_s, "REMOVE the Sheets-first QoS (FastTrack back on)", lambda err: None)
 
     # ---- one-tap "Optimize bandwidth" (parity with the phone app) -------------------------------------------
     # A quick, reversible fix for a slow network - no plan to build. Same three safe moves as the Android app:

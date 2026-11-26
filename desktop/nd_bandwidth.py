@@ -222,6 +222,81 @@ def queue_commands(plan, groups, lan, wan=""):
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
+# ----------------------------------------------------------------------------- interactive-vs-backup priority (QoS)
+# Cloud-backup / software-update endpoints that send BULK traffic. These are marked low priority so they fill
+# only the spare bandwidth and instantly yield to interactive traffic (Google Sheets, web, email). Matched by
+# the server port AND by known backup provider hostnames' typical ports. Acronis cloud backup is the driver
+# here (Rakesh, 26 Nov: backup runs in work hours, Sheets must stay fast for everyone at the same time).
+BULK_PORTS = (
+    # Acronis cloud backup data channels
+    44445, 44446, 43234, 8443,
+    # generic large-transfer / backup-ish TLS-on-high-ports and FTP data
+    873,  # rsync
+)
+
+
+def qos_interactive_commands(wan_iface, lan="192.168.0.0/24", down_mbps=0, up_mbps=0):
+    r"""Make interactive traffic (Google Sheets, web, DNS, VoIP) WIN over bulk backup traffic, without slowing
+    the backup when nobody is working. Instead of capping the backup to a fixed slow rate (which would make
+    backups crawl), it marks packets by kind and runs ONE queue-tree on the WAN interface where interactive
+    traffic has priority 1 and bulk/backup has priority 8. MikroTik then lets backup use the whole line when
+    it's free, but the moment a Sheets packet appears it jumps ahead - so both finish and neither starves
+    (Rakesh, 26 Nov). Reversible. wan_iface is the internet-facing interface (e.g. 'ether1' or 'pppoe-out1').
+
+    How packets are classified (mangle, in the 'forward' chain):
+      - interactive  = small, latency-sensitive: HTTPS/HTTP to Google + DNS + the small ACK/interactive packets
+      - bulk         = the backup data ports, and any single connection that has already moved a lot of data
+        (connection-bytes) - so a big upload is detected even on port 443, which is how Acronis rides.
+    """
+    wan = wan_iface.strip()
+    goog = "142.250.0.0/15,172.217.0.0/16,216.58.192.0/19,74.125.0.0/16,64.233.160.0/19," \
+           "209.85.128.0/17,172.253.0.0/16,108.177.0.0/17,142.251.0.0/16"  # Google / Workspace (Sheets, Docs, Drive)
+    bulkports = ",".join(str(p) for p in BULK_PORTS)
+    a = [_header("interactive-first QoS (Sheets fast while backup runs)"),
+         "# Interactive (Google Sheets/Docs/Drive, DNS, web) = priority 1; bulk backup = priority 8.",
+         "# Backup uses the whole line when free, but yields to Sheets the instant someone works. Reversible.",
+         "/ip firewall mangle",
+         ':do {remove [find where comment~"^ND: QOS"]} on-error={}',
+         # 1) mark all forwarded connections by kind
+         f'add chain=forward dst-address-list=!nd-local protocol=tcp dst-port={bulkports} '
+         f'action=mark-connection new-connection-mark=ND-bulk-con comment="ND: QOS bulk ports"',
+         # a connection that has already pushed >3 MB is bulk, whatever its port (catches Acronis-over-443)
+         'add chain=forward connection-bytes=3000000-0 protocol=tcp '
+         'action=mark-connection new-connection-mark=ND-bulk-con comment="ND: QOS big transfer = bulk"',
+         # Google Sheets/Docs/Drive = interactive
+         f'add chain=forward dst-address={goog} protocol=tcp '
+         f'action=mark-connection new-connection-mark=ND-int-con comment="ND: QOS google interactive"',
+         'add chain=forward protocol=udp port=53 action=mark-connection new-connection-mark=ND-int-con '
+         'comment="ND: QOS dns"',
+         # everything else interactive by default (small web, email) - low volume, safe as interactive
+         'add chain=forward connection-mark=no-mark action=mark-connection new-connection-mark=ND-int-con '
+         'comment="ND: QOS default interactive"',
+         # 2) turn connection marks into packet marks (queue tree works on packet marks)
+         'add chain=forward connection-mark=ND-bulk-con action=mark-packet new-packet-mark=ND-bulk '
+         'passthrough=no comment="ND: QOS bulk pkt"',
+         'add chain=forward connection-mark=ND-int-con action=mark-packet new-packet-mark=ND-int '
+         'passthrough=no comment="ND: QOS int pkt"',
+         # 3) one queue tree on the WAN: interactive priority 1, bulk priority 8 (both share the line)
+         "/queue tree",
+         ':do {remove [find where name~"^ND-QOS"]} on-error={}',
+         # The root carries the line's max speed so the router KNOWS when the line is full - priority only
+         # arbitrates under congestion. Set ~95% of the real line so the queue, not the ISP's buffer, is where
+         # packets wait (that's what lets Sheets jump the backup). 0 = unknown -> omit and priority still helps.
+         f'add name=ND-QOS-root parent={wan}%s comment="ND: QOS root"'
+         % (f" max-limit={rate(down_mbps * 0.95)}" if down_mbps else ""),
+         'add name=ND-QOS-interactive parent=ND-QOS-root packet-mark=ND-int priority=1 '
+         'comment="ND: QOS Sheets/web first"',
+         'add name=ND-QOS-bulk parent=ND-QOS-root packet-mark=ND-bulk priority=8 '
+         'comment="ND: QOS backup yields"',
+         "# FastTrack skips the queue tree, so turn it off (the UNDO turns it back on).",
+         "/ip firewall filter", _ros_off("/ip firewall filter", "action=fasttrack-connection and disabled=no")]
+    u = [_header("UNDO interactive-first QoS"),
+         "/queue tree", ':do {remove [find where name~"^ND-QOS"]} on-error={}',
+         "/ip firewall mangle", ':do {remove [find where comment~"^ND: QOS"]} on-error={}',
+         "/ip firewall filter", _ros_on("/ip firewall filter")]
+    return "\n".join(a) + "\n", "\n".join(u) + "\n"
+
+
 # --------------------------------------------------------------------------------------------------- CCTV isolation
 CCTV_PORTS = (37777, 37778, 34567, 8000, 554)  # Dahua, Dahua, XMeye, Hikvision, RTSP
 

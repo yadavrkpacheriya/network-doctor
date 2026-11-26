@@ -408,3 +408,30 @@ class Chart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_qos_interactive_priorities_and_reversible():
+    import nd_bandwidth as B
+    a, u = B.qos_interactive_commands("ether1", "192.168.0.0/24", down_mbps=100, up_mbps=40)
+    # interactive wins (priority 1), bulk yields (priority 8)
+    assert "priority=1" in a and "priority=8" in a
+    assert "ND-QOS-interactive" in a and "ND-QOS-bulk" in a
+    # catches a big transfer even on 443 (Acronis-over-TLS)
+    assert "connection-bytes=3000000-0" in a
+    # Google ranges are marked interactive
+    assert "142.250.0.0/15" in a
+    # DNS is interactive
+    assert "port=53" in a
+    # FastTrack off on apply, back on in undo
+    assert "fasttrack" in a.lower()
+    assert "ND-QOS" in u
+    assert "queue tree" in u and "firewall mangle" in u
+    # root carries the line ceiling so priority can arbitrate
+    assert "max-limit=" in a
+
+
+def test_qos_without_line_speed_still_builds():
+    import nd_bandwidth as B
+    a, u = B.qos_interactive_commands("pppoe-out1")
+    assert "ND-QOS-root" in a            # no max-limit, but still valid
+    assert "priority=1" in a
