@@ -486,6 +486,38 @@ def judge(m):
                       ([f"only {free:g} GB free on C:"] if hw.get("disk_free_gb") not in (None, "") and free < 10 else []),
                       ["Close other tabs and programs, free disk space, or add RAM (8 GB is the practical minimum)."],
                       None, 58))
+    # Many heavy web-app tabs (lots of Google Sheets / Gmail open at once) eat the PC's memory and CPU, so every
+    # tab loads and scrolls slowly - even on a 100 Mbps line. This is NOT a network fault: the browser is the
+    # bottleneck. Detected from the agent's own numbers (memory nearly full + the browser is the top memory user),
+    # so the user isn't sent chasing a router fix that won't help. Real case: 8-10 Sheets tabs open (Rakesh, 26 Nov).
+    try:
+        mem_pct = float(hw.get("mem_used_pct") or 0)
+    except (TypeError, ValueError):
+        mem_pct = 0
+    procs = hw.get("top_procs") or []
+    browser = None
+    for pr in procs:
+        nm = str(pr.get("name", "")).lower()
+        if nm in ("chrome", "msedge", "firefox", "brave", "opera"):
+            try:
+                mb = float(pr.get("mb") or 0)
+            except (TypeError, ValueError):
+                mb = 0
+            if browser is None or mb > browser[1]:
+                browser = (pr.get("name"), mb)
+    if mem_pct >= 85 and browser and browser[1] >= 1500:
+        pretty = {"chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox"}.get(
+            str(browser[0]).lower(), browser[0])
+        out.append(_f("warning", f"Too many heavy tabs open on {who} - the browser is the slow part, not the network",
+                      "High",
+                      [f"memory {mem_pct:.0f}% full; {pretty} alone is using {browser[1] / 1024:.1f} GB",
+                       "8-10 Google Sheets / Gmail tabs open together overload the browser and the PC, so every "
+                       "tab loads slowly - the internet line is fine (speedtest proves it)"],
+                      ["Keep only the sheets you are actually working on open; close the rest.",
+                       "In Chrome turn on Settings > Performance > Memory Saver so idle tabs free their memory.",
+                       "For big sheets, archive old rows or split into smaller sheets so each tab is lighter.",
+                       "If the work really needs many heavy sheets at once, 8 GB RAM is the practical minimum."],
+                      None, 62))
     if dev.get("conflict"):
         out.append(_f("critical", f"{who}'s IP is used by another device too (IP conflict)", "High",
                       [f"IP {dev.get('ip')}"], ["Fix the conflict (Problems tab) - the connection drops randomly."],

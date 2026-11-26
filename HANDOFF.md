@@ -18,6 +18,14 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.72 — Slow check: "too many heavy tabs" = browser, not network)
+- Real case: 8-10 Google Sheets tabs open, everything loads slowly, but speedtest is a full 100 Mbps. That is the
+  browser/PC overloaded, not the line. nd_slow.judge() now adds a finding when the agent reports memory ≥85% full
+  AND the browser (chrome/msedge/firefox/…) is the top memory user ≥1.5 GB: titled "Too many heavy tabs ... the
+  browser is the slow part, not the network", with real fixes (close sheets, Chrome Memory Saver, split big sheets,
+  8 GB RAM min). Uses data the agent already sends (hw.mem_used_pct, hw.top_procs) — no agent change. test_slow +2.
+  Suite 1076.
+
 ## Done (v4.71 — SMB-leak auto-block + always-on collector core)
 TWO items this batch.
 1) SMB-to-internet block (open item: PC 192.168.0.27 sent SMB/445 to the internet).
