@@ -18,6 +18,32 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.71 — SMB-leak auto-block + always-on collector core)
+TWO items this batch.
+1) SMB-to-internet block (open item: PC 192.168.0.27 sent SMB/445 to the internet).
+   - `nd_bandwidth.block_smb_to_internet(wan)` → drops outbound 445/139 (TCP) + 137/138 (UDP) on the WAN and
+     inbound on the router; tagged "ND: block SMB to internet" (Reset removes it); returns (script, undo). LAN
+     file sharing untouched (only WAN-bound traffic dropped).
+   - New alert recipe `smb_leak` in nd_alerts (matches "file sharing ... internet / worm / ransomware"), prio 1,
+     with a SELF-DETECTING-WAN auto script `AL.SMB_FIX`/`SMB_UNDO` (finds WAN from default route like DNS_FIX).
+     Added to AUTO_SAFE → the brain auto-blocks it on detection (nd_monitor already flags 445 outbound critical).
+   - test_smb_leak (4). Safe because SMB to the internet is always leak or malware.
+2) Always-on collector CORE (new feature, phase 1 — decided: runs on PC AGENTS not the router; main PC primary,
+   other agent PCs as backup; full app/site granularity).
+   - Problem: router streams NetFlow (UDP 2055) to ONE PC IP; when that PC is off, flows are lost = usage gap.
+   - `nd_collector.py`: each agent buffers received flows in its own SQLite (`CollectorBuffer`), deduped by a
+     DETERMINISTIC `flow_id = sha1(exporter,start_bucket,src,dst,sport,dport,proto)` so two agents that saw the
+     SAME NetFlow row compute the SAME id. `MergeState` merges all agents' buffers keeping each flow_id once
+     (NO double count) and tracks a per-agent watermark (last bucket merged) so a re-pull after a drop ingests
+     only new rows (resumable). `gaps(covered_sets=...)` reports minutes no agent covered (sees holes inside a run).
+   - test_collector (9): proves same-flow-across-two-agents = counted once (9000 not 18000), re-pull adds nothing,
+     agents cover each other's gaps, real gap reported. In SOURCE_FILES(.txt). Suite 1074 passed.
+   - NEXT (phase 2, not yet done): wire CollectorBuffer into the agent (receive NetFlow + buffer); make the
+     router send NetFlow to ALL agent IPs (multi-target); app pulls each agent's buffer on startup via the share
+     and feeds merged rows into UsageStore.add_flow; show a "coverage / gaps" line in Internet & Usage. Must map
+     collector rows → add_flow(lan, remote, port, proto, bytes, up, org) and ensure add_flow isn't double-fed
+     for buckets already received live (watermark covers the agent buffers; live NetFlow is the main PC's own path).
+
 ## Done (v4.70 — device classifier: a Windows PC on port 554 is no longer mis-filed as a camera)
 - Real bug (screenshot 26 Nov): "SAURABH" laptop (Windows RPC/NetBIOS/file-sharing, Intel vendor) showed under
   CCTV cameras because RTSP port 554 was open. categorize() ran the camera branch before PC and treated any
