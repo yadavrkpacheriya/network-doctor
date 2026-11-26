@@ -1640,6 +1640,10 @@ class SlowTab:
         self.btn_fix = ttk.Button(r3, text="Fix this on the router", command=self.fix, state="disabled")
         self.btn_fix.pack(side="right")
         ttk.Button(r3, text="Copy report", command=self.copy).pack(side="right", padx=6)
+        # The "run this on the user's PC" command is a single line - a copy button removes any guesswork about
+        # what to paste and in what order (Rakesh, 26 Nov: the command in the box wasn't selectable).
+        self.btn_copy_cmd = ttk.Button(r3, text="Copy PC command", command=self.copy_cmd, state="disabled")
+        self.btn_copy_cmd.pack(side="right", padx=6)
         pw = ttk.PanedWindow(parent, orient="horizontal")
         pw.pack(fill="both", expand=True, pady=(6, 0))
         a, b = ttk.Frame(pw), ttk.Frame(pw)
@@ -1789,6 +1793,7 @@ class SlowTab:
 
     def done(self, m, findings, mbps):
         self.btn.configure(state="normal")
+        self.btn_copy_cmd.configure(state="normal" if m.get("url") else "disabled")
         self.result, self.findings, self.mbps = m, findings, mbps
         self.var_prog.set(f"Finished {time.strftime('%H:%M:%S')} - {len(findings)} finding(s)")
         self.tv.delete(*self.tv.get_children())
@@ -1840,7 +1845,8 @@ class SlowTab:
             for line in self._numbers(m):
                 t.insert("end", f"  {line}\n")
             where = "Command Prompt" if core.IS_WIN else "Terminal"
-            t.insert("end", f"\nCompare on the user's own PC ({where}), then compare with the numbers above:\n", "h")
+            t.insert("end", f"\nCompare on the user's own PC - ONE command, open {where} and paste this single "
+                            "line (press 'Copy PC command'):\n", "h")
             t.insert("end", self.S.compare_command(m.get("url", "")) + "\n")
         t.configure(state="disabled")
         a = (f or {}).get("action") or ""
@@ -1994,6 +2000,19 @@ class SlowTab:
         self.app.clipboard_clear()
         self.app.clipboard_append("\n".join(lines))
         self.app.var_status.set("Report copied.")
+
+    def copy_cmd(self):
+        """Copy the single command to run on the user's own PC (curl timing) to the clipboard, so it can be
+        pasted straight into Command Prompt - no selecting from the read-only box, no order confusion."""
+        m = self.result or {}
+        url = m.get("url", "")
+        if not url:
+            messagebox.showinfo(APP, "Run 'Find the cause' first - then this copies the PC command.", parent=self.app)
+            return
+        cmd = self.S.compare_command(url)
+        self.app.clipboard_clear()
+        self.app.clipboard_append(cmd)
+        self.app.var_status.set("PC command copied - paste it in Command Prompt on the user's PC (one line).")
 
 
 # ---------------------------------------------------------------- alerts: history, priority, fixes, troubleshoot

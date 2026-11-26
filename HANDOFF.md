@@ -18,6 +18,12 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.69 — Slow tab: "Copy PC command" button)
+- The curl compare-command in the result box wasn't selectable → user couldn't tell what to paste / run order.
+  Added a "Copy PC command" button (SlowTab) that copies the single curl timing line to the clipboard; enabled
+  only after a per-site "Find the cause" run (a LAN check has no url, stays disabled). Text label clarified to
+  "ONE command ... paste this single line". Suite 1055.
+
 ## Done (v4.68 — DNS auto-fix hardened + now AUTO (safe on a public-IP line))
 - User wants ALL experience-killing network faults fixed automatically. DNS (the top "everything wakes up
   slowly" cause) was deliberately kept MANUAL before, because the fix sets allow-remote-requests=yes =
