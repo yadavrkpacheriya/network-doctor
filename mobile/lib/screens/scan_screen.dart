@@ -38,9 +38,12 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
 
   SpeedTest? _speed;
   double _mbps = 0;
+  double _upMbps = 0;
+  bool _upPhase = false; // true while the upload half of the test is running
   bool _speedRunning = false;
   String _speedErr = '';
   final List<double?> _speedHist = [];
+  final List<double?> _upHist = [];
 
   @override
   bool get wantKeepAlive => true;
@@ -72,9 +75,12 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
     setState(() {
       _speed = s;
       _speedRunning = true;
+      _upPhase = false;
       _mbps = 0;
+      _upMbps = 0;
       _speedErr = '';
       _speedHist.clear();
+      _upHist.clear();
     });
     Telemetry.instance.note('speed_test');
     final result = await s.downloadMbps(onProgress: (m, sec) {
@@ -87,10 +93,29 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
       }
     });
     if (!mounted) return;
+    setState(() => _mbps = result);
+    // Upload half - skip only if the user cancelled or there's no internet at all (download got nothing AND no
+    // other host answered). Upload matters for cloud backups, sending files and video calls, so it's worth it.
+    double up = 0;
+    if (!s.cancelled && !(result <= 0 && !s.otherHostReachable)) {
+      setState(() => _upPhase = true);
+      up = await s.uploadMbps(onProgress: (m, sec) {
+        if (mounted) {
+          setState(() {
+            _upMbps = m;
+            _upHist.add(m);
+            if (_upHist.length > 60) _upHist.removeAt(0);
+          });
+        }
+      });
+    }
+    if (!mounted) return;
     setState(() {
       _speedRunning = false;
+      _upPhase = false;
       _speed = null;
       _mbps = result;
+      _upMbps = up;
       if (result <= 0) {
         _speedErr = s.otherHostReachable
             ? 'Could not reach any of the ${SpeedTest.serverCount} speed-test servers tried, but another site answered fine - '
@@ -259,8 +284,13 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(
                     _speedRunning
-                        ? 'Testing...  now ${_mbps.toStringAsFixed(1)} Mbps  ·  peak ${_speedPeak.toStringAsFixed(1)} Mbps'
-                        : (_mbps > 0 ? 'Download  ${_mbps.toStringAsFixed(1)} Mbps' : 'Internet speed'),
+                        ? (_upPhase
+                            ? 'Testing upload...  now ${_upMbps.toStringAsFixed(1)} Mbps'
+                            : 'Testing download...  now ${_mbps.toStringAsFixed(1)} Mbps  ·  peak ${_speedPeak.toStringAsFixed(1)} Mbps')
+                        : (_mbps > 0
+                            ? 'Download  ${_mbps.toStringAsFixed(1)} Mbps'
+                                '${_upMbps > 0 ? '   ·   Upload  ${_upMbps.toStringAsFixed(1)} Mbps' : ''}'
+                            : 'Internet speed'),
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   if (_speedErr.isNotEmpty)
@@ -277,7 +307,10 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
             ]),
             if (_speedHist.isNotEmpty) ...[
               const SizedBox(height: 6),
-              LineChart(height: 70, series: [ChartSeries('download', _speedHist, Colors.blue, unit: 'Mbps')]),
+              LineChart(height: 70, series: [
+                ChartSeries('download', _speedHist, Colors.blue, unit: 'Mbps'),
+                if (_upHist.isNotEmpty) ChartSeries('upload', _upHist, Colors.orange, unit: 'Mbps'),
+              ]),
             ],
           ]),
         ),
