@@ -1058,9 +1058,27 @@ def categorize(d, gw):
     if d.get("self"):
         return CAT_PC, "this computer (running the scan)"
     cam_ports = p & {554, 37777, 34567}
-    if cam_ports or _has(v, V_CAM) or _has(uptxt, ["camera", "nvr", "dvr", "hikvision", "dahua"]) \
-            or re.search(r"\b(dvr|nvr|ipc|ip ?camera|netsurveillance)\b", web) \
-            or _has(web, ["hikvision", "dahua", "doc/page/login"]) or re.search(r"\b(dvr|nvr|cctv|cam)\b", name):
+    # A real PC is never a camera. A Windows box that happens to answer on 554 (media/streaming software, or a
+    # leftover service) was being mis-filed as a camera just because RTSP was open. So FIRST settle strong
+    # Windows evidence: SMB/RPC/RDP file-sharing ports, OR a NetBIOS/SMB computer name, OR a desktop-style name.
+    # These signals a camera/NVR does NOT produce (cameras don't run SMB file sharing or answer with a Windows
+    # computer name). If present, it's a PC regardless of 554 - unless the device is clearly a camera by brand,
+    # a camera-only port (34567/37777), or a camera web page/UPnP (those outrank a stray SMB guess).
+    win_strong = bool(p & {135, 139, 445, 3389}) or nb
+    cam_strong = bool(p & {37777, 34567}) or _has(v, V_CAM) \
+        or _has(uptxt, ["camera", "nvr", "dvr", "hikvision", "dahua"]) \
+        or re.search(r"\b(dvr|nvr|ipc|ip ?camera|netsurveillance)\b", web) \
+        or _has(web, ["hikvision", "dahua", "doc/page/login"])
+    if win_strong and not cam_strong:
+        why = []
+        if p & {135, 139, 445, 3389}:
+            why.append("Windows services (" + ", ".join(PORTS[x] for x in sorted(p & {135, 139, 445, 3389})) + ")")
+        if nb:
+            why.append("answers with a Windows computer name")
+        if cam_ports:
+            why.append("(port 554 is open but this is a Windows PC, not a camera)")
+        return CAT_PC, "; ".join(why) or "computer-style name"
+    if cam_ports or cam_strong or re.search(r"\b(dvr|nvr|cctv|cam)\b", name):
         why = []
         if cam_ports:
             why.append("video ports " + ", ".join(map(str, sorted(cam_ports))))

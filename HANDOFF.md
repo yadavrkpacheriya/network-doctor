@@ -18,6 +18,19 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.70 — device classifier: a Windows PC on port 554 is no longer mis-filed as a camera)
+- Real bug (screenshot 26 Nov): "SAURABH" laptop (Windows RPC/NetBIOS/file-sharing, Intel vendor) showed under
+  CCTV cameras because RTSP port 554 was open. categorize() ran the camera branch before PC and treated any
+  554/37777/34567 as a camera.
+- Fix in nd_core.categorize(): compute win_strong (SMB/RPC/RDP ports 135/139/445/3389 OR a NetBIOS/SMB computer
+  name) and cam_strong (camera-only ports 34567/37777, camera brand, or camera web/UPnP). If win_strong and NOT
+  cam_strong → PC, even with 554 open (reason notes "port 554 is open but this is a Windows PC"). Cameras keep
+  winning on a camera-only port / brand / web page, so real Hikvision/Dahua/NVRs are unaffected.
+- Self-correcting memory ALREADY exists: a manual Tag (kind) is saved by MAC in db labels/tags and overrides the
+  guess permanently (nd_tools.apply_tags) — so a corrected device never reverts. This fix stops the wrong auto-
+  guess at the source so no manual fix is needed for this class.
+- New test_pc_not_camera (6 cases incl. the SAURABH case + real-camera guards). Suite 1061 passed.
+
 ## Done (v4.69 — Slow tab: "Copy PC command" button)
 - The curl compare-command in the result box wasn't selectable → user couldn't tell what to paste / run order.
   Added a "Copy PC command" button (SlowTab) that copies the single curl timing line to the clipboard; enabled
