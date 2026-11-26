@@ -18,6 +18,21 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.67 — LAN-health runs AUTOMATICALLY through the brain, every ~10 min)
+- User's follow-up: "make it automatic and regular through brain AI so the same issues don't recur."
+- `NetworkDoctor._lan_health_check()` now runs off-thread every 10 min from the main tick (guard `_lanhealth_t`,
+  setting `lan_health_auto` default on). It reads the router via nd_lanhealth.diagnose(), raises each
+  critical/warning finding as an alert (deduped in alerts_active under "lan_health:<title>"), which flows through
+  `_record_alert` → `_auto_fix` → the brain. Auto-clears a LAN alert when its fault is gone (`_clear_lan_alert`,
+  sets status=fixed) — same self-healing behaviour as reconnect clearing a disconnect alert.
+- KEY: the finding TITLES already map to existing alert kinds, so NO new recipe was needed and the brain
+  auto-applies the SAFE reversible fixes on recurrence:
+    • "Broadcast flood on X (… pps)" → kind=multicast (AUTO_SAFE) → auto IGMP-snooping router fix.
+    • "Possible switching loop: … MAC on N ports" → kind=loop (AUTO_SAFE) → storm block + "pull the cable".
+    • "eth3 runs at 100 Mbps HALF-duplex" → kind=cable (NOT auto) → stays a human alert (software can't fix a cable).
+  Verified by test_lanhealth.BrainPipeline. So storms/loops get caught + fixed regularly without a button press;
+  cable faults get flagged loudly for a person. Suite 1054 passed.
+
 ## Done (v4.66 — LAN-health: "100 Mbps line but everything feels like 10")
 - User's real symptom: speedtest shows 90–100 Mbps, but Sheets/Gmail/sites/printers all "wake up slowly, like
   asleep" — on CABLED PCs. That is LATENCY, not a bandwidth cap: DNS delay + layer-2 flooding, not the line.

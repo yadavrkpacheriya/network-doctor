@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.66"
+VERSION = "4.67"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2509,6 +2509,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_poe_t", 0) > 300:        # router PoE load (quiet on non-PoE routers)
                 self._poe_t = time.time()
                 threading.Thread(target=self._poe_poll, daemon=True).start()
+            if time.time() - getattr(self, "_lanhealth_t", 0) > 600:  # every 10 min: LAN layer-2 health (storm/
+                self._lanhealth_t = time.time()                       # loop/slow-link/proxy-ARP) via the brain
+                threading.Thread(target=self._lan_health_check, daemon=True).start()
             if time.time() - getattr(self, "_access_t", 0) > 600:     # devices blocked from joining (reply-only ARP)
                 self._access_t = time.time()
                 threading.Thread(target=self._access_poll, daemon=True).start()
@@ -3936,6 +3939,59 @@ class App(tk.Tk):
             self.alerts_active[key] = {"title": title, "sev": sev, "first": time.time(), "last": time.time(),
                                        "source": "LeakWatch (USB)"}
             self._raise_alert(sev, title, [text, "Ask the person what was copied and why."], "LeakWatch (USB)")
+
+    def _lan_health_check(self):
+        """Every ~10 min, read the router's layer-2 health (broadcast storms, switching loops, slow/half-duplex
+        ports, proxy-ARP) and raise each fault as an alert, so the brain tracks recurrence and auto-applies the
+        SAFE reversible fixes (IGMP snooping, turn off proxy-ARP) by itself - the user's ask: solve the slowness
+        automatically and regularly so the same issues don't keep coming back. Loops / slow cables stay as loud
+        alerts (a human has to pull the cable). Runs off the UI thread; never raises. Auto-clears when a fault
+        is gone, so a fixed/reconnected LAN doesn't leave a stale alert (matches the connect/disconnect rule)."""
+        if not self._settings().get("lan_health_auto", True):
+            return
+        c = self.router_client(ask=False)
+        if not c:
+            return
+        try:
+            import nd_lanhealth as LH
+            findings = LH.diagnose(c)
+        except Exception:  # noqa: BLE001 - a router read must never break the tick
+            return
+        active_keys = set()
+        order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+
+        def raise_one(sev, title, items):
+            key = "lan_health:" + title
+            active_keys.add(key)
+            if key in self.alerts_active:
+                self.alerts_active[key]["last"] = time.time()
+                return
+            self.alerts_active[key] = {"title": title, "sev": sev, "first": time.time(),
+                                       "last": time.time(), "source": "LAN health"}
+            self.q.put(("call", lambda: self._raise_alert(sev, title, items, "LAN health")))
+
+        for f in findings:
+            if f.get("sev") in ("critical", "warning"):
+                raise_one(f["sev"], f["title"], list(f.get("evidence", [])) + list(f.get("fixes", []))[:2])
+
+        # auto-clear LAN-health alerts whose fault is no longer present (self-healed, cable re-seated, etc.)
+        for key in [k for k in self.alerts_active if k.startswith("lan_health:") and k not in active_keys]:
+            self.alerts_active.pop(key, None)
+            self.q.put(("call", lambda k=key: self._clear_lan_alert(k[len("lan_health:"):])))
+        self._lan_health_last = findings
+
+    def _clear_lan_alert(self, title):
+        """Mark a LAN-health alert fixed once its fault is gone (same behaviour as a reconnect clearing a
+        disconnect alert). Best-effort - the alert log owns the record."""
+        try:
+            for e in self.alert_log.recent(200):
+                if e.get("source") == "LAN health" and e.get("text", "").startswith(title) \
+                        and e.get("status") != "fixed":
+                    e["status"] = "fixed"
+                    e["fixed_at"] = time.time()
+            self._alerts_touched()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _record_alert(self, sev, text, source):
         """Keeps the alert (time, priority, fix) for the Alerts tab, the export and the phone."""

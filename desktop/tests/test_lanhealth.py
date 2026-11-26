@@ -131,3 +131,22 @@ class LiveDiagnose(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrainPipeline(unittest.TestCase):
+    """The LAN-health finding TITLES must map to the alert 'kind' that carries a safe auto-fix, so the brain
+    applies the reversible fixes automatically (the user's ask: solve it regularly, not by hand each time)."""
+    def test_broadcast_and_loop_findings_are_auto_fixable(self):
+        import nd_alerts as AL
+        bc = AL.explain("Broadcast flood on eth5 (3200 packets/sec)")
+        self.assertEqual(bc["kind"], "multicast")
+        self.assertIn("multicast", AL.AUTO_SAFE)
+        self.assertTrue(any(a["where"] == "router" and "igmp" in a["cmd"].lower() for a in bc["auto"]))
+        lp = AL.explain("Possible switching loop: AA:BB:CC:00:00:01 seen on 2 ports")
+        self.assertEqual(lp["kind"], "loop")
+        self.assertIn("loop", AL.AUTO_SAFE)
+
+    def test_slow_cable_is_alert_only_not_auto_changed(self):
+        import nd_alerts as AL
+        c = AL.explain("eth3 runs at 100 Mbps HALF-duplex")
+        self.assertNotIn(c["kind"], AL.AUTO_SAFE)   # software can't fix a bad cable - must stay a human alert
