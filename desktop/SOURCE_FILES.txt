@@ -65,3 +65,4 @@ nd_push.py
 nd_nvrcgi.py
 nd_nvrmap.py
 nd_nvrseed.py
+nd_lanhealth.py

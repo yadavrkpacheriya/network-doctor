@@ -18,12 +18,22 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
-## NEXT (requested 2026-11-26): fix LAN slowness / broadcast leak
-- User: 100 Mbps plan but every PC runs like ~10 Mbps, "everything too slow in network". Likely causes to check
-  live via router (RouterOS @ 192.168.0.1, user fanair, API 8728): broadcast/multicast storm, a 10/100 (not Gig)
-  link or duplex mismatch somewhere, a loop, ARP flooding, or one host hogging. Plan: add a LAN-health diagnose
-  + auto-fix pass (storm-control / per-port rate, find the slow-linked port, loop detect, disable proxy-ARP,
-  bcast-rate limit) in Network Doctor. NOT YET STARTED.
+## Done (v4.66 — LAN-health: "100 Mbps line but everything feels like 10")
+- User's real symptom: speedtest shows 90–100 Mbps, but Sheets/Gmail/sites/printers all "wake up slowly, like
+  asleep" — on CABLED PCs. That is LATENCY, not a bandwidth cap: DNS delay + layer-2 flooding, not the line.
+- New `nd_lanhealth.py` reads the live MikroTik (RouterOS API) with TWO samples ~1s apart to measure packet
+  RATES, and flags: broadcast/multicast STORM per port (BCAST_PPS_WARN=400/BAD=1500), switching LOOP (same MAC on
+  >1 bridge port), slow/HALF-duplex links (≤100 Mbps or half), ARP bloat (≥400), proxy-ARP left on. Each finding
+  carries plain evidence + fixes. `fix_script()` gives idempotent RouterOS fixes: igmp_snoop, no_proxy_arp,
+  storm_control, mac_winbox_find_loop (read-only loop finder). diagnose() never raises.
+- Wired into the Slow tab (`nd_tabs.SlowTab`): new "Check the whole LAN" button → runs diagnose() in a thread,
+  renders in the same findings tree, fixes routed via `lan:` action prefix to the LAN fixer. mac_winbox_find_loop
+  shows the read-only command instead of applying.
+- Added to SOURCE_FILES + SOURCE_FILES.txt (auto-updates). Tests: test_lanhealth (11). Suite 1052 passed.
+- NOTE the DNS angle is ALREADY covered by nd_slow.judge() (slow-DNS → dns_public fix). Tell user: run
+  "Check the whole LAN" (loop/storm/cable) AND the per-site Slow check (DNS/line). On this network DNS is the
+  likeliest "wakes up slowly" cause — the dns_public fix points the router at 1.1.1.1/8.8.8.8 with caching.
+- TODO mobile parity: phone app also has a router client; mirror a lan-health read there next.
 
 ## Done (v4.40–4.57, latest session)
 - **NVR camera coverage via saved channel map** (v4.57): NVR .74's web API is FULLY ENCRYPTED (RSA key +

@@ -1630,6 +1630,9 @@ class SlowTab:
         ttk.Button(r3, text="Stop", command=lambda: self.stop and self.stop.set()).pack(side="left", padx=6)
         self.btn_watch = ttk.Button(r3, text="Watch for drops", command=self.toggle_watch)
         self.btn_watch.pack(side="left", padx=6)
+        # Whole-LAN layer-2 health: why a full 100 Mbps line still feels like 10 (storm / loop / 10-100 port).
+        self.btn_lan = ttk.Button(r3, text="Check the whole LAN", command=self.lan_check)
+        self.btn_lan.pack(side="left", padx=6)
         self._watch_on = False
         self._watch_events = []
         self.var_prog = tk.StringVar(value="")
@@ -1820,8 +1823,12 @@ class SlowTab:
                 for x in f["fixes"]:
                     t.insert("end", f"  -> {x}\n", "ok")
             a = f.get("action") or ""
-            scr = self.S.fix_script(a, self.mbps, self._lan(), mtu=(self.result or {}).get("mtu")) \
-                if a and not a.startswith("open:") else ""
+            if a.startswith("lan:"):
+                scr = self._lan_fix_script(a[4:])
+            elif a and not a.startswith("open:"):
+                scr = self.S.fix_script(a, self.mbps, self._lan(), mtu=(self.result or {}).get("mtu"))
+            else:
+                scr = ""
             if scr:
                 t.insert("end", "\nRouter commands for this fix (or press 'Fix this on the router'):\n", "h")
                 t.insert("end", scr)
@@ -1839,6 +1846,80 @@ class SlowTab:
         a = (f or {}).get("action") or ""
         self.btn_fix.configure(state="normal" if a else "disabled",
                                text="Open the right tool" if a.startswith("open:") else "Fix this on the router")
+
+    def lan_check(self):
+        """Read the router's layer-2 health (broadcast storms, switching loops, slow/half-duplex ports, proxy-ARP).
+        This is the real answer to 'speedtest is full but everything is slow' - those faults add delay, not a cap."""
+        c = self.app.router_client(ask=True)
+        if not c:
+            messagebox.showinfo(APP, "Save the router login first (Setup > Router), then try again.", parent=self.app)
+            return
+        self.btn_lan.configure(state="disabled")
+        self.btn.configure(state="disabled")
+        self.btn_fix.configure(state="disabled")
+        self.var_prog.set("Reading the router's LAN health (about 3 seconds)...")
+        self.tv.delete(*self.tv.get_children())
+        q = self.app.q
+
+        def work():
+            try:
+                import nd_lanhealth as LH
+                fs = LH.diagnose(c)
+            except Exception as e:  # noqa: BLE001
+                fs = [{"sev": "critical", "title": f"LAN check failed: {type(e).__name__}: {e}",
+                       "evidence": [], "fixes": [], "action": None}]
+            # normalise to the same shape done() expects, and namespace the action so fix() routes to the LAN fixer
+            norm = []
+            for f in fs:
+                a = f.get("action")
+                norm.append({"sev": f.get("sev", "info"), "title": f.get("title", ""), "conf": "",
+                             "evidence": f.get("evidence", []), "fixes": f.get("fixes", []),
+                             "action": ("lan:" + a) if a else None, "score": 0})
+            q.put(("call", lambda: self._lan_done(norm)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _lan_done(self, findings):
+        self.btn_lan.configure(state="normal")
+        self.btn.configure(state="normal")
+        self.result, self.findings, self.mbps = {"lan": True}, findings, \
+            float(self.app._settings().get("line_mbps") or 100)
+        self.var_prog.set(f"LAN check finished {time.strftime('%H:%M:%S')} - {len(findings)} finding(s)")
+        self.tv.delete(*self.tv.get_children())
+        self.items = {}
+        for f in findings:
+            iid = self.tv.insert("", "end", text=f["title"], values=(f["conf"],), tags=(f["sev"],))
+            self.items[iid] = f
+        kids = self.tv.get_children()
+        if kids:
+            self.tv.selection_set(kids[0])
+        self.show()
+        self.app._health_log("LAN health", "info", findings[0]["title"] if findings else "no finding")
+
+    def _lan_fix_script(self, action):
+        import nd_lanhealth as LH
+        return LH.fix_script(action, lan=self._lan_iface(), ports=self._bridge_ports())
+
+    def _lan_iface(self):
+        try:
+            c = self.app.router_client(ask=False)
+            if c:
+                with c:
+                    bp = c.cmd("/interface/bridge/port/print")
+                    if bp:
+                        return bp[0].get("bridge", "bridge")
+        except Exception:  # noqa: BLE001
+            pass
+        return "bridge"
+
+    def _bridge_ports(self):
+        try:
+            c = self.app.router_client(ask=False)
+            if c:
+                with c:
+                    return [p.get("interface", "") for p in c.cmd("/interface/bridge/port/print")]
+        except Exception:  # noqa: BLE001
+            pass
+        return []
 
     def _lan(self):
         try:
@@ -1883,6 +1964,15 @@ class SlowTab:
                 self.app.tools.show(where)
             else:
                 self.app.show_tab(where)
+            return
+        if a.startswith("lan:"):
+            scr = self._lan_fix_script(a[4:])
+            if a == "lan:mac_winbox_find_loop":
+                messagebox.showinfo(APP, "This is a read-only command. Paste it in WinBox > New Terminal to see "
+                                         "which ports share a MAC (the looped cable):\n\n" + scr, parent=self.app)
+                return
+            if scr:
+                self.app.router_apply(scr, f"LAN fix: {f['title']}")
             return
         if a == "queue_fair" and not self.mbps:
             messagebox.showinfo(APP, "Type your internet plan speed (Mbps) first, then run the check again.")
