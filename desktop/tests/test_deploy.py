@@ -161,3 +161,48 @@ def test_enabler_script_handles_bare_share():
     import nd_deploy as D
     s = D.enabler_script("")
     assert "central.txt" in s   # still writes the config file even if empty
+
+
+def test_enabler_hardens_against_tampering():
+    """Boot task, watchdog task + script, and folder lock-down make the agent survive a user deleting it."""
+    import nd_deploy as D
+    s = D.enabler_script(r"\\RAKESH-IT\LeakLog")
+    # a second task that also restarts the agent at system start (so a killed logon task still comes back)
+    assert 'schtasks /Create /TN "%s Boot"' % D.TASK_BG in s
+    assert "ONSTART" in s
+    # a watchdog that re-creates the task + re-runs the agent, scheduled every few minutes
+    assert "watchdog.cmd" in s
+    assert 'schtasks /Create /TN "%s Watchdog"' % D.TASK_BG in s
+    assert "/SC MINUTE" in s
+    # standard users get read+execute only on the install folder
+    assert "icacls" in s
+    assert "Users:(OI)(CI)RX" in s
+    assert "SYSTEM:(OI)(CI)F" in s
+
+
+def test_enabler_writes_secret_as_central_second_line():
+    """The IT-only tamper-off secret goes on central.txt line 2, and only when a secret is supplied."""
+    import nd_deploy as D
+    s = D.enabler_script(r"\\RAKESH-IT\LeakLog", secret="topsecret42")
+    assert "topsecret42" in s
+    assert "central.txt" in s
+    # no secret -> no second echo into central.txt
+    s0 = D.enabler_script(r"\\RAKESH-IT\LeakLog")
+    assert "topsecret42" not in s0
+
+
+def test_agent_source_has_it_controlled_uninstall():
+    """The agent only removes itself on a valid IT token; otherwise it self-heals. Checked in the ps1 source."""
+    import os
+    ps1 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "..", "endpoint", "networkdoctor-agent.ps1")
+    src = open(ps1, encoding="utf-8").read()
+    assert "function Self-Heal" in src
+    assert "function Uninstall-Allowed" in src
+    assert "function Do-Uninstall" in src
+    # the loop checks the IT token and only uninstalls when allowed, else heals
+    assert "if (Uninstall-Allowed) { Do-Uninstall }" in src
+    assert "else { Self-Heal }" in src
+    # token lives in the IT share, keyed to this PC or ALL, guarded by the secret
+    assert "agent-remove" in src
+    assert '"$pc.txt", "ALL.txt"' in src

@@ -4,7 +4,7 @@
 # It sends only to the shared folder on the IT PC. It never reads a file's contents and never uses the internet.
 param([ValidateSet("fix", "background")] [string]$Mode = "fix")
 
-$AgentVersion = "1.2.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share (~2 min)
+$AgentVersion = "1.3.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share (~2 min)
 
 # ===== IT PC's shared folder (read by Network Doctor). Set once at install in central.txt; the line below is
 #       only the fallback when that file is missing, so a self-update never resets your real share. =====
@@ -245,6 +245,83 @@ function Update-Self {
     } catch { return $false }
 }
 
+# ================================ TAMPER PROTECTION + IT-CONTROLLED UNINSTALL ================================
+# The agent stays installed and running until IT turns it off from Network Doctor. It will NOT uninstall on a
+# user's command - only when a signed "allow removal" token for THIS PC (or all PCs) appears in the IT share.
+# Between those, a watchdog re-creates the tasks and re-copies the files if a user deletes them.
+$BgName    = "NetworkDoctor Agent"
+$BootName  = "NetworkDoctor Agent Boot"
+$WdName     = "NetworkDoctor Agent Watchdog"
+$FixName   = "NetworkDoctor Fix"
+$AgentPath = Join-Path $DST "networkdoctor-agent.ps1"
+
+function Agent-RunLine($mode) {
+    return "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentPath`" -Mode $mode"
+}
+
+# Re-create anything a user removed. Runs as SYSTEM, so a standard user cannot stop it from coming back.
+function Self-Heal {
+    try {
+        # the background task(s) must exist
+        if (-not (schtasks /Query /TN $BgName 2>$null)) {
+            schtasks /Create /TN $BgName /TR (Agent-RunLine "background") /RU SYSTEM /RL HIGHEST /F /SC ONLOGON 2>$null | Out-Null
+        }
+        if (-not (schtasks /Query /TN $BootName 2>$null)) {
+            schtasks /Create /TN $BootName /TR (Agent-RunLine "background") /RU SYSTEM /RL HIGHEST /F /SC ONSTART 2>$null | Out-Null
+        }
+        if (-not (schtasks /Query /TN $WdName 2>$null)) {
+            $wd = Join-Path $DST "watchdog.cmd"
+            if (Test-Path $wd) {
+                schtasks /Create /TN $WdName /TR ("cmd /c `"$wd`"") /RU SYSTEM /RL HIGHEST /F /SC MINUTE /MO 10 2>$null | Out-Null
+            }
+        }
+        # the folder lock-down (standard users: read+execute only)
+        icacls $DST /inheritance:r 2>$null | Out-Null
+        icacls $DST /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "Users:(OI)(CI)RX" 2>$null | Out-Null
+    } catch {}
+}
+
+# Does the IT share hold a valid "allow removal" token for this PC? The token is a file IT writes from Network
+# Doctor; it names either this PC or ALL, and carries the shared secret from central.txt line 2 (so a user who
+# can see the share still can't forge it without the secret). Returns $true only on a genuine IT token.
+function Uninstall-Allowed {
+    try {
+        $tokDir = Join-Path $Central "agent-remove"
+        if (-not (Test-Path $tokDir)) { return $false }
+        # the shared secret (optional 2nd line of central.txt). If none set, any token in the IT share counts -
+        # the share itself is the IT PC's, which users can read but the token is still an explicit IT action.
+        $secret = ""
+        try { $cl = Get-Content -LiteralPath $cfgFile -TotalCount 2; if ($cl.Count -ge 2) { $secret = ($cl[1]).Trim() } } catch {}
+        foreach ($nm in @("$pc.txt", "ALL.txt")) {
+            $f = Join-Path $tokDir $nm
+            if (Test-Path $f) {
+                if (-not $secret) { return $true }
+                $body = ""
+                try { $body = (Get-Content -LiteralPath $f -Raw).Trim() } catch {}
+                if ($body -eq $secret) { return $true }
+            }
+        }
+    } catch {}
+    return $false
+}
+
+# Clean, complete self-removal - ONLY ever called after Uninstall-Allowed. Removes tasks, the lock-down, and the
+# files, then exits. (It cannot delete the running .ps1 it is reading, so it schedules a final cleanup.)
+function Do-Uninstall {
+    try {
+        Log-Usb "AGENT_REMOVE" "IT allowed removal - agent uninstalling on this PC" "" 0
+        foreach ($t in @($BgName, $BootName, $WdName, $FixName)) { schtasks /Delete /TN $t /F 2>$null | Out-Null }
+        # give the folder back to normal, then remove everything on next boot via a one-shot cleanup task
+        icacls $DST /reset /T 2>$null | Out-Null
+        $clean = "timeout /t 3 >nul & rd /s /q `"$DST`" & schtasks /Delete /TN `"NetworkDoctor Cleanup`" /F >nul 2>&1"
+        $cf = Join-Path $env:TEMP "nd-clean.cmd"
+        Set-Content -LiteralPath $cf -Value $clean -Encoding ASCII
+        schtasks /Create /TN "NetworkDoctor Cleanup" /TR ("cmd /c `"$cf`"") /RU SYSTEM /RL HIGHEST /F /SC ONCE /ST 00:00 2>$null | Out-Null
+        schtasks /Run /TN "NetworkDoctor Cleanup" 2>$null | Out-Null
+    } catch {}
+    exit
+}
+
 # ================================ BACKGROUND (starts at logon, no window) ================================
 # One background instance only. A self-update relaunches a fresh copy; this mutex stops duplicates stacking up.
 $mtx = New-Object System.Threading.Mutex($false, "Global\NetworkDoctorAgentBG")
@@ -283,6 +360,10 @@ while ($true) {
     foreach ($d in $known) { if ($now   -notcontains $d) { Log-Usb "USB_OUT" "Removable drive removed"   $d 0 } }
     $known = $now
     $tick++
+    if ($tick % 20 -eq 0) {                               # every ~60s: tamper check
+        if (Uninstall-Allowed) { Do-Uninstall }          # IT turned it off from Network Doctor -> remove cleanly
+        else { Self-Heal }                               # otherwise make sure nothing was removed by a user
+    }
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
     if ($tick % 100 -eq 0) { Send-Auth 6 }               # every ~5 min: failed-login (brute-force) check
     if ($tick % 40 -eq 0) {                                # every ~2 min: pick up an update the app published

@@ -81,7 +81,7 @@ def _tr_escape(cmd):
     return cmd.replace('"', '\\"')
 
 
-def enabler_script(central):
+def enabler_script(central, secret=""):
     r"""A self-contained, self-elevating one-time setup a PC runs LOCALLY (double-click, GPO startup script, or
     pushed once). It does two jobs so a workgroup PC becomes fully remote-manageable AND gets the agent:
       1. opens the doors Windows shuts by default - admin shares, Remote Registry, File & Printer Sharing +
@@ -123,13 +123,33 @@ def enabler_script(central):
         'copy /y "%~dp0networkdoctor-agent.ps1" "%ND%\\networkdoctor-agent.ps1" >nul 2>&1\r\n'
         'if exist "%~dp0fix-launch.cmd" copy /y "%~dp0fix-launch.cmd" "%ND%\\fix-launch.cmd" >nul 2>&1\r\n'
         '> "%ND%\\central.txt" echo ' + share + "\r\n"
+        # line 2 = the tamper secret: the agent only uninstalls when IT writes a removal token carrying this
+        # secret, so a user (even a local admin) can't forge an uninstall.
+        + ('>> "%ND%\\central.txt" echo ' + secret.replace("^", "^^").replace("&", "^&") + "\r\n" if secret else "")
+        + ':: Background agent: run at logon AND at system start, so it comes up before anyone logs in.\r\n'
         'schtasks /Create /TN "' + TASK_BG + '" /TR "' + _tr_escape(agent_run_cmd("background")) + '" '
         '/RU SYSTEM /RL HIGHEST /F /SC ONLOGON >nul 2>&1\r\n'
+        'schtasks /Create /TN "' + TASK_BG + ' Boot" /TR "' + _tr_escape(agent_run_cmd("background")) + '" '
+        '/RU SYSTEM /RL HIGHEST /F /SC ONSTART >nul 2>&1\r\n'
         'schtasks /Create /TN "' + TASK_FIX + '" /TR "' + _tr_escape(agent_run_cmd("fix")) + '" '
         '/RU SYSTEM /RL HIGHEST /F /SC ONCE /ST 00:00 >nul 2>&1\r\n'
+        ':: 3) WATCHDOG: re-create the agent task every 10 min if a user deleted it, and re-copy the agent if a\r\n'
+        '::    user deleted the files. Runs as SYSTEM; a standard (non-admin) user cannot remove a SYSTEM task.\r\n'
+        'set "WD=%ND%\\watchdog.cmd"\r\n'
+        '> "%WD%" echo @echo off\r\n'
+        '>> "%WD%" echo schtasks /Query /TN "' + TASK_BG + '" ^>nul 2^>^&1 ^|^| schtasks /Create /TN "' + TASK_BG +
+        '" /TR "' + _tr_escape(agent_run_cmd("background")) + '" /RU SYSTEM /RL HIGHEST /F /SC ONLOGON ^>nul 2^>^&1\r\n'
+        '>> "%WD%" echo if not exist "%ND%\\networkdoctor-agent.ps1" schtasks /Run /TN "' + TASK_BG + ' Boot" ^>nul 2^>^&1\r\n'
+        'schtasks /Create /TN "' + TASK_BG + ' Watchdog" /TR "cmd /c \\"%ND%\\watchdog.cmd\\"" '
+        '/RU SYSTEM /RL HIGHEST /F /SC MINUTE /MO 10 >nul 2>&1\r\n'
+        ':: 4) LOCK DOWN the folder so standard users cannot delete or change the agent (admins still can).\r\n'
+        '::    Grant SYSTEM + Administrators full control, Users read+execute only (no delete/write).\r\n'
+        'icacls "%ND%" /inheritance:r >nul 2>&1\r\n'
+        'icacls "%ND%" /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "Users:(OI)(CI)RX" >nul 2>&1\r\n'
         'schtasks /Run /TN "' + TASK_BG + '" >nul 2>&1\r\n'
         "echo(\r\n"
         "echo   Done. This PC is now set up and reporting to Network Doctor.\r\n"
+        "echo   The agent runs as SYSTEM, restarts itself, and self-updates - no reinstall needed.\r\n"
         "echo   You can close this window.\r\n"
         "echo(\r\n"
         "timeout /t 8 >nul 2>&1\r\n"

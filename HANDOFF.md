@@ -1,6 +1,29 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-23 (v4.43)_
+_Last updated: 2026-11-26 (v4.65)_
+
+## Done (v4.65 — agent tamper protection, Sophos-style IT-only off switch)
+- Agent (`endpoint/networkdoctor-agent.ps1` → `$AgentVersion=1.3.0`, regenerated into `desktop/nd_agent.py`):
+  added `Self-Heal` (re-creates BG/Boot/Watchdog tasks + re-applies icacls lockdown), `Uninstall-Allowed`
+  (true only on a valid IT token in `<share>/agent-remove/<PC>.txt` or `ALL.txt`, matched against the secret on
+  central.txt line 2), `Do-Uninstall` (deletes tasks, icacls /reset, schedules one-shot "NetworkDoctor Cleanup"
+  to rd /s /q the folder, exits). Background loop: every ~60s `if (Uninstall-Allowed) { Do-Uninstall } else { Self-Heal }`.
+  Agent will NOT uninstall on a user's command — only when IT writes the token from Network Doctor.
+- Enabler (`nd_deploy.enabler_script(central, secret="")`): added "NetworkDoctor Agent Boot" (ONSTART task),
+  `watchdog.cmd` + "NetworkDoctor Agent Watchdog" (SC MINUTE /MO 10), icacls folder lock-down
+  (Users:(OI)(CI)RX, SYSTEM/Admins full), writes secret as central.txt line 2.
+- Desktop (`NetworkDoctor.py`): `_agent_secret()`, `_allow_agent_removal()` + "Allow agent removal (tamper-off)"
+  button (writes the token to the share). `_make_enabler()` passes the secret into the enabler.
+- Honest limit: true kernel-level tamper protection needs a signed driver (not feasible here). This is the strong
+  practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
+- Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
+
+## NEXT (requested 2026-11-26): fix LAN slowness / broadcast leak
+- User: 100 Mbps plan but every PC runs like ~10 Mbps, "everything too slow in network". Likely causes to check
+  live via router (RouterOS @ 192.168.0.1, user fanair, API 8728): broadcast/multicast storm, a 10/100 (not Gig)
+  link or duplex mismatch somewhere, a loop, ARP flooding, or one host hogging. Plan: add a LAN-health diagnose
+  + auto-fix pass (storm-control / per-port rate, find the slow-linked port, loop detect, disable proxy-ARP,
+  bcast-rate limit) in Network Doctor. NOT YET STARTED.
 
 ## Done (v4.40–4.57, latest session)
 - **NVR camera coverage via saved channel map** (v4.57): NVR .74's web API is FULLY ENCRYPTED (RSA key +

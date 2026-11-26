@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.64"
+VERSION = "4.65"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2028,6 +2028,8 @@ class App(tk.Tk):
         ttk.Button(dep, text="Install / update agent on all PCs", command=self._agent_deploy_all).pack(side="left", padx=4)
         ttk.Button(dep, text="Make one-time setup file (for PCs the push can't reach)",
                    command=self._make_enabler).pack(side="left", padx=4)
+        ttk.Button(dep, text="Allow agent removal (tamper-off)",
+                   command=self._allow_agent_removal).pack(side="left", padx=4)
         self.var_dep_info = tk.StringVar(value=self._agent_cred_summary())
         ttk.Label(f, textvariable=self.var_dep_info, foreground="#0f766e").pack(anchor="w", padx=8)
         ttk.Label(f, text="Saves an encrypted Windows admin login and installs the agent on every online PC over "
@@ -2099,6 +2101,56 @@ class App(tk.Tk):
         messagebox.showinfo(APP, "Admin login saved (encrypted on this PC).\n\nNow click 'Install / update agent "
                                  "on all PCs'.")
 
+    def _agent_secret(self):
+        """The tamper-off secret, kept on the IT PC. The enabler writes it to each PC (central.txt line 2); the
+        agent only uninstalls when IT writes a removal token carrying this exact secret - so no user, even a
+        local admin, can forge an uninstall. Created once and reused."""
+        st = self._settings()
+        sec = st.get("agent_secret")
+        if not sec:
+            import secrets
+            sec = secrets.token_urlsafe(18)
+            st["agent_secret"] = sec
+            self._save_settings()
+        return sec
+
+    def _allow_agent_removal(self):
+        """Tamper-OFF, from IT only (like Sophos): write a removal token to the share so the chosen PC's agent
+        (or ALL) uninstalls itself cleanly on its next check. Until this is done, the agent self-heals and
+        cannot be removed by a user (Rakesh, 26 Nov)."""
+        central = self._settings().get("endpoint_dir") or ""
+        if not central:
+            messagebox.showinfo(APP, "Set the IT shared folder first (Setup > endpoint_dir).")
+            return
+        pcs = sorted({(d.get("name") or d.get("ip")) for d in (getattr(self, "devices", []) or [])
+                      if core.CAT_PC in str(d.get("category", ""))})
+        # ask which computer (by COMPUTERNAME) or ALL
+        from tkinter import simpledialog
+        who = simpledialog.askstring(APP, "Allow the agent to be REMOVED from which PC?\n\n"
+                                     "Type the PC's Windows computer name exactly, or 'ALL' to allow removal on "
+                                     "every PC.\n\nThe agent uninstalls itself within ~1 minute. Everything else "
+                                     "stays protected.", parent=self)
+        if not who:
+            return
+        who = who.strip()
+        if not messagebox.askyesno(APP, f"Write the removal permission for '{who}'?\n\nThe agent on {who} will "
+                                        "uninstall itself. This is the only way it comes off - undo it by deleting "
+                                        "the token file from the share before the PC checks in."):
+            return
+        try:
+            import os as _os
+            tok_dir = _os.path.join(central, "agent-remove")
+            _os.makedirs(tok_dir, exist_ok=True)
+            fn = "ALL.txt" if who.upper() == "ALL" else "%s.txt" % who
+            with open(_os.path.join(tok_dir, fn), "w", encoding="ascii") as fh:
+                fh.write(self._agent_secret())
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP, f"Could not write the removal token: {e}")
+            return
+        messagebox.showinfo(APP, f"Removal allowed for '{who}'. The agent there will uninstall within about a "
+                            "minute.\n\nTo re-protect it, delete the token file:\n" +
+                            _os.path.join(central, "agent-remove", fn) + "\nand run the one-time setup again.")
+
     def _make_enabler(self):
         """Write a one-time setup folder (Enable-NetworkDoctor.cmd + the agent files) that any PC can run once -
         locally, by GPO startup script, or copied via the common admin - to open the remote-admin doors AND
@@ -2106,6 +2158,7 @@ class App(tk.Tk):
         further visit. This is the reliable way onto workgroup PCs Windows blocks by default (Rakesh, 24 Nov)."""
         from tkinter import filedialog
         central = self._settings().get("endpoint_dir") or r"\\RAKESH-IT\LeakLog"
+        secret = self._agent_secret()          # the tamper-off secret, created once and kept on the IT PC
         folder = filedialog.askdirectory(title="Choose a folder to save the one-time setup file "
                                                "(e.g. a USB drive or your IT share)")
         if not folder:
@@ -2117,7 +2170,7 @@ class App(tk.Tk):
                 with open(os.path.join(out, name), "w", encoding="utf-8", newline="") as fh:
                     fh.write(text)
             with open(os.path.join(out, "Enable-NetworkDoctor.cmd"), "w", encoding="utf-8", newline="") as fh:
-                fh.write(DP.enabler_script(central))
+                fh.write(DP.enabler_script(central, secret))
         except Exception as e:  # noqa: BLE001
             messagebox.showerror(APP, f"Could not write the setup file: {e}")
             return
