@@ -1,10 +1,12 @@
 # Network Doctor - one PC agent. Users click one button ("Fix my PC"); everything else runs in the background.
 #   -Mode fix         : clean the PC + send fresh details, connections and resource use to Network Doctor now
 #   -Mode background  : (runs at logon) watch USB drives and, every minute, which app uses the network + CPU/RAM
+#   -Mode recorder    : (only on PCs IT made "recorders") save the router's traffic data + DNS log while the
+#                       Network Doctor PC is off, and copy it to the share when the share is back
 # It sends only to the shared folder on the IT PC. It never reads a file's contents and never uses the internet.
-param([ValidateSet("fix", "background")] [string]$Mode = "fix")
+param([ValidateSet("fix", "background", "recorder")] [string]$Mode = "fix")
 
-$AgentVersion = "1.3.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share (~2 min)
+$AgentVersion = "1.4.0"    # the publisher bumps this; every PC silently self-updates to the newest in the share (~2 min)
 
 # ===== IT PC's shared folder (read by Network Doctor). Set once at install in central.txt; the line below is
 #       only the fallback when that file is missing, so a self-update never resets your real share. =====
@@ -310,6 +312,8 @@ function Uninstall-Allowed {
 function Do-Uninstall {
     try {
         Log-Usb "AGENT_REMOVE" "IT allowed removal - agent uninstalling on this PC" "" 0
+        Remove-Item -LiteralPath (Join-Path $DST "recorder.txt") -Force -ErrorAction SilentlyContinue   # recorder stops
+        netsh advfirewall firewall delete rule name="NetworkDoctor Recorder" 2>$null | Out-Null
         foreach ($t in @($BgName, $BootName, $WdName, $FixName)) { schtasks /Delete /TN $t /F 2>$null | Out-Null }
         # give the folder back to normal, then remove everything on next boot via a one-shot cleanup task
         icacls $DST /reset /T 2>$null | Out-Null
@@ -319,6 +323,189 @@ function Do-Uninstall {
         schtasks /Create /TN "NetworkDoctor Cleanup" /TR ("cmd /c `"$cf`"") /RU SYSTEM /RL HIGHEST /F /SC ONCE /ST 00:00 2>$null | Out-Null
         schtasks /Run /TN "NetworkDoctor Cleanup" 2>$null | Out-Null
     } catch {}
+    exit
+}
+
+# ================================ RECORDER (only on PCs that IT made recorders in Network Doctor) ============
+# The router sends its traffic data only to the Network Doctor PC, so hours when that PC is off were lost. On a
+# recorder PC the router also sends a COPY here (UDP 2056 flows, UDP 5516 DNS log). This only writes what arrives,
+# as it arrives, into 10-minute files on this PC, and copies each finished file to <share>\collect\<PC>\ whenever
+# the share is reachable. Network Doctor imports them when it is on again (never counting a second twice).
+# It never sends anything anywhere else and never changes the router.
+$RecDir    = Join-Path $DST "collect"
+$RecSent   = Join-Path $RecDir "sent"
+$RecFlag   = Join-Path $DST "recorder.txt"
+$RecBeat   = Join-Path $DST "recorder.beat"
+$RecRule   = "NetworkDoctor Recorder"
+$RecFlowPort = 2056
+$RecDnsPort  = 5516
+$RecKeepDays = 14
+$RecMaxBytes = 2GB
+
+function Recorder-Secret {
+    try { $cl = Get-Content -LiteralPath $cfgFile -TotalCount 2; if ($cl.Count -ge 2) { return ($cl[1]).Trim() } } catch {}
+    return ""
+}
+
+# IT switches a PC on with <share>\collect\on\<PC>.txt holding the secret (central.txt line 2). The answer is
+# remembered on this PC, so it keeps recording while the share (the IT PC) is off.
+function Recorder-Wanted {
+    try {
+        if (Test-Path -LiteralPath $Central) {
+            $f = Join-Path $Central ("collect\on\" + $pc + ".txt")
+            $ok = $false
+            if (Test-Path -LiteralPath $f) {
+                $secret = Recorder-Secret
+                $body = ""
+                try { $body = (Get-Content -LiteralPath $f -Raw).Trim() } catch {}
+                $ok = (-not $secret) -or ($body -eq $secret)
+            }
+            if ($ok) { if (-not (Test-Path -LiteralPath $RecFlag)) { Set-Content -LiteralPath $RecFlag -Value "on" -Encoding ASCII } }
+            elseif (Test-Path -LiteralPath $RecFlag) { Remove-Item -LiteralPath $RecFlag -Force }
+        }
+    } catch {}
+    return (Test-Path -LiteralPath $RecFlag)
+}
+
+function Recorder-Running {
+    try {
+        if (-not (Test-Path -LiteralPath $RecBeat)) { return $false }
+        return (((Get-Date) - (Get-Item -LiteralPath $RecBeat).LastWriteTime).TotalSeconds -lt 120)
+    } catch { return $false }
+}
+
+function Start-Recorder {
+    Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $DST 'networkdoctor-agent.ps1'),'-Mode','recorder'
+}
+
+if ($Mode -eq "recorder") {
+    $rmtx = New-Object System.Threading.Mutex($false, "Global\NetworkDoctorRecorder")
+    if (-not $rmtx.WaitOne(0)) { exit }
+    if (-not (Test-Path -LiteralPath $RecFlag)) { exit }
+    New-Item -ItemType Directory -Force -Path $RecDir, $RecSent | Out-Null
+    # open the two ports for the local network only (the router is on it); removed again when recording stops
+    netsh advfirewall firewall delete rule name="$RecRule" 2>$null | Out-Null
+    netsh advfirewall firewall add rule name="$RecRule" dir=in action=allow protocol=UDP localport="$RecFlowPort,$RecDnsPort" remoteip=localsubnet 2>$null | Out-Null
+    $uf = $null; $ud = $null
+    try {
+        $uf = New-Object System.Net.Sockets.UdpClient $RecFlowPort
+        $uf.Client.ReceiveBufferSize = 4MB
+        $ud = New-Object System.Net.Sockets.UdpClient $RecDnsPort
+        $ud.Client.ReceiveBufferSize = 1MB
+    } catch {
+        Set-Content -LiteralPath (Join-Path $RecDir "error.txt") -Value ("ports busy: " + $_.Exception.Message) -Encoding ASCII
+        exit
+    }
+    $chunk = ""; $fw = $null; $bw = $null; $dw = $null
+    $packets = 0; $lines = 0; $lastPkt = 0; $lastSync = [DateTime]::MinValue; $lastArp = [DateTime]::MinValue
+    $shareNext = [DateTime]::MinValue
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+
+    function Rec-Close {
+        foreach ($w in @($bw, $dw)) { if ($w) { try { $w.Flush(); $w.Close() } catch {} } }
+        if ($fw) { try { $fw.Close() } catch {} }
+        $script:bw = $null; $script:dw = $null; $script:fw = $null
+        Get-ChildItem -LiteralPath $RecDir -File | Where-Object { $_.Length -eq 0 -and $_.Name -match '^(flow|dns)-' } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+    }
+    function Rec-Open($c) {
+        $script:fw = [IO.File]::Open((Join-Path $RecDir "flow-$c.ndf"), 'Append', 'Write', 'Read')
+        $script:bw = New-Object IO.BinaryWriter($script:fw)
+        $script:dw = New-Object IO.StreamWriter((Join-Path $RecDir "dns-$c.txt"), $true, $utf8)
+    }
+    # copy every finished file to the share (via .tmp, so Network Doctor never reads half a file), then keep
+    # the local copy in sent\ for a while. Old files go so the disk never fills up.
+    function Rec-Sync {
+        $pending = 0
+        $files = Get-ChildItem -LiteralPath $RecDir -File | Where-Object { $_.Name -match '^(flow|dns)-(\d{8}-\d{4})\.' -and $Matches[2] -ne $chunk }
+        # the IT PC off: an unreachable share can take many seconds to answer, so try it every 5 minutes only
+        $shareOk = $false
+        if ((Get-Date) -ge $script:shareNext) {
+            $shareOk = Test-Path -LiteralPath $Central
+            if (-not $shareOk) { $script:shareNext = (Get-Date).AddMinutes(5) }
+        }
+        $dst = Join-Path $Central ("collect\" + $pc)
+        if ($shareOk) { try { New-Item -ItemType Directory -Force -Path $dst | Out-Null } catch { $shareOk = $false } }
+        foreach ($f in $files) {
+            $done = $false
+            if ($shareOk) {
+                try {
+                    $t = Join-Path $dst $f.Name
+                    Copy-Item -LiteralPath $f.FullName -Destination ($t + ".tmp") -Force
+                    if ((Get-Item -LiteralPath ($t + ".tmp")).Length -eq $f.Length) {
+                        Move-Item -LiteralPath ($t + ".tmp") -Destination $t -Force
+                        Move-Item -LiteralPath $f.FullName -Destination (Join-Path $RecSent $f.Name) -Force
+                        $done = $true
+                    }
+                } catch {}
+            }
+            if (-not $done) { $pending++ }
+        }
+        if ($shareOk) {
+            Get-ChildItem -LiteralPath $RecDir -File -Filter "arp-*.csv" | ForEach-Object {
+                try { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force } catch {}
+            }
+        }
+        # housekeeping: sent files after $RecKeepDays, anything after 30 days, oldest first above $RecMaxBytes
+        $cut = (Get-Date).AddDays(-$RecKeepDays)
+        Get-ChildItem -LiteralPath $RecSent -File | Where-Object { $_.LastWriteTime -lt $cut } | Remove-Item -Force
+        Get-ChildItem -LiteralPath $RecDir -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | Remove-Item -Force
+        $all = @(Get-ChildItem -LiteralPath $RecDir -File -Recurse | Sort-Object LastWriteTime)
+        $sum = ($all | Measure-Object Length -Sum).Sum
+        foreach ($f in $all) { if ($sum -le $RecMaxBytes) { break }; if ($f.Name -match $chunk) { continue }; $sum -= $f.Length; Remove-Item -LiteralPath $f.FullName -Force }
+        if ($shareOk) {
+            $ip = ""
+            try { $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -match '^(192\.168|10\.|172\.)' } | Select-Object -First 1).IPAddress } catch {}
+            $now = [long]([DateTime]::UtcNow - $epoch).TotalMilliseconds
+            $st = "version=$AgentVersion`r`nip=$ip`r`nupdated=$now`r`nlast_packet=$lastPkt`r`npackets=$packets`r`ndns_lines=$lines`r`npending=$pending`r`n"
+            try { [IO.File]::WriteAllText((Join-Path $dst "status.txt"), $st, $utf8) } catch {}
+        }
+    }
+    # which MAC had which IP (from this PC's neighbour table), so the history stays with the device
+    function Rec-Arp {
+        try {
+            $now = [long]([DateTime]::UtcNow - $epoch).TotalMilliseconds
+            $f = Join-Path $RecDir ("arp-" + [DateTime]::UtcNow.ToString("yyyyMMdd") + ".csv")
+            $rows = Get-NetNeighbor -AddressFamily IPv4 | Where-Object { $_.LinkLayerAddress -and $_.LinkLayerAddress -ne "00-00-00-00-00-00" -and $_.LinkLayerAddress -notmatch '^(FF-FF|01-00)' -and $_.IPAddress -match '^(192\.168|10\.|172\.)' }
+            $out = foreach ($r in $rows) { "$now,$($r.IPAddress),$($r.LinkLayerAddress)" }
+            if ($out) { [IO.File]::AppendAllText($f, (($out -join "`r`n") + "`r`n"), $utf8) }
+        } catch {}
+    }
+
+    $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+    while ($true) {
+        $u = [DateTime]::UtcNow
+        $c = $u.ToString("yyyyMMdd-HH") + ([int][math]::Floor($u.Minute / 10) * 10).ToString("00")
+        if ($c -ne $chunk) { Rec-Close; $chunk = $c; Rec-Open $c }
+        $ms = [long]($u - $epoch).TotalMilliseconds
+        try {
+            while ($uf.Available -gt 0) {
+                $b = $uf.Receive([ref]$ep)
+                $bw.Write([long]$ms); $bw.Write($ep.Address.GetAddressBytes(), 0, 4); $bw.Write([uint16]$b.Length); $bw.Write($b)
+                $packets++; $lastPkt = $ms
+            }
+            while ($ud.Available -gt 0) {
+                $b = $ud.Receive([ref]$ep)
+                $txt = $utf8.GetString($b) -replace "[`t`r`n]", " "
+                $dw.WriteLine("$ms`t$($ep.Address)`t$txt")
+                $lines++
+            }
+        } catch {}
+        if (($u - $lastSync).TotalSeconds -ge 60) {
+            $lastSync = $u
+            try { $bw.Flush(); $dw.Flush() } catch {}
+            try { Set-Content -LiteralPath $RecBeat -Value $ms -Encoding ASCII } catch {}
+            if (($u - $lastArp).TotalMinutes -ge 5) { $lastArp = $u; Rec-Arp }
+            Rec-Sync
+            if (-not (Test-Path -LiteralPath $RecFlag)) { break }     # IT stopped recording on this PC
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    Rec-Close; $chunk = ""; $shareNext = [DateTime]::MinValue; Rec-Sync
+    try { $uf.Close(); $ud.Close() } catch {}
+    netsh advfirewall firewall delete rule name="$RecRule" 2>$null | Out-Null
+    Remove-Item -LiteralPath $RecBeat -Force -ErrorAction SilentlyContinue
     exit
 }
 
@@ -335,6 +522,7 @@ Log-Usb "AGENT_START" "PC agent v$AgentVersion started" "" 0
 Send-Details
 Lock-Gateway        # shield the router's address at every logon (background runs as SYSTEM, so it has the rights)
 Send-Auth 60        # catch password-guessing that happened in the last hour before the agent started
+if ((Recorder-Wanted) -and -not (Recorder-Running)) { Start-Recorder }   # a recorder starts with the PC, no logon needed
 $watchers = @{}
 function Watch($drive) {
     if ($watchers.ContainsKey($drive)) { return }
@@ -365,6 +553,9 @@ while ($true) {
         else { Self-Heal }                               # otherwise make sure nothing was removed by a user
     }
     if ($tick % 20 -eq 0) { Send-Connections }           # every ~60s: which app is using the network
+    if ($tick % 20 -eq 0) {                               # every ~60s: recorder on / off as IT set it
+        if ((Recorder-Wanted) -and -not (Recorder-Running)) { Start-Recorder }
+    }
     if ($tick % 100 -eq 0) { Send-Auth 6 }               # every ~5 min: failed-login (brute-force) check
     if ($tick % 40 -eq 0) {                                # every ~2 min: pick up an update the app published
         if (Update-Self) {                                 # (a published version bump reaches every PC in ~2 min,

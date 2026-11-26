@@ -938,6 +938,7 @@ class Monitor:
         self.running = False
         self.flow_rx = self.syslog_rx = 0
         self.on_dns = None  # on_dns(text) -> True when the line was a DNS log line (nd_usage.UsageStore.dns_log)
+        self.on_flow_raw = None  # on_flow_raw(datagram, arrival_time): every flow packet the app received live
         self.last_flow = self.last_syslog = None
         self.exporters, self.log_sources = set(), set()
         self.sniffer_state = "starting..."
@@ -1012,6 +1013,11 @@ class Monitor:
 
     def _on_flow(self, data, addr):
         recs = self.parser.parse(data, addr)
+        if self.on_flow_raw:  # recorders: remember which seconds the app itself received (no double counting)
+            try:
+                self.on_flow_raw(data, time.time())
+            except Exception:
+                pass
         self.flow_rx += 1
         self.last_flow = time.time()
         self.exporters.add(addr)

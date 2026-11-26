@@ -46,6 +46,7 @@ import nd_net as NT
 import nd_toolstab
 import nd_routeros as RO
 import nd_usage as US
+import nd_collect as CL
 import nd_endpoint as EP
 import nd_home
 import nd_bwtab
@@ -73,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.70"
+VERSION = "4.71"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -547,6 +548,14 @@ class App(tk.Tk):
             self.usage = US.UsageStore(os.path.join(core.DATA_DIR, "usage.db"))
         except Exception:
             self.usage = None
+        try:   # recorders: which seconds the app itself received, so a recorder's copy is never counted twice
+            self.cov = CL.Coverage(self.usage.path) if self.usage else None
+        except Exception:
+            self.cov = None
+        self._rec_importer = None
+        self._rec_busy = False
+        self._rec_t = 0
+        self._rec_last = {}
         self._dns_poll_t = 0
         self.devices, self.issues, self.checks = [], [], []
         self.gw, self.lip = core.detect_network()
@@ -2039,6 +2048,29 @@ class App(tk.Tk):
                           "within ~2 minutes, so you only do this once per PC.",
                   foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
 
+        rec = nd_tabs.section_card(f, "Recorders - keep the usage history while this PC is off", "#1d4ed8")
+        bar = ttk.Frame(rec)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Make recorder", command=self._recorder_make).pack(side="left", padx=4)
+        ttk.Button(bar, text="Stop recording", command=self._recorder_stop).pack(side="left", padx=4)
+        ttk.Button(bar, text="Import now", command=lambda: self._recorders_import(manual=True)).pack(side="left", padx=4)
+        ttk.Button(bar, text="Refresh", command=self._recorders_refresh).pack(side="left", padx=4)
+        cols = (("pc", "PC", 150), ("ip", "IP", 110), ("state", "Status", 360), ("last", "Last data", 110),
+                ("wait", "Files waiting", 90), ("imp", "Files imported", 100))
+        self.tree_rec = ttk.Treeview(rec, columns=[c[0] for c in cols], show="headings", height=4)
+        for k, t, w in cols:
+            self.tree_rec.heading(k, text=t)
+            self.tree_rec.column(k, width=w, anchor="w")
+        self.tree_rec.pack(fill="x", pady=(6, 0))
+        self.var_rec_info = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.var_rec_info, foreground="#1d4ed8").pack(anchor="w", padx=8)
+        ttk.Label(f, text="The router sends its traffic data only to this PC, so hours when it is off were lost. "
+                          "A recorder is another office PC with the agent that also gets a copy and saves it; when "
+                          "this PC is on again, everything is added automatically (every 2 minutes). Seconds this "
+                          "PC already received, or another recorder already gave, are never counted twice.",
+                  foreground="#667085", wraplength=1100, justify="left").pack(anchor="w", padx=8, pady=(2, 6))
+        self.after(1500, self._recorders_refresh)
+
         cam = nd_tabs.section_card(f, "Camera / NVR / DVR logins - save once, the Login sweep tries them "
                                       "automatically (no re-typing)", "#b45309")
         self.var_cam_user = tk.StringVar()
@@ -2456,10 +2488,13 @@ class App(tk.Tk):
         except ValueError:
             lan = self.net
         self.mon = M.Monitor(lan, self.gw, self.lip, self.threat, self.orgs)
+        self._mon_lan = lan
         if self.usage:
             self.mon.traffic.sink = self.usage.add_flow
-            self.mon.on_dns = self.usage.dns_log
+            self.mon.on_dns = self._on_dns_line
             M.NAME_APP = self.usage.app_for
+            if self.cov:
+                self.mon.on_flow_raw = lambda data, t: self.cov.note("flow", CL.packet_time(t, data), len(data))
         self._feed_monitor()
         self.mon.start()
         self.ev_seen = 0
@@ -2647,6 +2682,181 @@ class App(tk.Tk):
                 self._self_inv_running = False
         threading.Thread(target=work, daemon=True).start()
 
+    # ---------------------------------------------------------------- recorders (history while this PC is off)
+    def _on_dns_line(self, text):
+        """Router DNS-log line: to the usage history, and noted as 'received live' for the recorders' import."""
+        ok = self.usage.dns_log(text)
+        if ok and self.cov:
+            self.cov.note("dns", time.time())
+        return ok
+
+    def _lan_text(self):
+        lan = getattr(self, "_mon_lan", "")
+        if lan:
+            return lan
+        try:
+            nets = core.parse_nets(self.var_net.get())
+            local = next((n for n in nets if core.in_net(self.lip, n)), nets[0])
+            return ", ".join(str(n) for n in [local] + [n for n in nets if n != local])
+        except Exception:  # noqa: BLE001
+            return self.net
+
+    def _rec_root(self):
+        central = self._settings().get("endpoint_dir") or ""
+        return central, (os.path.join(central, "collect") if central else "")
+
+    def _recorders_import(self, manual=False):
+        """In the background: adds every finished recorder file from the share to the usage history, through the
+        same code as live traffic. Slices the app already has (live or from another recorder) are skipped."""
+        central, root = self._rec_root()
+        if not (self.usage and self.cov and root) or self._rec_busy or not os.path.isdir(root):
+            if manual and not root:
+                messagebox.showinfo(APP, "Set the IT shared folder first (Setup > endpoint_dir).")
+            return
+        self._rec_busy = True
+
+        def make_traffic(sink):
+            t = M.TrafficStore(self._lan_text(), CL._NoThreat(), self.orgs, lambda *a, **k: None)
+            t.sink = sink
+            return t
+
+        def work():
+            res = {}
+            try:
+                if self._rec_importer is None:
+                    self._rec_importer = CL.Importer(self.usage, self.cov, make_traffic, M.FlowParser)
+                if self.mon:
+                    self._rec_importer.seed_templates(dict(self.mon.parser.templates))
+                res = self._rec_importer.run([root])
+            except Exception as e:  # noqa: BLE001
+                res = {"error": str(e)}
+            finally:
+                self._rec_busy = False
+            self._rec_last = dict(res, t=time.time())
+            if res.get("flows") or res.get("dns"):
+                self.q.put(("call", lambda: self._health_log(
+                    "Recorders", "info", f"Added {res['flows']} traffic records and {res['dns']} DNS look-ups "
+                    f"recorded by {', '.join(res['pcs'])} while this PC was off")))
+            if manual:
+                self.q.put(("call", lambda: self._recorders_refresh(note=True)))
+        threading.Thread(target=work, daemon=True, name="recorders-import").start()
+
+    def _agent_pcs(self):
+        """{PC name: IP} from the PC agents' reports in the share."""
+        central, _ = self._rec_root()
+        out = {}
+        try:
+            import nd_endpoint as _EP
+            for r in _EP.read_reports(_EP.default_dirs(central)):
+                pc = (r.get("hostname") or "").strip()
+                if pc and r.get("ip"):
+                    out[pc] = r["ip"]
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    def _recorders_refresh(self, note=False):
+        tree = getattr(self, "tree_rec", None)
+        if not tree:
+            return
+        central, _ = self._rec_root()
+        rows = CL.status(central, self.cov, agents=self._agent_pcs()) if central else []
+        tree.delete(*tree.get_children())
+        now = time.time()
+        for r in rows:
+            state = r["state"] + (" - PC's IP changed: press Make recorder again" if r["ip_changed"] else "")
+            tree.insert("", "end", iid=r["pc"], values=(r["pc"], r["ip"], state, CL.fmt_ago(r["last_data"], now),
+                                                         r["pending_on_pc"] + r["waiting"], r["imported"]))
+        last = self._rec_last
+        if not central:
+            msg = "Set the IT shared folder (endpoint_dir) first - recorders send their files there."
+        elif not rows:
+            msg = ("No recorder yet. Pick a PC that stays on (or is on when this one is off) and press "
+                   "'Make recorder'.")
+        else:
+            msg = f"{sum(1 for r in rows if r['state'] == 'Recording')} of {len(rows)} recording."
+        if last.get("t"):
+            msg += (f" Last import {CL.fmt_ago(last['t'], now)}: {last.get('flows', 0)} records, "
+                    f"{last.get('dns', 0)} DNS look-ups" + (f", error: {last['error']}" if last.get("error") else "") + ".")
+        self.var_rec_info.set(msg)
+
+    def _recorder_make(self):
+        """Turn a PC (with the PC agent) into a recorder: switch file in the share + a copy of the router's
+        traffic data and DNS log to that PC. Reversible with 'Stop recording' or the router reset."""
+        central, _ = self._rec_root()
+        if not central:
+            messagebox.showinfo(APP, "Set the IT shared folder first (Setup > endpoint_dir).")
+            return
+        pcs = self._agent_pcs()
+        on = CL.switched_on(central)
+        if len(on) >= CL.MAX_RECORDERS:
+            messagebox.showinfo(APP, f"{CL.MAX_RECORDERS} recorders are enough (each one is one more copy of the "
+                                     "traffic data on the router). Stop one first.")
+            return
+        from tkinter import simpledialog
+        listing = ", ".join(sorted(pcs)) or "(no PC agent has reported yet)"
+        who = simpledialog.askstring(APP, "Which PC should record while this PC is off?\n\nPick one that stays on "
+                                     "(or is on when this one is off). It must have the PC agent.\n\nPCs with the "
+                                     f"agent: {listing}\n\nType the PC's computer name:", parent=self)
+        if not who:
+            return
+        who = who.strip()
+        match = next((p for p in pcs if p.lower() == who.lower()), None)
+        if not match:
+            messagebox.showinfo(APP, f"'{who}' has no PC agent report in the share yet. Install the agent there "
+                                     "first (Setup > Deploy the PC agent).")
+            return
+        ip = pcs[match]
+        if ip == self.lip:
+            messagebox.showinfo(APP, "That is this PC. Pick another PC - this one already records while it is on.")
+            return
+        if not messagebox.askyesno(APP, f"Make {match} ({ip}) a recorder?\n\n- The router sends a COPY of the "
+                                        f"traffic data and DNS log to {ip} (UDP {CL.FLOW_PORT} / {CL.DNS_PORT}). "
+                                        "This PC keeps getting its own copy; no rule, limit or block changes.\n"
+                                        f"- The agent on {match} opens those two ports for the local network "
+                                        "only and saves what arrives (about 20-100 MB a day, kept 14 days).\n"
+                                        "- Undo: 'Stop recording', or the router reset.\n\nKeep that PC on a fixed "
+                                        "IP (IP-MAC binding)."):
+            return
+        try:
+            CL.set_switch(central, match, True, self._agent_secret())
+        except OSError as e:
+            messagebox.showerror(APP, f"Could not write to the share: {e}")
+            return
+        self._rec_router(CL.router_add(ip), f"Recorder {match}: copy of traffic data to {ip}")
+        self._recorders_refresh()
+
+    def _recorder_stop(self):
+        tree = getattr(self, "tree_rec", None)
+        sel = tree.selection() if tree else ()
+        if not sel:
+            messagebox.showinfo(APP, "Select a recorder in the list first.")
+            return
+        central, _ = self._rec_root()
+        pc = sel[0]
+        ip = tree.item(pc, "values")[1] or self._agent_pcs().get(pc, "")
+        if not messagebox.askyesno(APP, f"Stop recording on {pc}?\n\nThe router stops sending it a copy, and the "
+                                        "agent there closes its ports. Files already in the share are still "
+                                        "imported."):
+            return
+        try:
+            CL.set_switch(central, pc, False, "")
+        except OSError:
+            pass
+        if ip:
+            self._rec_router(CL.router_remove(ip), f"Stop recorder {pc}")
+        self._recorders_refresh()
+
+    def _rec_router(self, script, what):
+        """Applies a recorder change on the router (router login saved), else copies it for WinBox."""
+        if self.router_client(ask=False):
+            self.router_apply(script, what, done=lambda err: self._recorders_refresh())
+            return
+        self.clipboard_clear()
+        self.clipboard_append(script)
+        messagebox.showinfo(APP, f"{what}\n\nNo router login is saved, so the commands were copied. Paste them "
+                                 "in WinBox > New Terminal:\n\n" + script)
+
     def _usage_devices(self):
         """Tells the usage history which MAC / name is behind each IP (after a scan or a tag change)."""
         if self.usage:
@@ -2661,8 +2871,13 @@ class App(tk.Tk):
             return
         try:
             self.usage.flush()
+            if self.cov:
+                self.cov.flush()
         except Exception:
             pass
+        if time.time() - self._rec_t > 120:   # recorders: pick up what they recorded while this PC was off
+            self._rec_t = time.time()
+            self._recorders_import()
         if time.time() - self._dns_poll_t < 60:  # router DNS cache: names of the sites each address belongs to
             return
         self._dns_poll_t = time.time()
@@ -6631,6 +6846,10 @@ class App(tk.Tk):
         try:
             if self.mon:
                 self.mon.stop()
+            if self.usage:          # the last minute of live traffic, and which seconds it covered
+                self.usage.flush(force=True)
+            if getattr(self, "cov", None):
+                self.cov.flush()
             self.orgs.close()
             if self.share:
                 self.share.stop()

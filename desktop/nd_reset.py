@@ -15,6 +15,8 @@ Safety rules (they are tested in tests/test_reset.py):
 """
 import re
 
+import nd_collect as CL
+
 OFF = "ND-off: "    # switched off by the bandwidth / camera pages (undo switches on)
 REL = "ND-rel: "    # auto-defense blocks released by hand (undo switches on)
 
@@ -77,6 +79,10 @@ def reset_commands(scopes=SCOPES):
         out.append(f':do {{ /ip firewall address-list remove [find where list~"{LIST_RE}" or comment~"{COMMENT_RE}"] }} '
                    "on-error={}")
         out.append(":do { /ip dns cache flush } on-error={}")
+        # recorders (PCs that keep the usage history while the Network Doctor PC is off): their copy of the
+        # traffic data (flow target on port 2056) and DNS log (log actions named ndrec-...). The app's own
+        # target on 2055 and its 'netdoctor' log action are not touched.
+        out += [x for x in CL.router_remove(None).splitlines() if x]
     if "ips" in scopes:
         out.append(f':do {{ /ip dhcp-server lease remove [find where comment~"{COMMENT_RE}"] }} on-error={{}}')
     notes = [f"Resets: {', '.join(SCOPE_TITLE[s] for s in scopes)}.",
@@ -120,6 +126,12 @@ def classify(tables):
         if (re.search(LIST_RE, k) or re.search(COMMENT_RE, str(r.get("comment", "")))) and k not in seen:
             seen.add(k)
             remove.append(("/ip firewall address-list", k))
+    for r in tables.get("/ip traffic-flow target") or []:
+        if str(r.get("port", "")) == str(CL.FLOW_PORT):
+            remove.append(("/ip traffic-flow target", f"recorder copy to {r.get('dst-address', '')}"))
+    for r in tables.get("/system logging action") or []:
+        if _name(r).startswith(CL.LOG_ACTION):
+            remove.append(("/system logging action", _name(r)))
     for r in tables.get("/ip dhcp-server lease") or []:
         if re.search(COMMENT_RE, str(r.get("comment", ""))):
             remove.append(("/ip dhcp-server lease", f"{r.get('address', '')} {r.get('mac-address', '')}".strip()))
@@ -127,7 +139,8 @@ def classify(tables):
 
 
 READ_PATHS = ("/ip firewall filter", "/ip firewall nat", "/ip firewall mangle", "/interface bridge filter",
-              "/ip dns static", "/queue simple", "/queue type", "/ip firewall address-list", "/ip dhcp-server lease")
+              "/ip dns static", "/queue simple", "/queue type", "/ip firewall address-list", "/ip dhcp-server lease",
+              "/ip traffic-flow target", "/system logging action")
 
 
 def report_text(found):

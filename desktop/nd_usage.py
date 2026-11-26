@@ -644,6 +644,38 @@ def _private(ip):
         return False
 
 
+def _norm_mac(m):
+    h = re.sub(r"[^0-9A-Fa-f]", "", str(m or "")).upper()
+    return ":".join(h[i:i + 2] for i in range(0, 12, 2)) if len(h) == 12 else ""
+
+
+class _Acc:
+    """Traffic tally for one recorder import (its own 5-minute slot, so it never disturbs the live one)."""
+
+    def __init__(self, hints=None):
+        self.hints = dict(hints or {})
+        self.cur = collections.defaultdict(lambda: [0, 0, 0])
+        self.active = collections.Counter()
+        self.slot_bytes = collections.Counter()
+        self.slot = None
+
+    def add(self, key, up, nbytes, slot):
+        r = self.cur[key]
+        r[0 if up else 1] += nbytes
+        r[2] += 1
+        if self.slot is not None and slot != self.slot:
+            self.close_slot()
+        self.slot = slot
+        day, hour, dev, app, _site, cat = key
+        self.slot_bytes[(dev, app, cat, day, hour)] += nbytes
+
+    def close_slot(self):
+        for (dev, app, cat, day, hour), b in self.slot_bytes.items():
+            if b >= ACTIVE_BYTES:
+                self.active[(day, hour, dev, app, cat)] += SLOT // 60
+        self.slot_bytes.clear()
+
+
 # ==========================================================================
 class UsageStore:
     def __init__(self, path, settings_path=None):
@@ -955,8 +987,44 @@ class UsageStore:
             dev = self.devmap.get(client, (client, client))[0]
             self.visits[(time.strftime("%Y-%m-%d", tm), tm.tm_hour, dev, site)] += 1
 
-    def add_flow(self, lan, remote, port, proto, nbytes, up, org="", now=None):
-        """One NetFlow record already matched to a LAN device (called by the live monitor)."""
+    def new_acc(self, hints=None):
+        """A separate tally for imported (recorder) traffic, so old hours never mix with the live 5-minute slot.
+        hints: {LAN IP: MAC} the recorder saw at that time (the device keeps its history if its IP changed)."""
+        return _Acc(hints)
+
+    def _dev_of(self, lan, acc):
+        """(device key, department) for a LAN IP: the recorder's own IP->MAC note for that time wins."""
+        info = self.devmap.get(lan)
+        mac = acc.hints.get(lan) if acc is not None else ""
+        if mac:
+            mac = _norm_mac(mac)
+        if mac and not (info and info[0] == mac):
+            dept = next((v[2] for v in self.devmap.values() if v[0] == mac and len(v) > 2), "")
+            return mac, dept
+        info = info or (lan, lan, "")
+        return info[0], (info[2] if len(info) > 2 else "")
+
+    def write_acc(self, acc):
+        """Adds an import tally to the history (same tables and rules as flush())."""
+        if acc is None:
+            return
+        with self.lock:
+            acc.close_slot()
+            cur, act = acc.cur, acc.active
+            acc.cur, acc.active = collections.defaultdict(lambda: [0, 0, 0]), collections.Counter()
+        self.flush(force=True)  # DNS visits learned during the import are saved too
+        if not (cur or act):
+            return
+        with self._db() as db:
+            db.executemany("INSERT INTO usage VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(day, hour, dev, app, site) DO "
+                           "UPDATE SET up=up+excluded.up, down=down+excluded.down, flows=flows+excluded.flows, "
+                           "cat=excluded.cat", [k + tuple(v) for k, v in cur.items()])
+            db.executemany("INSERT INTO active VALUES (?,?,?,?,?,?) ON CONFLICT(day, hour, dev, app) DO UPDATE SET "
+                           "minutes=MIN(60, minutes+excluded.minutes)", [k + (v,) for k, v in act.items()])
+
+    def add_flow(self, lan, remote, port, proto, nbytes, up, org="", now=None, acc=None):
+        """One NetFlow record already matched to a LAN device (called by the live monitor, or by the recorder
+        import with acc = new_acc() and now = when the router sent it)."""
         if nbytes <= 0:
             return
         now = now or time.time()
@@ -964,8 +1032,7 @@ class UsageStore:
         day, hour = time.strftime("%Y-%m-%d", tm), tm.tm_hour
         with self.lock:
             name, shared = self.name_for(lan, remote)
-            info = self.devmap.get(lan) or (lan, lan, "")
-            dev, dept = info[0], (info[2] if len(info) > 2 else "")
+            dev, dept = self._dev_of(lan, acc)
             ov = self.overrides
         from_ptr = False
         if not name:  # no DNS name for this address: the server's own name still says a lot (whatsapp-cdn...)
@@ -993,6 +1060,9 @@ class UsageStore:
             cat = ((ov.get(f"app:{app}@{dept}") if dept else None) or ov.get("app:" + app)
                    or APP_INFO.get(app, (NEUTRAL,))[0])
         with self.lock:
+            if acc is not None:
+                acc.add((day, hour, dev, app, (site or "")[:60], cat), up, nbytes, int(now // SLOT))
+                return
             r = self.cur[(day, hour, dev, app, (site or "")[:60], cat)]
             r[0 if up else 1] += nbytes
             r[2] += 1
