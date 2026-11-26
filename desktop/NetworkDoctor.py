@@ -73,7 +73,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.67"
+VERSION = "4.68"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -4112,6 +4112,9 @@ class App(tk.Tk):
         if r["kind"] == "ip_conflict":
             self._auto_fix_ip_conflict(e, r)
             return
+        if r["kind"] == "dns":
+            self._auto_fix_dns(e, r)
+            return
         fix = next((a for a in r["auto"] if a["where"] == "router"), None) if r["kind"] in AL.AUTO_SAFE else None
         if fix:
             c = self.router_client(ask=False)
@@ -4152,6 +4155,51 @@ class App(tk.Tk):
             e["auto_diag"] = out.strip() if out else "(no output)"
             e["auto_diag_at"] = time.time()
             self._alerts_touched()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _auto_fix_dns(self, e, r):
+        """Slow/failing DNS makes every page 'wake up slowly' - the top cause of the office feeling slow on a
+        full line. The fix points the router at fast public DNS AND blocks port 53 from the internet in the
+        same step (the hardened DNS_FIX script that finds the WAN itself), so it is safe to auto-apply even on
+        this public-IP line. We capture the router's CURRENT DNS first and build a full undo = restore the ISP
+        servers + allow-remote-requests + remove the WAN block, so it is exactly reversible (Reset / the
+        regression check put the ISP value back). If we can't read the old value, we do NOT auto-change it."""
+        c = self.router_client(ask=False)
+        if not c:
+            if not e.get("auto_note"):
+                e["auto_note"] = ("Auto-fix is ready but no router login is saved - add it in "
+                                  "Setup > Router login and this fixes itself.")
+                self._alerts_touched()
+            return
+        e["autofix"] = "trying"
+
+        def work():
+            undo = ""
+            try:
+                with c:
+                    cur = c.cmd("/ip/dns/print")
+                    row = cur[0] if cur else {}
+                    prev = (row.get("servers") or "").strip()
+                    are = (row.get("allow-remote-requests") or "").strip() or "no"
+                    undo = ("/ip dns set servers=%s allow-remote-requests=%s\n" % (prev, are)) + AL.DNS_UNDO + \
+                           "/ip dns cache flush\n"
+            except Exception:  # noqa: BLE001 - if we can't read the old value we must NOT auto-change DNS
+                undo = ""
+            self.q.put(("call", lambda: apply_it(undo)))
+
+        def apply_it(undo):
+            if not undo:
+                e["autofix"] = ""
+                if not e.get("auto_note"):
+                    e["auto_note"] = ("Could not read the router's current DNS to make the change reversible, "
+                                      "so it was left for you to apply from the Slow-site check.")
+                    self._alerts_touched()
+                return
+            fix = next((a for a in r["auto"] if a["where"] == "router"), None)
+            if not fix:
+                e["autofix"] = ""
+                return
+            self._apply_router_fix(e, "dns", fix["label"], fix["cmd"], undo, c)
         threading.Thread(target=work, daemon=True).start()
 
     def _auto_fix_ip_conflict(self, e, r):

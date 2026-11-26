@@ -18,6 +18,25 @@ _Last updated: 2026-11-26 (v4.65)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
+## Done (v4.68 — DNS auto-fix hardened + now AUTO (safe on a public-IP line))
+- User wants ALL experience-killing network faults fixed automatically. DNS (the top "everything wakes up
+  slowly" cause) was deliberately kept MANUAL before, because the fix sets allow-remote-requests=yes =
+  open-resolver risk on this office's PUBLIC IP. Fixed properly rather than forced:
+  - `AL.DNS_FIX` now, in ONE step: sets 1.1.1.1/8.8.8.8 + cache, AND blocks port 53 inbound on the WAN —
+    finding the WAN itself from the default route (`/ip route get [find dst-address=0.0.0.0/0 active]`), so it
+    is correct for PPPoE/VLAN/ether (confirmed this office is PPPoE `pppoe-out` over ether1, vlan3818). Else-branch
+    fallback drops 53 from any non-192.168/16 source. Rules tagged "ND: block DNS from WAN" → Reset removes them.
+  - `AL.DNS_UNDO` removes the WAN block; `_auto_fix_dns()` captures the router's CURRENT dns servers +
+    allow-remote-requests BEFORE applying and builds the full undo (restore ISP DNS + remove block), so it is
+    exactly reversible — if the old value can't be read, it does NOT auto-change (stays a manual alert).
+  - `dns` added to AUTO_SAFE; dispatched via `_auto_fix_dns` like ip_conflict. Test `test_v315` updated:
+    DNS now hardened+auto, `exposed`/rogue-DHCP still manual (real "might break something intended" trade-off).
+  - Observed in the screenshot: ether1 MTU 1500 but pppoe-out MTU 1480 → the MSS-clamp auto-fix (already AUTO)
+    handles the "some sites hang" side.
+- Suite 1055 passed. What now auto-heals regularly through the brain: IP conflict, DHCP full/conflict,
+  broadcast/multicast storm (IGMP), switching loop (storm-block), MTU/MSS, and DNS (hardened). Still manual by
+  design: close exposed camera port, block rogue DHCP, slow/half-duplex cable (physical).
+
 ## Done (v4.67 — LAN-health runs AUTOMATICALLY through the brain, every ~10 min)
 - User's follow-up: "make it automatic and regular through brain AI so the same issues don't recur."
 - `NetworkDoctor._lan_health_check()` now runs off-thread every 10 min from the main tick (guard `_lanhealth_t`,

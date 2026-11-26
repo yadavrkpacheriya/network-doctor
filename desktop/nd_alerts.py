@@ -27,7 +27,36 @@ SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 # exposes anything. Kinds that block/expose a device (torrent, malware, exposed, rogue_dhcp, arp_spoof) or
 # touch DNS/UPnP are deliberately NOT here - those can affect a real user or widen what reaches this
 # network from outside, so they stay manual even with a clean track record.
-AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_full"}
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_full", "dns"}
+
+# ---- DNS fix, hardened so it is safe to auto-apply ----
+# Pointing the router at fast public DNS needs allow-remote-requests=yes (so LAN PCs can ask it). On a line
+# with a public IP that could become an OPEN RESOLVER abusable from the internet. So this script ALSO blocks
+# port 53 inbound on the WAN - and it FINDS the WAN by itself from the default route (works for PPPoE, VLAN or
+# a plain ether WAN, so it is correct on any router, not just one). Both firewall rules are tagged "ND:" so
+# Reset and the undo remove exactly them. If no WAN/default-route is found, it still blocks 53 on every
+# non-bridge running interface as a safe fallback (LAN DNS keeps working; only outside-facing 53 is dropped).
+DNS_FIX = (
+    "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes cache-size=4096KiB\n"
+    ':do { /ip firewall filter remove [find where comment="ND: block DNS from WAN"] } on-error={}\n'
+    ":local wan [/ip route get [find where dst-address=\"0.0.0.0/0\" and active=yes] interface]\n"
+    ':if ([:len $wan] > 0) do={\n'
+    '  /ip firewall filter add chain=input in-interface=$wan protocol=udp dst-port=53 action=drop '
+    'comment="ND: block DNS from WAN"\n'
+    '  /ip firewall filter add chain=input in-interface=$wan protocol=tcp dst-port=53 action=drop '
+    'comment="ND: block DNS from WAN"\n'
+    '} else={\n'
+    '  /ip firewall filter add chain=input protocol=udp dst-port=53 src-address=!192.168.0.0/16 action=drop '
+    'comment="ND: block DNS from WAN"\n'
+    '  /ip firewall filter add chain=input protocol=tcp dst-port=53 src-address=!192.168.0.0/16 action=drop '
+    'comment="ND: block DNS from WAN"\n'
+    '}\n'
+    "/ip dns cache flush\n"
+)
+# Undo removes only the two firewall rules this fix added (tagged ND). The DNS servers themselves are restored
+# to the ISP value by the per-fix undo the app captures at apply-time (see _auto_fix dns path); removing the
+# WAN block here never leaves the resolver exposed because allow-remote-requests is turned back with that.
+DNS_UNDO = ':do { /ip firewall filter remove [find where comment="ND: block DNS from WAN"] } on-error={}\n'
 
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
@@ -492,8 +521,7 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                     "Use a fast public DNS on the router.",
                     ["Press 'Use fast public DNS on the router'.",
                      "On this PC: ipconfig /flushdns."],
-                    auto=[("Use fast public DNS on the router", "router",
-                           "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes"),
+                    auto=[("Use fast public DNS on the router (LAN only, internet blocked)", "router", DNS_FIX, DNS_UNDO),
                           ("Clear this PC's DNS cache", "pc", "ipconfig /flushdns")])
 
     if ("mtu" in low or "large packets" in low or "largest packet" in low or "mss" in low) and "storm" not in low:

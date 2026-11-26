@@ -98,12 +98,24 @@ class AutoFix(unittest.TestCase):
         self.assertTrue(fix["undo"])
         self.assertIn("mangle remove", fix["undo"])
 
-    def test_dns_and_exposed_stay_manual_despite_having_an_undo(self):
-        """Having an undo is necessary but not sufficient: "dns" turns on allow-remote-requests on the
-        router's own resolver (a real open-resolver risk if ever reachable from the WAN) and "exposed"
-        closes a port a user may have opened on purpose for remote camera viewing - both stay manual."""
-        self.assertNotIn("dns", AL.AUTO_SAFE)
+    def test_exposed_stays_manual_despite_having_an_undo(self):
+        """Having an undo is necessary but not sufficient: "exposed" closes a port a user may have opened on
+        purpose for remote camera viewing, so it stays a manual one-click confirm."""
         self.assertNotIn("exposed", AL.AUTO_SAFE)
+
+    def test_dns_autofix_is_hardened_against_open_resolver(self):
+        """"dns" was only allowed into AUTO_SAFE once its fix stopped being an open-resolver risk: the script
+        blocks port 53 from the WAN (found from the default route) in the SAME step as enabling the resolver,
+        and carries an undo. This is what makes auto-applying it safe on a public-IP line."""
+        self.assertIn("dns", AL.AUTO_SAFE)
+        r = AL.explain("Slow DNS: the router needs 800 ms per new name", "warning", "192.168.0.70", "192.168.0.1")
+        fix = next(a for a in r["auto"] if a["where"] == "router")
+        self.assertIn("allow-remote-requests=yes", fix["cmd"])
+        self.assertIn("dst-port=53", fix["cmd"])              # blocks DNS...
+        self.assertIn("action=drop", fix["cmd"])              # ...from
+        self.assertIn('dst-address="0.0.0.0/0"', fix["cmd"])  # the auto-detected WAN (default route)
+        self.assertIn("ND: block DNS from WAN", fix["cmd"])   # tagged so Reset removes it
+        self.assertTrue(fix["undo"])
 
     def test_exposed_fix_has_an_undo_even_though_not_auto_applied(self):
         """Not in AUTO_SAFE (stays a manual, one-click confirm - closing a port forward can break a
