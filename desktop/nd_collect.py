@@ -24,7 +24,6 @@ File formats written by the agent (endpoint/networkdoctor-agent.ps1, -Mode recor
 (file times are UTC; the share keeps them in <endpoint_dir>/collect/<PC NAME>/)
 """
 import collections
-import glob
 import json
 import os
 import re

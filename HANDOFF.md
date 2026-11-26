@@ -1,6 +1,6 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-26 (v4.71)_
+_Last updated: 2026-11-26 (v4.73)_
 
 ## Done (v4.65 — agent tamper protection, Sophos-style IT-only off switch)
 - Agent (`endpoint/networkdoctor-agent.ps1` → `$AgentVersion=1.3.0`, regenerated into `desktop/nd_agent.py`):
@@ -18,7 +18,9 @@ _Last updated: 2026-11-26 (v4.71)_
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
 
-## Done (v4.71 — Recorders: usage history keeps filling while the Network Doctor PC is off) — NOT RELEASED
+## Done (v4.73 — Recorders: usage history keeps filling while the Network Doctor PC is off)
+- This delivers the "phase 2" listed under v4.71 (always-on collection), built in `nd_collect.py` with raw-file
+  recorders and 10-second-slice dedup. `nd_collector.py` (v4.71 core) is left in place but is not wired in.
 - Cause of blank days (e.g. 22 and 25 Nov): the router sends NetFlow (UDP 2055) and the DNS log (syslog) ONLY to
   the IT PC; nothing stores it, so hours when that PC/app is off are lost. Those past days cannot be recovered.
 - Recorder = an office PC with the PC agent (v1.4.0, `-Mode recorder`). IT switches it on from Setup >
@@ -40,6 +42,40 @@ _Last updated: 2026-11-26 (v4.71)_
 - Tests: test_collect (20 + 2 Windows-only: PS parse + a real recorder end-to-end on the CI runner). Suite 938 OK on
   Linux. Import speed ~23 s for 540k flow records (6 h of 25 PCs).
 - Waiting on Rakesh: which PC(s) stay on; merge = release; then "Make recorder" applies the router change.
+
+## Done (v4.72 — Slow check: "too many heavy tabs" = browser, not network)
+- Real case: 8-10 Google Sheets tabs open, everything loads slowly, but speedtest is a full 100 Mbps. That is the
+  browser/PC overloaded, not the line. nd_slow.judge() now adds a finding when the agent reports memory ≥85% full
+  AND the browser (chrome/msedge/firefox/…) is the top memory user ≥1.5 GB: titled "Too many heavy tabs ... the
+  browser is the slow part, not the network", with real fixes (close sheets, Chrome Memory Saver, split big sheets,
+  8 GB RAM min). Uses data the agent already sends (hw.mem_used_pct, hw.top_procs) — no agent change. test_slow +2.
+  Suite 1076.
+
+## Done (v4.71 — SMB-leak auto-block + always-on collector core)
+TWO items this batch.
+1) SMB-to-internet block (open item: PC 192.168.0.27 sent SMB/445 to the internet).
+   - `nd_bandwidth.block_smb_to_internet(wan)` → drops outbound 445/139 (TCP) + 137/138 (UDP) on the WAN and
+     inbound on the router; tagged "ND: block SMB to internet" (Reset removes it); returns (script, undo). LAN
+     file sharing untouched (only WAN-bound traffic dropped).
+   - New alert recipe `smb_leak` in nd_alerts (matches "file sharing ... internet / worm / ransomware"), prio 1,
+     with a SELF-DETECTING-WAN auto script `AL.SMB_FIX`/`SMB_UNDO` (finds WAN from default route like DNS_FIX).
+     Added to AUTO_SAFE → the brain auto-blocks it on detection (nd_monitor already flags 445 outbound critical).
+   - test_smb_leak (4). Safe because SMB to the internet is always leak or malware.
+2) Always-on collector CORE (new feature, phase 1 — decided: runs on PC AGENTS not the router; main PC primary,
+   other agent PCs as backup; full app/site granularity).
+   - Problem: router streams NetFlow (UDP 2055) to ONE PC IP; when that PC is off, flows are lost = usage gap.
+   - `nd_collector.py`: each agent buffers received flows in its own SQLite (`CollectorBuffer`), deduped by a
+     DETERMINISTIC `flow_id = sha1(exporter,start_bucket,src,dst,sport,dport,proto)` so two agents that saw the
+     SAME NetFlow row compute the SAME id. `MergeState` merges all agents' buffers keeping each flow_id once
+     (NO double count) and tracks a per-agent watermark (last bucket merged) so a re-pull after a drop ingests
+     only new rows (resumable). `gaps(covered_sets=...)` reports minutes no agent covered (sees holes inside a run).
+   - test_collector (9): proves same-flow-across-two-agents = counted once (9000 not 18000), re-pull adds nothing,
+     agents cover each other's gaps, real gap reported. In SOURCE_FILES(.txt). Suite 1074 passed.
+   - NEXT (phase 2, not yet done): wire CollectorBuffer into the agent (receive NetFlow + buffer); make the
+     router send NetFlow to ALL agent IPs (multi-target); app pulls each agent's buffer on startup via the share
+     and feeds merged rows into UsageStore.add_flow; show a "coverage / gaps" line in Internet & Usage. Must map
+     collector rows → add_flow(lan, remote, port, proto, bytes, up, org) and ensure add_flow isn't double-fed
+     for buckets already received live (watermark covers the agent buffers; live NetFlow is the main PC's own path).
 
 ## Done (v4.70 — device classifier: a Windows PC on port 554 is no longer mis-filed as a camera)
 - Real bug (screenshot 26 Nov): "SAURABH" laptop (Windows RPC/NetBIOS/file-sharing, Intel vendor) showed under

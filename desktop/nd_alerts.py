@@ -27,7 +27,7 @@ SEV_PRIO = {"critical": 1, "warning": 3, "info": 4}
 # exposes anything. Kinds that block/expose a device (torrent, malware, exposed, rogue_dhcp, arp_spoof) or
 # touch DNS/UPnP are deliberately NOT here - those can affect a real user or widen what reaches this
 # network from outside, so they stay manual even with a clean track record.
-AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_full", "dns"}
+AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_full", "dns", "smb_leak"}
 
 # ---- DNS fix, hardened so it is safe to auto-apply ----
 # Pointing the router at fast public DNS needs allow-remote-requests=yes (so LAN PCs can ask it). On a line
@@ -57,6 +57,27 @@ DNS_FIX = (
 # to the ISP value by the per-fix undo the app captures at apply-time (see _auto_fix dns path); removing the
 # WAN block here never leaves the resolver exposed because allow-remote-requests is turned back with that.
 DNS_UNDO = ':do { /ip firewall filter remove [find where comment="ND: block DNS from WAN"] } on-error={}\n'
+
+# ---- SMB-to-internet block (safe to auto-apply) ----
+# Windows file sharing (SMB 445, NetBIOS 137-139) must never leave the LAN. Outbound to the internet is always a
+# data leak or malware (WannaCry/EternalBlue). This drops it on the WAN - found from the default route, so it
+# works on PPPoE/VLAN/ether - and never touches PC-to-PC sharing inside the LAN. Tagged ND so Reset/undo remove it.
+SMB_FIX = (
+    ':do { /ip firewall filter remove [find where comment="ND: block SMB to internet"] } on-error={}\n'
+    ":local wan [/ip route get [find where dst-address=\"0.0.0.0/0\" and active=yes] interface]\n"
+    ':if ([:len $wan] > 0) do={\n'
+    '  /ip firewall filter add chain=forward action=drop out-interface=$wan protocol=tcp dst-port=445,139 '
+    'comment="ND: block SMB to internet"\n'
+    '  /ip firewall filter add chain=forward action=drop out-interface=$wan protocol=udp dst-port=137,138 '
+    'comment="ND: block SMB to internet"\n'
+    '  /ip firewall filter add chain=input action=drop in-interface=$wan protocol=tcp dst-port=445,139 '
+    'comment="ND: block SMB to internet"\n'
+    '} else={\n'
+    '  /ip firewall filter add chain=forward action=drop dst-address=!192.168.0.0/16 protocol=tcp '
+    'dst-port=445,139 comment="ND: block SMB to internet"\n'
+    '}\n'
+)
+SMB_UNDO = ':do { /ip firewall filter remove [find where comment="ND: block SMB to internet"] } on-error={}\n'
 
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
@@ -513,6 +534,18 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                      "WinBox > Tools > Profile shows what uses the CPU.",
                      "Make sure FastTrack is on (IP > Firewall: 'fasttrack connection' rule)."],
                     auto=[("Show the router's CPU and load", "router_read", "/system resource print")])
+
+    if ("file sharing" in low or "smb" in low or " 445" in low) and \
+            ("internet" in low or "worm" in low or "ransomware" in low or "leak" in low):
+        return _fix(1, "smb_leak", "Windows file sharing is leaving the office (SMB to the internet)",
+                    "A PC is sending Windows file-sharing (SMB / port 445) out to the internet. That is never "
+                    "normal - it is either data being copied out of the office or a worm (WannaCry/EternalBlue) "
+                    "trying to spread. File sharing between office PCs stays on the LAN and is not affected.",
+                    "Block SMB / NetBIOS from leaving on the internet port.",
+                    ["Press 'Fix this on the router' to drop outbound 445/139 on the internet port (safe, "
+                     "LAN sharing keeps working).",
+                     "Then find the PC: Internet & Usage > find the device sending port 445 out, and scan it for malware."],
+                    auto=[("Block SMB to the internet on the router", "router", SMB_FIX, SMB_UNDO)])
 
     if "dns" in low and ("slow" in low or "fail" in low or "not answer" in low):
         return _fix(2, "dns", "Website names are slow / failing (DNS)",

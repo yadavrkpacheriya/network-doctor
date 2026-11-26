@@ -354,6 +354,32 @@ def camera_block_commands(cams, nvrs, wan):
     return "\n".join(a) + "\n", "\n".join(u) + "\n"
 
 
+def block_smb_to_internet(wan):
+    """Drop Windows file-sharing (SMB 445, NetBIOS 137-139) going OUT to the internet. SMB must never leave the
+    LAN - outbound 445/139 to the internet is always either a data leak (a PC copying files out) or malware
+    (WannaCry/EternalBlue-style spread). Safe for everyone; office file sharing between PCs is on the LAN and is
+    untouched (only traffic leaving on the WAN is dropped). Tagged "ND:" so Reset removes it; returns (script, undo).
+    Given the office's past data leak this closes a real exfiltration path. Needs the WAN interface name."""
+    if not wan:
+        raise ValueError("The internet port of the router (for example ether1 / pppoe-out1) is needed.")
+    f = "/ip firewall filter"
+    a = [_header("block SMB / NetBIOS to the internet"),
+         "# Windows file sharing (445, 137-139) must stay on the LAN. Leaving on the WAN = leak or malware.",
+         f, ':do {remove [find where comment="ND: block SMB to internet"]} on-error={}',
+         f'add chain=forward action=drop out-interface={wan} protocol=tcp dst-port=445,139 '
+         'comment="ND: block SMB to internet"',
+         f'add chain=forward action=drop out-interface={wan} protocol=udp dst-port=137,138 '
+         'comment="ND: block SMB to internet"',
+         "# also stop it reaching the router itself from the WAN side",
+         f'add chain=input action=drop in-interface={wan} protocol=tcp dst-port=445,139 '
+         'comment="ND: block SMB to internet"',
+         f'add chain=input action=drop in-interface={wan} protocol=udp dst-port=137,138 '
+         'comment="ND: block SMB to internet"']
+    u = [_header("UNDO block SMB to the internet"), f,
+         ':do {remove [find where comment="ND: block SMB to internet"]} on-error={}']
+    return "\n".join(a) + "\n", "\n".join(u) + "\n"
+
+
 def release_blocks_commands():
     """Switches off every block Network Doctor's auto-defense / phone app put on the router (rules commented
     'ND phone block ...' and 'ND isolate ...'). They are kept, marked 'ND-rel: ', so the UNDO switches them on again."""

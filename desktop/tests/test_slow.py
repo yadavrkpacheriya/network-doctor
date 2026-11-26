@@ -162,3 +162,23 @@ class Timing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManyHeavyTabs(unittest.TestCase):
+    """Real case (26 Nov): 8-10 Google Sheets tabs open, everything slow, but the 100 Mbps line is fine. This is
+    the browser overloading the PC, not the network - the check must say so and NOT blame the line."""
+    def _m(self, mem_pct, chrome_mb):
+        m = healthy()
+        m["device"]["hw"] = {"ram_gb": 8, "disk_free_gb": 100, "mem_used_pct": mem_pct,
+                             "top_procs": [{"name": "chrome", "mb": chrome_mb}, {"name": "explorer", "mb": 120}]}
+        return m
+
+    def test_many_tabs_flagged_as_browser_not_network(self):
+        titles = [x["title"] for x in S.judge(self._m(92, 4600))]
+        self.assertTrue(any("Too many heavy tabs" in t for t in titles))
+
+    def test_browser_light_or_memory_free_is_not_flagged(self):
+        # memory not full
+        self.assertFalse(any("Too many heavy tabs" in x["title"] for x in S.judge(self._m(55, 4600))))
+        # browser not heavy
+        self.assertFalse(any("Too many heavy tabs" in x["title"] for x in S.judge(self._m(92, 300))))
