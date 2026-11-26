@@ -67,3 +67,4 @@ nd_nvrmap.py
 nd_nvrseed.py
 nd_lanhealth.py
 nd_collector.py
+nd_collect.py

@@ -1,6 +1,6 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-26 (v4.65)_
+_Last updated: 2026-11-26 (v4.73)_
 
 ## Done (v4.65 — agent tamper protection, Sophos-style IT-only off switch)
 - Agent (`endpoint/networkdoctor-agent.ps1` → `$AgentVersion=1.3.0`, regenerated into `desktop/nd_agent.py`):
@@ -17,6 +17,31 @@ _Last updated: 2026-11-26 (v4.65)_
 - Honest limit: true kernel-level tamper protection needs a signed driver (not feasible here). This is the strong
   practical equivalent: SYSTEM tasks + watchdog self-heal + IT-only token uninstall + folder lockdown.
 - Tests: test_deploy +3 (hardening, secret line, agent uninstall logic). Suite 1041 passed, 15 skipped.
+
+## Done (v4.73 — Recorders: usage history keeps filling while the Network Doctor PC is off)
+- This delivers the "phase 2" listed under v4.71 (always-on collection), built in `nd_collect.py` with raw-file
+  recorders and 10-second-slice dedup. `nd_collector.py` (v4.71 core) is left in place but is not wired in.
+- Cause of blank days (e.g. 22 and 25 Nov): the router sends NetFlow (UDP 2055) and the DNS log (syslog) ONLY to
+  the IT PC; nothing stores it, so hours when that PC/app is off are lost. Those past days cannot be recovered.
+- Recorder = an office PC with the PC agent (v1.4.0, `-Mode recorder`). IT switches it on from Setup >
+  "Recorders" (writes `<share>/collect/on/<PC>.txt` with the agent secret + router: second traffic-flow target
+  `<pcip>:2056` v9 and log action `ndrec-<ip>` topics dns,!packet → `<pcip>:5516`). The app's own 2055 target and
+  `netdoctor` action are never touched. Agent remembers the switch locally (recorder.txt) so it keeps recording
+  while the share is off; starts at boot (ONSTART task), opens UDP 2056/5516 for localsubnet only.
+- Agent writes raw datagrams (no parsing in PS) to 10-min files `flow-YYYYMMDD-HHMM.ndf` / `dns-...txt` (UTC) +
+  `arp-YYYYMMDD.csv`, copies finished files to `<share>/collect/<PC>/` via .tmp+rename, status.txt every minute,
+  keeps 14 days locally, 2 GB cap; share probe backs off 5 min when the IT PC is off.
+- App (`nd_collect.py`): every 2 min imports new files through the SAME path as live (TrafficStore NAT/LAN
+  matching → UsageStore.add_flow with a separate `_Acc` tally, DNS lines → dns_log) so names/categories match.
+  Dedup: 10 s slices; router export clock (v5/v9/IPFIX header) used when within a day of arrival (PC clock skew
+  safe), else arrival. Slices the app received live (Coverage.note from Monitor.on_flow_raw / DNS lines) are never
+  imported; among recorders the fullest slice wins; imported slices + files remembered (cover / collect_files in
+  usage.db), templates persisted. Late/duplicate files never double count.
+- Reset: nd_reset "limits" removes flow targets on port 2056 + `ndrec-*` log actions; classify lists them.
+- Also fixed: the main app now flushes the last minute of usage at close.
+- Tests: test_collect (20 + 2 Windows-only: PS parse + a real recorder end-to-end on the CI runner). Suite 938 OK on
+  Linux. Import speed ~23 s for 540k flow records (6 h of 25 PCs).
+- Waiting on Rakesh: which PC(s) stay on; merge = release; then "Make recorder" applies the router change.
 
 ## Done (v4.72 — Slow check: "too many heavy tabs" = browser, not network)
 - Real case: 8-10 Google Sheets tabs open, everything loads slowly, but speedtest is a full 100 Mbps. That is the
