@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.74"
+VERSION = "4.75"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2550,6 +2550,7 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_dhcpgrow_t", 0) > 900:   # every 15 min: keep DHCP pool headroom so
                 self._dhcpgrow_t = time.time()                        # it never fills (auto-grow +20 when low)
                 threading.Thread(target=self._dhcp_headroom_check, daemon=True).start()
+            self._auto_name_traffic()  # keep DNS naming on (self-throttled to 30 min) so sites stay clear
             if time.time() - getattr(self, "_access_t", 0) > 600:     # devices blocked from joining (reply-only ARP)
                 self._access_t = time.time()
                 threading.Thread(target=self._access_poll, daemon=True).start()
@@ -2908,15 +2909,15 @@ class App(tk.Tk):
         self._auto_name_traffic()
 
     def _auto_name_traffic(self):
-        """Turn DNS naming ON automatically for everyone: if a lot of traffic has no name (the usage is 'blind'
-        because the router DNS log isn't arriving) and a router login is saved, apply the name-traffic fix once
-        so every device's sites get named - which feeds the usage data and the productivity learning (Rakesh,
-        26 Nov). Fires at most once per run and is skippable via settings auto_name_dns=False. Fully reversible
-        from the Assistant (it was applied there as 'naming')."""
-        if getattr(self, "_named_traffic_done", False):
-            return
+        """Turn DNS naming ON automatically for everyone and KEEP it on, so sites stay clear (no 'CDN (various)' /
+        'Unnamed servers'). If a lot of traffic has no name (usage is 'blind' because the router DNS log isn't
+        arriving) and a router login is saved, apply the name-traffic fix. RE-CHECKS every 30 min, not just once,
+        because this office's router reboots on power cuts and can lose the logging setting (Rakesh: sites still
+        not clear, 27 Nov). Skippable via auto_name_dns=False; fully reversible from the Assistant ('naming')."""
         if not self._settings().get("auto_name_dns", True):
             return
+        if time.time() - getattr(self, "_name_dns_t", 0) < 1800:
+            return                      # re-check at most every 30 min
         if self.usage is None or self.usage.dns_log_rx > 0:
             return                      # DNS log already arriving -> naming already works, nothing to do
         if self.usage.naming_blindness() < 0.25:
@@ -2924,6 +2925,8 @@ class App(tk.Tk):
         c = self.router_client(ask=False)
         if not c:
             return                      # no login -> can't; the Assistant shows the manual option
+        self._name_dns_t = time.time()
+        first = not getattr(self, "_named_traffic_done", False)
         self._named_traffic_done = True
 
         def work():
@@ -2931,11 +2934,12 @@ class App(tk.Tk):
                 apply_s, _undo = T.name_traffic_commands()
                 with c:
                     c.run_script(apply_s)
-                self.q.put(("call", lambda: self._log_event(
-                    "info", "DNS naming turned on automatically (so every device's sites get named for usage "
-                    "and productivity).", "Usage")))
+                if first:               # only log the first time so it isn't noisy on every re-check
+                    self.q.put(("call", lambda: self._log_event(
+                        "info", "DNS naming turned on automatically (so every device's sites get named for usage "
+                        "and productivity).", "Usage")))
             except Exception:  # noqa: BLE001
-                self._named_traffic_done = False   # let it retry next time if the apply failed
+                self._name_dns_t = 0    # let it retry on the next tick if the apply failed
         threading.Thread(target=work, daemon=True).start()
 
     def _tick_once(self):

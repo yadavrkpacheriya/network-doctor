@@ -2,6 +2,19 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.75 — dashboard: 4 top-10 charts + keep DNS naming on so sites stay clear)
+- Rakesh (27 Nov): dashboard still missing the top-10 charts he asked for, and site names still vague.
+- Added 4 charts to usage-dashboard (nd_usage.dashboard_html): Top 10 users, Top 10 websites, Top 10 productive
+  apps/sites, Top 10 unproductive apps/sites. New generic `hbar(boxId,rows,empty)` SVG bar helper + draw fns
+  (drawTopUsers/Sites/Prod/Unprod, topByCat merges named sites+apps by category). Wired into draw(). All
+  client-side from existing D.apps/D.sites/D.act — no new data. test_usage asserts all 4 present.
+- Site clarity: names come from the router DNS log; vague buckets ("CDN (various)"/"Unnamed servers") dominate
+  when DNS logging isn't arriving. `_auto_name_traffic()` changed from ONCE-per-run to a 30-min RE-CHECK (new
+  `_name_dns_t` throttle, called from the tick): if blindness ≥25% and dns_log_rx==0 and a router login is saved,
+  it re-applies the naming fix. This matters because the office router reboots on power cuts and loses the logging
+  setting — now it self-restores. Still guarded by auto_name_dns setting, logs only on first apply.
+- Suite 1101 passed.
+
 ## Done (v4.74 — DHCP-full PERMANENT cure: reclaim stale IPs, then auto-grow the pool)
 - Rakesh (27 Nov): fix DHCP pooling permanently through the brain so it never repeats; if more IPs are needed add
   20 more, itself; and free the OLD IP a rotated-MAC phone left behind BEFORE adding new ones.

@@ -1588,6 +1588,10 @@ td.n{text-align:right}.score{display:inline-block;height:8px;border-radius:4px;b
  <div class="card c4"><h2>What the advisor learned</h2><div id="ins" class="scroll"></div></div>
  <div class="card c6"><h2>Apps by traffic</h2><div class="legend" id="lg2"></div><div id="ch_apps"></div></div>
  <div class="card c6"><h2>When the line is busy (average per weekday and hour)</h2><div id="ch_heat"></div></div>
+ <div class="card c6"><h2>Top 10 users <span class="sub">- by internet used</span></h2><div id="ch_topusers"></div></div>
+ <div class="card c6"><h2>Top 10 websites <span class="sub">- by internet used</span></h2><div id="ch_topsites"></div></div>
+ <div class="card c6"><h2>Top 10 productive apps / sites</h2><div id="ch_topprod"></div></div>
+ <div class="card c6"><h2>Top 10 unproductive apps / sites</h2><div id="ch_topunprod"></div></div>
  <div class="card c7"><h2>Devices and users <span class="sub">- click a row to see only that device</span></h2><div class="scroll"><table id="t_dev"></table></div></div>
  <div class="card c5"><h2>Websites</h2><div class="scroll"><table id="t_sites"></table></div></div>
 </div>
@@ -1683,6 +1687,37 @@ function drawSites(){
  rows.map(r=>`<tr><td>${esc(r.s)}<div class="sub">${esc(r.a)}</div></td><td><span class="tag"><i class="sw" style="background:${col(r.c)}"></i>${LBL[r.c]}</span></td><td class="n">${fmtB(r.b)}</td><td class="n">${r.v||""}</td><td class="n">${r.devs.size}</td></tr>`).join("")+`</tbody>`;
  if(!rows.length)t.innerHTML='<tr><td class="empty">No website names yet. They come from the router\'s DNS cache (router login in Setup) or the website firewall.</td></tr>'}
 
+// generic top-10 horizontal bar: rows = [{label, b(bytes), c(category colour key)}], already sorted desc.
+function hbar(boxId,rows,empty){
+ const box=document.getElementById(boxId);
+ if(!rows||!rows.length){box.innerHTML='<div class="empty">'+empty+'</div>';return}
+ const W=560,rh=24,L=170,H=rows.length*rh+4,mx=rows[0].b||1;let g="";
+ rows.forEach((r,i)=>{const y=i*rh+2,w=Math.max(2,(W-L-80)*r.b/mx),lab=r.label||"?";
+  g+=`<text x="${L-8}" y="${y+15}" text-anchor="end" style="fill:${css('--text-primary')}">${esc(lab.length>26?lab.slice(0,25)+"…":lab)}</text>`;
+  g+=`<path class="bar" d="M${L},${y+4} h${w-4} a4,4 0 0 1 4,4 v${rh-16} a4,4 0 0 1 -4,4 h${-(w-4)} z" fill="${col(r.c||'neutral')}" data-tip="${esc(`<b>${esc(lab)}</b><br>${r.c?LBL[r.c]+'<br>':''}${fmtB(r.b)}`)}"/>`;
+  g+=`<text x="${L+w+6}" y="${y+15}">${fmtB(r.b)}</text>`});
+ box.innerHTML=svgEl(W,H,g);bind(box)}
+
+function drawTopUsers(){
+ const m=new Map();D.apps.forEach(([d,dv,a,c,b])=>{if(keep(d,dv))m.set(dv,(m.get(dv)||0)+b)});
+ const rows=[...m.entries()].sort((x,y)=>y[1]-x[1]).slice(0,10).map(([dv,b])=>({label:devName(dv),b,c:"work"}));
+ hbar("ch_topusers",rows,"No users recorded for this selection yet.")}
+
+function drawTopSites(){
+ const m=new Map();D.sites.forEach(([d,dv,s,a,c,b])=>{if(keep(d,dv)){const r=m.get(s)||{b:0,c};r.b+=b;m.set(s,r)}});
+ const rows=[...m.entries()].sort((x,y)=>y[1].b-x[1].b).slice(0,10).map(([s,r])=>({label:s,b:r.b,c:r.c}));
+ hbar("ch_topsites",rows,"No website names yet - add the router login in Setup so DNS names are captured.")}
+
+// top productive / unproductive: merge named sites + apps, keep the wanted category, sum by name.
+function topByCat(cat){
+ const m=new Map();
+ D.sites.forEach(([d,dv,s,a,c,b])=>{if(keep(d,dv)&&c===cat){m.set(s,(m.get(s)||0)+b)}});
+ D.apps.forEach(([d,dv,a,c,b])=>{if(keep(d,dv)&&c===cat&&a&&a!=="Other"){m.set(a,(m.get(a)||0)+b)}});
+ return [...m.entries()].sort((x,y)=>y[1]-x[1]).slice(0,10).map(([label,b])=>({label,b,c:cat}))}
+
+function drawTopProd(){hbar("ch_topprod",topByCat("work"),"No productive traffic recorded yet - mark work apps in Usage.")}
+function drawTopUnprod(){hbar("ch_topunprod",topByCat("personal"),"No unproductive traffic recorded yet.")}
+
 function drawKpi(){
  let b=0,w=0,p=0;const h=new Array(24).fill(0);const devs=new Set();
  D.apps.forEach(([d,dv,a,c,x])=>{if(keep(d,dv)){b+=x;devs.add(dv)}});D.act.forEach(([d,dv,c,mn])=>{if(keep(d,dv)){if(c==="work")w+=mn;if(c==="personal")p+=mn}});
@@ -1702,7 +1737,8 @@ function fillSelects(){const dv=document.getElementById("dev"),dp=document.getEl
 function draw(){document.querySelectorAll("#period button").forEach(b=>b.setAttribute("aria-pressed",+b.dataset.d===st.days));
  document.getElementById("sub").textContent=`Data ${D.start} to ${D.end} · made ${D.generated}`;
  document.getElementById("note").textContent=st.dev?"Showing: "+devName(st.dev):"";
- legend("lg1");legend("lg2");drawKpi();drawTime();drawApps();drawHeat();drawDevices();drawSites();drawInsights()}
+ legend("lg1");legend("lg2");drawKpi();drawTime();drawApps();drawHeat();drawDevices();drawSites();drawInsights();
+ drawTopUsers();drawTopSites();drawTopProd();drawTopUnprod()}
 fillSelects();draw();matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);
 </script></body></html>"""
 

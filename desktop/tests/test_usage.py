@@ -38,3 +38,21 @@ def test_naming_blindness_detects_unnamed_traffic():
         db.execute("INSERT INTO usage(day,hour,app,cat,dev,up,down,site) VALUES(?,?,?,?,?,?,?,?)",
                    (today, 10, "Google Docs", "work", "d1", 1000, 0, "docs.google.com"))
     assert s.naming_blindness() >= 0.25        # 90% unnamed -> blind, auto-naming should trigger
+
+
+def test_dashboard_has_all_four_top10_charts():
+    """Rakesh (27 Nov): dashboard must show top-10 users, top-10 sites, top-10 productive, top-10 unproductive."""
+    import tempfile, os, time
+    import nd_usage as U
+    d = tempfile.mkdtemp()
+    s = U.UsageStore(os.path.join(d, "u.db"))
+    now = time.time()
+    s.add_flow("192.168.0.57", "142.250.1.1", 443, 6, 5_000_000, False, "google.com", now)
+    s.add_flow("192.168.0.58", "31.13.1.1", 443, 6, 9_000_000, False, "instagram.com", now)
+    html = U.dashboard_html(s)
+    for cid in ("ch_topusers", "ch_topsites", "ch_topprod", "ch_topunprod"):
+        assert cid in html, cid
+    for fn in ("drawTopUsers", "drawTopSites", "drawTopProd", "drawTopUnprod", "function topByCat", "function hbar"):
+        assert fn in html, fn
+    # all four are wired into draw()
+    assert "drawTopUsers();drawTopSites();drawTopProd();drawTopUnprod()" in html
