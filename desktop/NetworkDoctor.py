@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.82"
+VERSION = "4.83"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -6597,9 +6597,15 @@ class App(tk.Tk):
                             "apps": [dict(x, trusted=self.usage.is_trusted(x["app"])) for x in sm["apps"][:25]],
                             "sites": [dict(x, site=US.pretty_site(x["site"])) for x in sm["sites"][:25]],
                             "devices": sm["devices"][:60]}
+                # names for device IPs, so the phone can show "Rahul" not "192.168.0.57" in the top-users chart
+                dnames = {d.get("ip"): (d.get("name") or d.get("ip")) for d in list(self.devices)}
+                heavy = [dict(h, name=dnames.get(h["dev"], h["dev"])) for h in self.usage.heavy_downloads(days=14)]
                 out = {"today": cut(self.usage.summary(1)), "week": cut(self.usage.summary(7)),
                        "insights": self.usage.insights(), "labels": US.CAT_LABEL,
-                       "trusted_apps": self.usage.trusted_apps()}
+                       "trusted_apps": self.usage.trusted_apps(),
+                       # newest PC features for the phone: occasional heavy-download sites (movie/game) + the
+                       # top-10 lists are derived on the phone from week apps/sites/devices already sent above.
+                       "heavy": heavy[:30], "dev_names": dnames}
             except Exception:
                 out = None
         self._usage_snap_cache = (time.time(), out)

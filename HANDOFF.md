@@ -2,6 +2,18 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.83 + mobile 1.40.0 — bring newest usage features to the phone; parity audit)
+- Rakesh (27 Nov): wants ALL PC-app functions on mobile. AUDIT finding: the paired mobile app ALREADY has most of
+  it via /api/state + snapshot - Problems, Devices, Alerts, Live monitor, Usage (apps/sites/devices/insights),
+  Slow-website, Ping/traceroute, Security (auto-defense, network guard, block sites), Router commands, Command
+  library, Clean, NVR, Wi-Fi password. Real gaps were the NEWEST usage features: top-10 charts + heavy-downloads.
+- Added `heavy` (occasional movie/game download sites, with device names) + `dev_names` to _usage_snapshot() so
+  the phone receives them. Mobile UsageTab (pc_more.dart) now shows a "Heavy downloads to review" card (red when
+  block-suggested) with data/hours/days + how to block. Phone-incapable PC features (packet sniff/SNI, agent
+  deploy, LeakWatch) stay PC-only by nature. Suite 1127; mobile 1.40.0+50.
+- NEXT if he wants more phone parity: top-10 bar charts on mobile (derive from week apps/sites already sent), and
+  a mobile "heavy downloads → block" action calling /api/action.
+
 ## Done (v4.82 — "Forgot password" OFFICIAL reset guide (NOT a cracker))
 - Rakesh (27 Nov) asked for a password cracker for his cameras/Wi-Fi/PC. DECLINED a cracker: a brute-forcer works
   identically on networks that aren't his, so it's never built. Gave the legitimate owner-recovery path instead.

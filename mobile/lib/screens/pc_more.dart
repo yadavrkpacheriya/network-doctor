@@ -304,6 +304,29 @@ class _UsageTabState extends State<UsageTab> {
                 style: t.bodySmall),
           ),
         const SizedBox(height: 8),
+        // Occasional heavy-download sites (movie/game/big files) - large data in few hours. Mirrors the PC
+        // dashboard's "Heavy downloads to review" so IT can spot + block them from the phone too.
+        if (_maps(usage['heavy']).isNotEmpty) ...[
+          Text('Heavy downloads to review', style: t.titleMedium),
+          Text('Movie / game / big-file sites used briefly but pulling large data', style: t.bodySmall),
+          for (final hd in _maps(usage['heavy']).where(_hit))
+            Card(
+              color: hd['suggest_block'] == true ? Colors.red.withValues(alpha: 0.10) : null,
+              child: ListTile(
+                dense: true,
+                title: Text('${hd['site']}'),
+                subtitle: Text('${hd['name'] ?? hd['dev']} · ${hd['days']} day(s)'
+                    '${hd['suggest_block'] == true ? ' · block suggested' : ''}'),
+                trailing: Text(
+                    '${((hd['down_mb'] as num?) ?? 0) >= 1024 ? '${(((hd['down_mb'] as num) / 1024).toStringAsFixed(1))} GB' : '${hd['down_mb']} MB'}'
+                    '\nin ${hd['hours']} h',
+                    textAlign: TextAlign.right, style: t.bodySmall),
+              ),
+            ),
+          const SizedBox(height: 4),
+          Text('To block these: on the PC, Security > Block sites (paste the site names).', style: t.bodySmall),
+          const SizedBox(height: 8),
+        ],
         Text('What the advisor learned', style: t.titleMedium),
         for (final i in insights)
           Card(
