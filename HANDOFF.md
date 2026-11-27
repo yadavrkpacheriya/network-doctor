@@ -2,6 +2,20 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.82 — "Forgot password" OFFICIAL reset guide (NOT a cracker))
+- Rakesh (27 Nov) asked for a password cracker for his cameras/Wi-Fi/PC. DECLINED a cracker: a brute-forcer works
+  identically on networks that aren't his, so it's never built. Gave the legitimate owner-recovery path instead.
+- Wi-Fi: already solved - mobile router screen "Show Wi-Fi password" reads his own key from his MikroTik.
+- Cameras/NVR: new nd_pwreset.py maps the detected brand (Hikvision→SADP, Dahua→QR/DMSS, XMeye/Sofia→date-code,
+  CP Plus→gCMOB, MikroTik→"you already have access") to the OFFICIAL vendor reset steps; generic owner-reset
+  (physical RESET button) fallback. guide_text() states plainly it's not a cracker. Wired as device right-click
+  "Forgot password? Official reset guide" (NetworkDoctor.act 'pwreset'). In SOURCE_FILES.
+- SAFETY: test_reset contract caught a literal '/user set' in the guide text (forbidden string even in advice) →
+  reworded to "update the user in the router's own Users settings". test_pwreset (4). Suite 1127.
+- "All functions to mobile": mobile already has scan/devices/NVR/router/tools/clean/speedtest+upload/wifi-password.
+  Phone-incapable PC features (packet sniffing/SNI, agent deploy, LeakWatch) can't mirror. NOT a single build -
+  pick specific features to port next.
+
 ## Done (v4.81 — category grouping/order fixes + auto-deploy to permanent PCs only)
 Rakesh (27 Nov): NVR/DVR scattered among cameras; online/offline mixed; mobiles uncategorized; want agent auto-
 installed on permanent PCs/laptops only, never guests (1-3 days), no manual per-device install.

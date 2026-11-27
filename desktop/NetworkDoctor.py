@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.81"
+VERSION = "4.82"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3608,6 +3608,7 @@ class App(tk.Tk):
                        ("Port scan", "ports"), ("Website / server check", "webcheck"),
                        ("Watch: alert if it stops answering", "watch"),
                        ("Open shared folders", "share"), ("Remote Desktop", "rdp"), ("Wake on LAN", "wol"),
+                       ("Forgot password? Official reset guide", "pwreset"),
                        (None, None), ("Block internet (keep local network)", "block"), ("Unblock", "unblock"),
                        (None, None), ("Copy IP", "cip"), ("Copy MAC", "cmac"), ("Copy all details", "call")):
             if lab is None:
@@ -3684,6 +3685,12 @@ class App(tk.Tk):
                 PingWindow(self, ip, d["name"])
             elif what == "web":
                 self.open_web(d)
+            elif what == "pwreset":
+                import nd_pwreset as PR
+                blob = " ".join(str(x) for x in (d.get("vendor", ""), d.get("name", ""),
+                                                 (d.get("http") or {}).get("title", ""),
+                                                 (d.get("http") or {}).get("server", ""), d.get("category", "")))
+                messagebox.showinfo(APP, PR.guide_text(blob))
             elif what == "trace":
                 self.trace(d)
             elif what == "label":
