@@ -2,6 +2,16 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.80 — Slow check flags UPLOAD saturation (small uploads/downloads crawl))
+- Rakesh (27 Nov): WhatsApp image downloads + Claude uploads very slow on Wi-Fi. Cause pattern: office/home lines
+  have a small UPLOAD; a backup/upload fills it and even downloads slow (their ACKs can't get out). nd_slow.judge()
+  now flags "Upload is nearly full (X Mbps going out)" when up > 80% of up-capacity (or >8 Mbps with no known
+  cap), names the top uploader (line.up_top added to measure()), points to the smart queue + backup scheduling.
+  line now carries up_capacity_mbps (ctx.up_mbps) + up_top. test_slow +2. Suite 1118.
+- Phone screenshot showed Download 50 / Upload 16 on a 100 Mbps plan over Wi-Fi. Likely Wi-Fi hop limit, not the
+  line (wired PC hit 90-100 earlier). NEXT: add a Wi-Fi-vs-line verdict to the phone speedtest (compare phone
+  Wi-Fi result vs the known wired plan → say "this is your Wi-Fi, move closer / use 5GHz" vs "the line").
+
 ## Done (mobile 1.38.0+48 — update check names the real cause when GitHub is unreachable)
 - Rakesh (27 Nov): phone app "Could not reach GitHub" on Wi-Fi. SAME root cause as the banking app - this Wi-Fi's
   DNS failing (works on mobile data). checkForUpdate now: retries via the releases page host, and if that fails,

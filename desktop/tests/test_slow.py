@@ -182,3 +182,22 @@ class ManyHeavyTabs(unittest.TestCase):
         self.assertFalse(any("Too many heavy tabs" in x["title"] for x in S.judge(self._m(55, 4600))))
         # browser not heavy
         self.assertFalse(any("Too many heavy tabs" in x["title"] for x in S.judge(self._m(92, 300))))
+
+
+class UploadSaturation(unittest.TestCase):
+    """Small WhatsApp images / Claude uploads crawl on a fast line when UPLOAD is full (office lines have a small
+    upload; a backup fills it and even downloads slow). The check must name this, not just 'line is full' (Rakesh)."""
+    def _m(self, up_bps, up_cap=0):
+        m = healthy()
+        m["line"] = {"have_flows": True, "up_bps": up_bps, "up_capacity_mbps": up_cap,
+                     "up_top": [("Rahul", "192.168.0.57", up_bps)], "top": [("Rahul", "192.168.0.57", up_bps)],
+                     "capacity_mbps": 100, "down_bps": 3_000_000}
+        return m
+
+    def test_upload_full_is_flagged(self):
+        titles = [x["title"] for x in S.judge(self._m(12_000_000, up_cap=10))]
+        self.assertTrue(any("Upload is nearly full" in t for t in titles))
+
+    def test_low_upload_not_flagged(self):
+        titles = [x["title"] for x in S.judge(self._m(1_000_000))]
+        self.assertFalse(any("Upload is nearly full" in t for t in titles))

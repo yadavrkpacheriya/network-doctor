@@ -243,11 +243,15 @@ def measure(url, device, ctx, progress=lambda pct, text: None, stop=None, loaded
     mon = ctx.get("mon")
     rates = mon.traffic.rates(60) if mon and mon.last_flow else {}
     names = {d.get("ip"): d.get("name") or d.get("ip") for d in ctx.get("devices") or []}
-    m["line"] = {"capacity_mbps": ctx.get("line_mbps"), "have_flows": bool(rates),
+    m["line"] = {"capacity_mbps": ctx.get("line_mbps"), "up_capacity_mbps": ctx.get("up_mbps"),
+                 "have_flows": bool(rates),
                  "down_bps": sum(r["down_bps"] for r in rates.values()) * 8,
                  "up_bps": sum(r["up_bps"] for r in rates.values()) * 8,
                  "top": [(names.get(ip, ip), ip, (r["down_bps"] + r["up_bps"]) * 8)
-                         for ip, r in sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:5]]}
+                         for ip, r in sorted(rates.items(), key=lambda x: -(x[1]["down_bps"] + x[1]["up_bps"]))[:5]],
+                 "up_top": [(names.get(ip, ip), ip, r["up_bps"] * 8)
+                            for ip, r in sorted(rates.items(), key=lambda x: -x[1]["up_bps"])[:5]
+                            if r["up_bps"] > 0]}
     if device:
         dv = {"name": device.get("name") or device.get("ip"), "ip": device.get("ip"),
               "category": device.get("category", ""), "mac": device.get("mac", ""), "self": bool(device.get("self"))}
@@ -445,6 +449,27 @@ def judge(m):
         out.append(_f("info", "Cannot see whether the line is full", "Low",
                       ["no traffic data (NetFlow) from the router"],
                       ["Setup > Apply router settings now, then run this check again."], "open:setup", 10))
+    # ---- UPLOAD saturation: small WhatsApp images / Claude uploads crawl even on a fast line, because office/
+    # home lines have a MUCH smaller UPLOAD than download, and it fills first and silently. A big backup (Acronis)
+    # or one user uploading saturates upload, and then EVERYTHING feels slow - even downloads, because their
+    # acknowledgements can't get out. We flag it from the live upload rate + who is uploading most.
+    up_mbps = line.get("up_bps", 0) / 1e6
+    up_cap = line.get("up_capacity_mbps") or 0
+    hog_up = line.get("up_top") or []
+    heavy_up = (up_cap and up_mbps > 0.8 * up_cap) or (not up_cap and up_mbps > 8)
+    if heavy_up and line.get("have_flows"):
+        who = hog_up[0] if hog_up else None
+        out.append(_f("critical" if (up_cap and up_mbps > 0.9 * up_cap) else "warning",
+                      f"Upload is nearly full ({up_mbps:.1f} Mbps going out) - this is why uploads AND downloads feel slow",
+                      "High",
+                      ([f"{who[0]} ({who[1]}) is uploading {who[2] / 1e6:.1f} Mbps"] if who else []) +
+                      ["office/home lines have a small upload; when it fills, small WhatsApp images and Claude "
+                       "uploads crawl, and downloads slow too (their replies can't get out)",
+                       "the Acronis backup is the usual cause in work hours"],
+                      ["Give work traffic priority so a backup/upload can't choke everyone: apply the smart queue "
+                       "(button below) - it keeps interactive traffic fast while the backup runs.",
+                       "Schedule big backups/uploads for after office hours if you can."],
+                      "queue_fair", 88))
     ld = m.get("loaded") or {}
     if ld.get("idle") and ld.get("busy") and ld["busy"] - ld["idle"] > 100:
         out.append(_f("warning", f"Delay jumps to {ld['busy']:.0f} ms when the line is busy (bufferbloat)", "High",

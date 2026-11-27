@@ -51,6 +51,21 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
   double get _speedPeak =>
       _speedHist.isEmpty ? 0 : _speedHist.whereType<double>().fold(0.0, (a, b) => a > b ? a : b);
 
+  /// An honest read of a finished Wi-Fi speed test: is a low number the Wi-Fi hop or the internet line? A phone
+  /// on Wi-Fi rarely gets the full wired plan - distance, 2.4GHz and congestion cap it - so a result well under a
+  /// typical plan usually means Wi-Fi, and the real test is a WIRED PC. We can't know the plan, so we guide, not
+  /// accuse. (Rakesh, 27 Nov: 50/16 on a 100 Mbps plan over Wi-Fi.)
+  String _speedVerdict() {
+    final d = _mbps;
+    if (d >= 80) return 'Good speed on Wi-Fi. The line and Wi-Fi are both fine here.';
+    if (d >= 40) {
+      return 'This is a normal Wi-Fi speed for a phone - usually the Wi-Fi hop, not the line. To check the line '
+          'itself, run a speed test on a PC plugged in by cable; if that is also low, it is the internet plan.';
+    }
+    return 'Low for a phone. Most likely weak Wi-Fi (move closer to the router, or use the 5 GHz Wi-Fi name). '
+        'Test a cabled PC too - if that is full speed, the line is fine and only the Wi-Fi needs work.';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -295,6 +310,8 @@ class _ScanScreenState extends State<ScanScreen> with AutomaticKeepAliveClientMi
                   ),
                   if (_speedErr.isNotEmpty)
                     Text(_speedErr, style: TextStyle(color: Colors.red.shade700, fontSize: 12))
+                  else if (!_speedRunning && _mbps > 0)
+                    Text(_speedVerdict(), style: Theme.of(context).textTheme.bodySmall)
                   else if (!_speedRunning && _mbps == 0)
                     Text('Live download speed - works on Wi-Fi or mobile data',
                         style: Theme.of(context).textTheme.bodySmall),
