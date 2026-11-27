@@ -1109,8 +1109,11 @@ def categorize(d, gw):
         return CAT_IOT, "smart TV / IoT (" + (up.get("modelName") or up.get("manufacturer") or d["vendor"] or "UPnP") + ")"
     if _has(v, V_PC):
         return CAT_PC, "PC network-card brand"
-    if d["random"] and not p:
-        return CAT_PHONE, "randomized MAC, no services (typical phone)"
+    if d["random"] and not (p - {5353, 5355, 1900, 62078, 49152, 49153}):
+        # a randomized MAC with no server-style ports (only phone-typical mDNS/UPnP/Bonjour chatter) is a phone -
+        # Android/iOS rotate their MAC and rarely expose real services. This catches phones that briefly open a
+        # discovery port and used to fall through to Unknown (Rakesh, 27 Nov: mobiles not categorized).
+        return CAT_PHONE, "randomized MAC, only phone-style chatter (typical Android / iPhone)"
     ttl = d.get("ttl")
     if ttl and ttl > 128:
         return CAT_NET, f"TTL {ttl} (typical of network equipment)"

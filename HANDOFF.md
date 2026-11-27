@@ -2,6 +2,21 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.81 — category grouping/order fixes + auto-deploy to permanent PCs only)
+Rakesh (27 Nov): NVR/DVR scattered among cameras; online/offline mixed; mobiles uncategorized; want agent auto-
+installed on permanent PCs/laptops only, never guests (1-3 days), no manual per-device install.
+- GROUPING (NetworkDoctor device tree): within each category, online devices sort ABOVE offline; in the CCTV
+  group, DVR/NVR (core.cctv_role=='nvr') sort above plain cameras; new/unchecked still float to the group top.
+- PHONES: categorize() random-MAC rule widened - a randomized MAC with only phone-style chatter ports
+  (5353/5355/1900/62078/49152/49153) is a Phone (was: only random+NO-ports). random+server-port (445) stays PC.
+- AUTO-DEPLOY (nd_deploy.is_permanent / permanent_targets): permanent = CAT_PC seen across >=5 days (first_seen..
+  last_seen span); guests (1-3 days) and non-computers excluded. NetworkDoctor._auto_deploy_permanent() runs
+  hourly, gated behind the new `auto_deploy_agent` setting + a saved admin login; skips PCs whose agent checked in
+  within 48h (nd_endpoint.recent_agent_ips); installs only on the rest. New Setup checkbox "Auto-install on
+  permanent PCs (skip guests)". This is the only place the app installs software unattended - opt-in + admin-login
+  gated, same creds as manual deploy.
+- Tests: test_permanent_deploy (5), test_pc_not_camera still green. Suite 1123.
+
 ## Done (v4.80 — Slow check flags UPLOAD saturation (small uploads/downloads crawl))
 - Rakesh (27 Nov): WhatsApp image downloads + Claude uploads very slow on Wi-Fi. Cause pattern: office/home lines
   have a small UPLOAD; a backup/upload fills it and even downloads slow (their ACKs can't get out). nd_slow.judge()

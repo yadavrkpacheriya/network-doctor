@@ -183,6 +183,28 @@ def read_reports(folder):
     return uniq
 
 
+def recent_agent_ips(folder, hours=48, now=None):
+    """IPs of PCs whose agent reported within the last `hours` (their pc-*.json file is fresh). Used by auto-deploy
+    to skip PCs that already run the agent (it self-updates), so it only installs on machines that still need it."""
+    import time as _t
+    cutoff = (now or _t.time()) - hours * 3600
+    ips = set()
+    for path in [p for d in _dirs(folder) for p in glob.glob(os.path.join(d, "pc-*.json"))]:
+        try:
+            if os.path.getmtime(path) < cutoff:
+                continue
+            with open(path, encoding="utf-8-sig", errors="replace") as fh:
+                data = _json.load(fh)
+        except (OSError, ValueError):
+            continue
+        for a in (data.get("adapters") if isinstance(data, dict) else None) or []:
+            for one in str((a or {}).get("ip") or "").split(","):
+                one = one.strip()
+                if one.startswith(("192.168.", "10.", "172.")):
+                    ips.add(one)
+    return ips
+
+
 def read_conns(folder, since_days=1, now=None):
     """The conn-*.csv rows (process <-> remote address) from the last `since_days`. Newest first."""
     now = now or time.time()

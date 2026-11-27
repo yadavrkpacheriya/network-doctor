@@ -302,6 +302,50 @@ def _deploy_target(t, creds, central, src_dir, run, place):
     return res
 
 
+def is_permanent(dev, db, min_days=5, now=None):
+    """True if this device looks like a PERMANENT office PC/laptop, not a 1-3 day guest (Rakesh, 27 Nov: auto
+    install on permanent machines only, never guest devices). Permanent = a Computer category AND seen across at
+    least `min_days` days (the span from first_seen to last_seen). A guest laptop that appears for 1-3 days has a
+    short span and is skipped; once it has been around long enough it qualifies on its own, no manual list."""
+    import datetime as _dt
+    from nd_core import CAT_PC
+    if dev.get("category") != CAT_PC:
+        return False
+    mac = dev.get("mac")
+    h = (db.get("devices") or {}).get(mac) if mac else None
+    first = (h or {}).get("first_seen") or dev.get("first_seen") or ""
+    last = (h or {}).get("last_seen") or ""
+    if not first:
+        return False
+
+    def _d(s):
+        try:
+            return _dt.datetime.strptime(s[:16], "%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            return None
+    f = _d(first)
+    l = _d(last) or (_dt.datetime.now() if now is None else now)
+    if not f:
+        return False
+    return (l - f).days >= min_days
+
+
+def permanent_targets(devices, db, min_days=5):
+    """From the live device list, the PCs/laptops worth auto-installing the agent on: permanent, online, with an
+    IP, de-duplicated by MAC. Guests and non-computers are left out. Returns [{ip, name, mac}]."""
+    seen, out = set(), []
+    for d in devices:
+        if not d.get("online") or not d.get("ip"):
+            continue
+        mac = d.get("mac") or d.get("ip")
+        if mac in seen:
+            continue
+        if is_permanent(d, db, min_days=min_days):
+            seen.add(mac)
+            out.append({"ip": d["ip"], "name": d.get("name", d["ip"]), "mac": d.get("mac", "")})
+    return out
+
+
 def deploy_all(targets, creds, central, src_dir, run=_run, place=None, progress=None, workers=8):
     """Install on every target, trying each saved credential until one works. `creds` is [(label,user,pw)].
     PCs run in parallel (default 8 at a time) so a few offline machines - each capped at the per-command

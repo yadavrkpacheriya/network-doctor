@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.80"
+VERSION = "4.81"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2039,6 +2039,9 @@ class App(tk.Tk):
                    command=self._make_enabler).pack(side="left", padx=4)
         ttk.Button(dep, text="Allow agent removal (tamper-off)",
                    command=self._allow_agent_removal).pack(side="left", padx=4)
+        self.var_autodeploy = tk.BooleanVar(value=bool(self._settings().get("auto_deploy_agent", False)))
+        ttk.Checkbutton(dep, text="Auto-install on permanent PCs (skip guests)", variable=self.var_autodeploy,
+                        command=self._toggle_autodeploy).pack(side="left", padx=10)
         self.var_dep_info = tk.StringVar(value=self._agent_cred_summary())
         ttk.Label(f, textvariable=self.var_dep_info, foreground="#0f766e").pack(anchor="w", padx=8)
         ttk.Label(f, text="Saves an encrypted Windows admin login and installs the agent on every online PC over "
@@ -2215,6 +2218,53 @@ class App(tk.Tk):
                             "  - Drop it in each PC's Startup folder once.\n\n"
                             "After a PC runs it once, Network Doctor reaches it remotely from then on and the "
                             "agent self-updates from the share - no more per-PC visits.")
+
+    def _toggle_autodeploy(self):
+        on = self.var_autodeploy.get()
+        self._settings()["auto_deploy_agent"] = on
+        self._save_settings()
+        if on and not DP.admin_creds(self._settings().get("admin_logins") or []):
+            messagebox.showinfo(APP, "Auto-install is on. Save an admin login above so it can reach the PCs - "
+                                     "then it installs the agent on permanent PCs by itself, skipping guests.")
+
+    def _auto_deploy_permanent(self):
+        """Automatically install the agent on PERMANENT office PCs/laptops (seen across 5+ days), never on guest
+        devices that appear for 1-3 days (Rakesh, 27 Nov: install on all permanent PCs by itself, not manually,
+        skip guests). Only runs when the user turned it on (auto_deploy_agent) AND an admin login is saved. It
+        targets permanent PCs that have NOT checked in as an agent recently, so it won't re-install endlessly.
+        Runs hourly off the UI thread; never raises. This is the one place the app installs software on its own -
+        it is gated behind an explicit opt-in setting and the same admin login the manual deploy uses."""
+        if not self._settings().get("auto_deploy_agent", False):
+            return
+        creds = DP.admin_creds(self._settings().get("admin_logins") or [])
+        if not creds:
+            return
+        devices = getattr(self, "devices", []) or []
+        perm = DP.permanent_targets(devices, self.db, min_days=5)
+        if not perm:
+            return
+        # skip PCs whose agent already checked in within the last 2 days (they have it + it self-updates)
+        try:
+            reported = EP.recent_agent_ips(self._settings().get("endpoint_dir") or "", hours=48)
+        except Exception:  # noqa: BLE001
+            reported = set()
+        todo = [t for t in perm if t["ip"] not in reported]
+        if not todo:
+            return
+        central = self._settings().get("endpoint_dir") or ""
+        import tempfile
+        src = tempfile.mkdtemp(prefix="nd-agent-auto-")
+        try:
+            for name, text in nd_agent.FILES.items():
+                with open(os.path.join(src, name), "w", encoding="utf-8", newline="") as fh:
+                    fh.write(text)
+            results = DP.deploy_all(todo, creds, central, src, workers=4)
+            ok = sum(1 for r in results if r.get("ok"))
+            if ok:
+                self.q.put(("call", lambda: self._log_event(
+                    "info", f"Auto-installed the agent on {ok} permanent PC(s) (guests skipped).", "Agent")))
+        except Exception:  # noqa: BLE001
+            return
 
     def _agent_deploy_all(self):
         creds = DP.admin_creds(self._settings().get("admin_logins") or [])
@@ -2554,6 +2604,9 @@ class App(tk.Tk):
                 self._dhcpgrow_t = time.time()                        # it never fills (auto-grow +20 when low)
                 threading.Thread(target=self._dhcp_headroom_check, daemon=True).start()
             self._auto_name_traffic()  # keep DNS naming on (self-throttled to 30 min) so sites stay clear
+            if time.time() - getattr(self, "_autodeploy_t", 0) > 3600:  # hourly: push agent to PERMANENT PCs
+                self._autodeploy_t = time.time()                        # only (guests seen 1-3 days are skipped)
+                threading.Thread(target=self._auto_deploy_permanent, daemon=True).start()
             if time.time() - getattr(self, "_access_t", 0) > 600:     # devices blocked from joining (reply-only ARP)
                 self._access_t = time.time()
                 threading.Thread(target=self._access_poll, daemon=True).start()
@@ -3361,8 +3414,16 @@ class App(tk.Tk):
                 # count first and short, so it is never cut off by the column width
                 parent = tv.insert("", "end", open=True, tags=("cat",), text=f"{c}  ({len(ds)})" + (
                     f"  -  {n_recent} new" if n_recent else "") + (f"  -  {n_unchk} unchecked" if n_unchk else ""))
+            if not self.var_sort_bw.get() and not flat:
+                # Within a group: online devices first (offline sink to the bottom so the two don't mix), and in
+                # the CCTV group the recorders (DVR/NVR) sort ABOVE the plain cameras instead of being scattered
+                # among them (Rakesh, 27 Nov). Stable sort keeps IP order inside each band.
+                ds.sort(key=lambda d: (
+                    0 if d["online"] else 1,
+                    0 if (c == core.CAT_CAM and core.cctv_role(d) == "nvr") else 1,
+                    core.ip_key(d.get("ip") or "0.0.0.0")))
             if (n_recent or n_unchk) and not self.var_sort_bw.get() and not flat:
-                # stable: the rest keeps its order
+                # new / unchecked devices float to the very top of the group (keeps the online/recorder order below)
                 ds.sort(key=lambda d: not ((d.get("recent") and d["online"]) or d.get("mac") in unchecked))
             for d in ds:
                 svc = ", ".join(core.PORTS.get(p, str(p)) for p in d["ports"])
