@@ -46,3 +46,20 @@ class OwnerActivation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogoutEverywhere(unittest.TestCase):
+    def test_logout_voids_all_tokens_and_relogin_restores(self):
+        d = tempfile.mkdtemp()
+        email = "yadavrkpacheriya@gmail.com"
+        secret = OW.set_owner(d, email)
+        OW.activate_with_login(d, email, secret)
+        tokA = OW.read_activation(d)             # a device's token
+        self.assertTrue(OW.is_owner_activated(d)[0])
+        sv = OW.logout_everywhere(d)
+        self.assertGreaterEqual(sv, 2)
+        self.assertFalse(OW.verify_activation(d, tokA)[0])   # old token now void (any device)
+        self.assertFalse(OW.is_owner_activated(d)[0])        # PC signed out too
+        ok, _ = OW.activate_with_login(d, email, secret)     # re-login issues a fresh valid token
+        self.assertTrue(ok)
+        self.assertTrue(OW.is_owner_activated(d)[0])

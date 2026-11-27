@@ -170,6 +170,12 @@ class PcLink {
     return j;
   }
 
+  /// Sign out of Pro on EVERY device at once (from this phone). Uses the normal action channel while still
+  /// authorized; afterwards remote access is off until the owner signs in again.
+  static Future<Map<String, dynamic>> proLogout(PairedPc pc) async {
+    return action(pc, 'pro_logout');
+  }
+
   static Future<Map<String, dynamic>> hello(String host, {int port = pcPort}) async {
     final r = await _send(() => http.get(Uri.parse('http://$host:$port/api/hello')), 'reach the PC');
     return jsonDecode(r.body) as Map<String, dynamic>;

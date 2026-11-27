@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.85"
+VERSION = "4.86"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1968,6 +1968,7 @@ class App(tk.Tk):
         self.var_owner_info = tk.StringVar(
             value=("Pro ON (owner)" if core.IS_PRO else "Set your email, then press 'Set / show secret'"))
         ttk.Button(ow, text="Set / show secret", command=self._owner_set).pack(side="left", padx=6)
+        ttk.Button(ow, text="Sign out everywhere", command=self._owner_logout).pack(side="right")
         ttk.Label(ow, textvariable=self.var_owner_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=10)
         tel = nd_tabs.section_card(f, "Help improve Network Doctor (optional)", "#64748b")
         self.var_telemetry = tk.BooleanVar(value=self.telemetry.enabled)
@@ -2244,6 +2245,21 @@ class App(tk.Tk):
                                  "\n\n    %s\n\nKeep it private - anyone with this secret can turn on Pro on this "
                                  "PC. You can change it later by setting the email again." % (email, secret))
         self.var_owner_info.set("Owner set - sign in on the phone to activate Pro")
+
+    def _owner_logout(self):
+        """Sign out of Pro on every device at once (from the PC)."""
+        if not messagebox.askyesno(APP, "Sign out of Pro on ALL devices (this PC and every phone)? You'll sign in "
+                                        "again with your email + secret to turn it back on."):
+            return
+        import nd_owner as OW
+        OW.logout_everywhere(core.DATA_DIR)
+        core.refresh_pro()
+        self._settings()["remote_enabled"] = False
+        self._save_settings()
+        if getattr(self, "share", None):
+            self.share.remote_enabled = False
+        self.var_owner_info.set("Signed out - set email & sign in on the phone to re-activate")
+        messagebox.showinfo(APP, "Signed out of Pro everywhere. Remote access is off until you sign in again.")
 
     def _toggle_autodeploy(self):
         on = self.var_autodeploy.get()
@@ -6491,6 +6507,19 @@ class App(tk.Tk):
             import nd_pwreset as PR
             blob = str(a.get("brand") or a.get("text") or "")
             return {"ok": True, "message": PR.guide_text(blob)}
+        if name == "pro_logout":
+            # Sign out everywhere: void all activation tokens (bump session version), turn Pro + remote access
+            # off on this PC. The owner re-signs-in (same email+secret) to turn it back on wherever they want.
+            import nd_owner as OW
+            OW.logout_everywhere(core.DATA_DIR)
+            core.refresh_pro()
+            self._settings()["remote_enabled"] = False
+            self._save_settings()
+            if getattr(self, "share", None):
+                self.share.remote_enabled = False
+            self.q.put(("call", lambda: self._log_event("info", "Signed out of Pro everywhere.", "Pro")))
+            return {"ok": True, "message": "Signed out of Pro on all devices. Remote access is off until you "
+                                           "sign in again."}
         if name == "pro_login":
             # Owner signs in from the phone with his email + activation secret -> unlock Pro on this PC, and turn
             # on remote access so the phone works from anywhere immediately. Owner-only (secret verified on the PC).

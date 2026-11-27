@@ -57,12 +57,35 @@ def set_owner(data_dir, email, secret=""):
         raise ValueError("A valid email is required.")
     cur = owner_config(data_dir) or {}
     secret = (secret or "").strip() or cur.get("secret") or secrets.token_urlsafe(9)
+    sv = int(cur.get("sv", 1))
     path = os.path.join(_dir(data_dir), OWNER_FILE)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"email": email, "secret": secret}, f)
+        json.dump({"email": email, "secret": secret, "sv": sv}, f)
     os.replace(tmp, path)
     return secret
+
+
+def logout_everywhere(data_dir):
+    """Sign out of Pro/remote on EVERY device at once: bump the session version so every token minted so far is
+    void, and clear this PC's own activation. The owner just signs in again (same email + secret) to get a fresh
+    token when they want Pro back on a device. Returns the new session version."""
+    cfg = owner_config(data_dir)
+    if not cfg:
+        return 0
+    cfg = dict(cfg)
+    cfg["sv"] = int(cfg.get("sv", 1)) + 1
+    path = os.path.join(_dir(data_dir), OWNER_FILE)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+    os.replace(tmp, path)
+    # drop this PC's stored activation too, so Pro turns off here immediately
+    try:
+        os.remove(os.path.join(_dir(data_dir), ACT_FILE))
+    except OSError:
+        pass
+    return cfg["sv"]
 
 
 def clear_owner(data_dir):
@@ -86,6 +109,7 @@ def make_activation(data_dir, email, days=0):
     if (email or "").strip().lower() != cfg["email"]:
         return False, "email does not match the owner"
     payload = {"email": cfg["email"], "plan": "pro", "by": "owner",
+               "sv": int(cfg.get("sv", 1)),   # session version: "log out everywhere" bumps this, voiding old tokens
                "iat": int(time.time()), "exp": int(time.time() + days * 86400) if days else 0}
     body = _b64u(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = _b64u(_sign(cfg["secret"], body))
@@ -109,6 +133,10 @@ def verify_activation(data_dir, token):
         return False, None, "malformed (%s)" % e
     if payload.get("email", "").lower() != cfg["email"]:
         return False, payload, "email mismatch"
+    # session version: a "log out everywhere" bumps cfg['sv'], so any token minted before that is now void - this
+    # is how one logout (from the PC or any phone) signs out of Pro/remote on EVERY device at once (Rakesh, 27 Nov).
+    if int(payload.get("sv", 1)) != int(cfg.get("sv", 1)):
+        return False, payload, "signed out on another device"
     exp = int(payload.get("exp", 0) or 0)
     if exp and time.time() > exp:
         return False, payload, "expired"

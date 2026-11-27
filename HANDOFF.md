@@ -2,6 +2,17 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.86 + mobile 1.46.0 — email login kept easy across devices + "sign out everywhere")
+- Rakesh (27 Nov): wants email-based login (easy when changing device) and a global logout that signs Pro out on
+  ALL devices from either PC or phone.
+- Session version (sv) added to owner config + every activation token. verify_activation rejects a token whose sv
+  != current ("signed out on another device"). nd_owner.logout_everywhere() bumps sv (voids every token instantly)
+  and clears this PC's activation. set_owner seeds/keeps sv. Re-login (same email+secret) mints a fresh token.
+- PC: "Sign out everywhere" button in the Pro/owner card -> logout_everywhere + remote_enabled=False. Phone: ⋮ menu
+  "Sign out Pro everywhere" -> action pro_logout (confirm dialog) -> same. Both turn remote access off until next
+  sign-in. Email stays the login id, so switching phones = just sign in again with the same email + secret.
+- test_owner +1 (logout voids all tokens, re-login restores). Suite 1134.
+
 ## Done (v4.85 + mobile 1.45.0 — owner Pro activation by email sign-in from the phone)
 - Rakesh (27 Nov): log in with his personal email so Pro activates on the phone (remote access needs Pro; Free
   build = "office LAN only"). His own app/build - legitimate owner unlock, NOT a licence bypass.

@@ -470,6 +470,32 @@ class _PcDashboardState extends State<PcDashboard> {
     }
   }
 
+  Future<void> _proLogout() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out Pro everywhere'),
+        content: const Text('This signs out of Pro on this PC and every phone at once. Remote access turns off '
+            'until you sign in again with your email + secret. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out everywhere')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    try {
+      final r = await PcLink.proLogout(widget.pc);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${r['message'] ?? 'Signed out everywhere.'}')));
+      }
+      await _load();
+    } on PcError catch (e) {
+      if (mounted) setState(() => _msg = e.message);
+    }
+  }
+
   Future<void> _setRemote() async {
     final c = TextEditingController(text: widget.pc.remote);
     final ok = await showDialog<bool>(
@@ -582,6 +608,7 @@ class _PcDashboardState extends State<PcDashboard> {
                       if (v == 'unpair') await widget.onUnpair();
                       if (v == 'remote') await _setRemote();
                       if (v == 'prologin') await _proLogin();
+                      if (v == 'prologout') await _proLogout();
                       if (v == 'signin') await _signIn();
                       if (v == 'signout') {
                         await PcLink.logout(widget.pc);
@@ -600,6 +627,7 @@ class _PcDashboardState extends State<PcDashboard> {
                       else
                         PopupMenuItem(value: 'signout', child: Text('Sign out (${widget.pc.user})')),
                       const PopupMenuItem(value: 'prologin', child: Text('Activate Pro (owner sign-in)...')),
+                      const PopupMenuItem(value: 'prologout', child: Text('Sign out Pro everywhere')),
                       const PopupMenuItem(value: 'remote', child: Text('Reach from outside...')),
                       const PopupMenuItem(value: 'add', child: Text('Pair another PC')),
                       const PopupMenuItem(value: 'unpair', child: Text('Remove this PC')),
