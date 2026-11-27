@@ -2,6 +2,19 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.76 — read REAL site names from TLS SNI, no guessing, no decryption)
+- Rakesh (27 Nov): name every real site/app from actual connection data, don't assume from CDN/IP owner.
+- Reality: HTTPS is encrypted — cannot see page content/uploads without a MITM cert (declined, invasive). BUT the
+  TLS ClientHello's SNI field carries the real domain in PLAIN TEXT before encryption. New `nd_sni.parse_sni()`
+  (pure, bounds-checked, never raises, fuzz-tested) extracts it. Wired into the sniffer: BPF filter extended with
+  "or (tcp dst port 443)", on each ClientHello to :443 it calls `on_sni(client_ip, dst_ip, host)` →
+  `UsageStore.dns_seen(client, host, (dst,))` which learns name→IP AND counts the visit. `mon.sni_rx` counts hits.
+  So a site is named from what the connection declares — even when DNS is cached or the router's DNS log dropped.
+  Needs the optional sniffer (Npcap+Scapy); when absent, DNS-log naming (v4.75 self-heal) still applies.
+- nd_sni.py in SOURCE_FILES(.txt). test_sni (5: real names, junk→empty, no IP-as-name, fuzz never-raises, feeds
+  usage). Suite 1106 passed.
+- NOTE: names fill going FORWARD as devices browse; already-recorded "CDN" rows don't rename retroactively.
+
 ## Done (v4.75 — dashboard: 4 top-10 charts + keep DNS naming on so sites stay clear)
 - Rakesh (27 Nov): dashboard still missing the top-10 charts he asked for, and site names still vague.
 - Added 4 charts to usage-dashboard (nd_usage.dashboard_html): Top 10 users, Top 10 websites, Top 10 productive

@@ -29,6 +29,7 @@ from collections import Counter, defaultdict, deque, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import nd_core as core
+import nd_sni
 import nd_tools as tools
 
 FLOW_PORT = 2055
@@ -939,6 +940,8 @@ class Monitor:
         self.flow_rx = self.syslog_rx = 0
         self.on_dns = None  # on_dns(text) -> True when the line was a DNS log line (nd_usage.UsageStore.dns_log)
         self.on_flow_raw = None  # on_flow_raw(datagram, arrival_time): every flow packet the app received live
+        self.on_sni = None  # on_sni(client_ip, dst_ip, host): real site name read from a TLS ClientHello (no decrypt)
+        self.sni_rx = 0  # how many real site names we've read from TLS - shows naming is working
         self.last_flow = self.last_syslog = None
         self.exporters, self.log_sources = set(), set()
         self.sniffer_state = "starting..."
@@ -1149,7 +1152,7 @@ class Monitor:
             self.sniffer_state = "not installed (Npcap + Scapy)"
             return
         try:
-            from scapy.all import AsyncSniffer, Ether, ARP, BOOTP, conf
+            from scapy.all import AsyncSniffer, Ether, ARP, BOOTP, conf, TCP, IP, Raw
             from scapy.layers.l2 import Dot3
             try:
                 from scapy.layers.l2 import STP
@@ -1202,6 +1205,17 @@ class Monitor:
                         if mac:
                             with self.lock:
                                 self.dhcp_seen[mac] = (time.time(), "seen asking for an IP by DHCP")
+                    # TLS ClientHello to :443 carries the REAL site name (SNI) in plain text - read it so every
+                    # site is named from what the connection actually declares, not guessed from the IP owner.
+                    if self.on_sni is not None and p.haslayer(TCP) and p.haslayer(IP) and p.haslayer(Raw) \
+                            and int(p[TCP].dport) == 443:
+                        host = nd_sni.parse_sni(bytes(p[Raw].load))
+                        if host:
+                            self.sni_rx += 1
+                            try:
+                                self.on_sni(p[IP].src, p[IP].dst, host)
+                            except Exception:  # noqa: BLE001
+                                pass
                     now = time.time()
                     if now - win_t[0] >= 2:
                         with self.lock:
@@ -1211,8 +1225,12 @@ class Monitor:
                 except Exception:
                     pass
 
+            # also capture the first bytes of TLS connections to :443 so we can read the real site name (SNI).
+            # "tcp[tcpflags] has no ...": we keep it simple - any TCP to 443 with a payload; parse_sni ignores
+            # non-ClientHello packets. The payload cap keeps it light (ClientHello is in the first segment).
             sn = AsyncSniffer(iface=iface, store=False, prn=cb,
-                              filter="broadcast or multicast or arp or ether proto 0x88b5 or (udp and (port 67 or port 68))")
+                              filter="broadcast or multicast or arp or ether proto 0x88b5 "
+                                     "or (udp and (port 67 or port 68)) or (tcp dst port 443)")
             sn.start()
             self.sniffer_state = "running"
             while self.running:

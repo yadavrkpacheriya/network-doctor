@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.75"
+VERSION = "4.76"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2492,6 +2492,9 @@ class App(tk.Tk):
         if self.usage:
             self.mon.traffic.sink = self.usage.add_flow
             self.mon.on_dns = self._on_dns_line
+            # real site names read from TLS ClientHello (SNI) - names a site even when DNS is cached or the
+            # router's DNS log dropped, so usage shows the true site, not "CDN (various)".
+            self.mon.on_sni = lambda client, dst, host: self.usage.dns_seen(client, host, (dst,))
             M.NAME_APP = self.usage.app_for
             if self.cov:
                 self.mon.on_flow_raw = lambda data, t: self.cov.note("flow", CL.packet_time(t, data), len(data))
