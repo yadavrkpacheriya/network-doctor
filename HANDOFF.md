@@ -2,6 +2,18 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.79 — DNS fix now ISP-first, so banking/UPI apps work on Wi-Fi too)
+- Rakesh (27 Nov): app opens on MOBILE data but NOT on office Wi-Fi, no VPN. Root cause: our v4.68 DNS fix made
+  the router answer with public DNS (1.1.1.1/8.8.8.8); some Indian banking/UPI apps reject a Wi-Fi whose DNS
+  isn't a normal ISP path ("Unsecured Network") — mobile works because it uses the telecom's own DNS.
+- Changed AL.DNS_FIX to ISP-FIRST: reads the ISP DNS the PPPoE/DHCP link pushed (/ip dns dynamic-servers, DHCP
+  lease), sets servers=<isp>,1.1.1.1,8.8.8.8 (public only as fallback), and sets use-peer-dns=yes on the
+  dhcp-client/pppoe-client so the link keeps supplying ISP DNS. Falls back to public-only if no ISP DNS found.
+  Still caches (speed) and still blocks port 53 from the WAN (not an open resolver). This keeps browsing fast AND
+  removes the foreign-DNS signal the apps dislike.
+- test_dns_isp_first (3). Suite 1116. NOTE if it still fails on Wi-Fi after this, cause is the office public IP
+  being on an app blocklist, or MSS/MTU — next diagnostics, not a DNS issue.
+
 ## Done (v4.78 — detect DNS redirect / proxy that breaks genuine apps ("Unsecured Network"))
 - Rakesh (27 Nov): a banking/UPI app showed "Unsecured Network Detected" on the office network; wants genuine
   apps to work. Honest scope: the banner is the APP's own fraud check (VPN/proxy on the phone, or non-trusted

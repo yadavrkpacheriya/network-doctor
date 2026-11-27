@@ -37,7 +37,20 @@ AUTO_SAFE = {"dhcp_conflict", "multicast", "loop", "ip_conflict", "mtu", "dhcp_f
 # Reset and the undo remove exactly them. If no WAN/default-route is found, it still blocks 53 on every
 # non-bridge running interface as a safe fallback (LAN DNS keeps working; only outside-facing 53 is dropped).
 DNS_FIX = (
-    "/ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes cache-size=4096KiB\n"
+    # Use the ISP's OWN DNS first (read from the PPPoE / DHCP-client link), then fast public DNS as a fallback.
+    # Why ISP-first: some banking/UPI apps refuse to work ("Unsecured Network") when the Wi-Fi answers DNS from a
+    # foreign server (1.1.1.1) that doesn't match a normal ISP path - they work on mobile data because that uses
+    # the telecom's DNS. ISP-first removes that mismatch AND keeps the caching speed-up. If the ISP DNS can't be
+    # read, fall back to public only (still faster than nothing). Rakesh, 27 Nov: app opens on mobile, not Wi-Fi.
+    ':local isp ""\n'
+    ':foreach p in=[/ip dhcp-client find where status=bound] do={ :set isp [/ip dhcp-client get $p dhcp-server] }\n'
+    ':local pd [/ip dns get dynamic-servers]\n'
+    ':if ([:len $pd] > 0) do={ :set isp $pd }\n'   # dynamic-servers = the ones the PPPoE/DHCP link pushed
+    ':if ([:len $isp] > 0) do={ /ip dns set servers=($isp . ",1.1.1.1,8.8.8.8") allow-remote-requests=yes cache-size=4096KiB } '
+    'else={ /ip dns set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes cache-size=4096KiB }\n'
+    # make sure the PPPoE/DHCP link keeps handing us the ISP DNS (use-peer-dns) so ISP-first stays true
+    ':do { /ip dhcp-client set [find] use-peer-dns=yes } on-error={}\n'
+    ':do { /interface pppoe-client set [find] use-peer-dns=yes } on-error={}\n'
     ':do { /ip firewall filter remove [find where comment="ND: block DNS from WAN"] } on-error={}\n'
     ":local wan [/ip route get [find where dst-address=\"0.0.0.0/0\" and active=yes] interface]\n"
     ':if ([:len $wan] > 0) do={\n'
