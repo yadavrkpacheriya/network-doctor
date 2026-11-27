@@ -2,6 +2,13 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (mobile 1.38.0+48 — update check names the real cause when GitHub is unreachable)
+- Rakesh (27 Nov): phone app "Could not reach GitHub" on Wi-Fi. SAME root cause as the banking app - this Wi-Fi's
+  DNS failing (works on mobile data). checkForUpdate now: retries via the releases page host, and if that fails,
+  calls `_hasInternet()` (gstatic/generate_204 AND 1.1.1.1 by IP - the IP one needs no DNS). If the phone is
+  online but GitHub isn't reachable → error says it's this network's DNS and to apply the router DNS fix; else the
+  old "is the phone online?". So the message points at the fix instead of dead-ending.
+
 ## Done (v4.79 — DNS fix now ISP-first, so banking/UPI apps work on Wi-Fi too)
 - Rakesh (27 Nov): app opens on MOBILE data but NOT on office Wi-Fi, no VPN. Root cause: our v4.68 DNS fix made
   the router answer with public DNS (1.1.1.1/8.8.8.8); some Indian banking/UPI apps reject a Wi-Fi whose DNS

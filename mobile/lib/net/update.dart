@@ -33,6 +33,18 @@ class UpdateError implements Exception {
   String toString() => message;
 }
 
+/// True if the phone can reach the internet at all (a neutral, always-up endpoint). Used to tell "phone offline"
+/// apart from "this Wi-Fi can't reach GitHub / is failing DNS" - so the error can point at the real cause.
+Future<bool> _hasInternet() async {
+  for (final u in ['https://www.gstatic.com/generate_204', 'https://1.1.1.1/']) {
+    try {
+      final r = await http.get(Uri.parse(u)).timeout(const Duration(seconds: 6));
+      if (r.statusCode < 500) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
 /// [1, 3, 0] from "mobile-v1.3.0", "v1.3.0" or "1.3.0+5".
 List<int> parseVersion(String v) {
   final m = RegExp(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?').firstMatch(v);
@@ -71,13 +83,32 @@ AppUpdate? newestMobile(List<dynamic> releases) {
 
 /// Returns the newer version, or null when [current] is the newest. Throws [UpdateError].
 Future<AppUpdate?> checkForUpdate(String current) async {
+  // Try the API, then the plain releases page as a fallback. If BOTH fail with a lookup error but the phone
+  // clearly has internet (a neutral host answers), it's this Wi-Fi's DNS - say so, because that's the real fix
+  // (the same DNS fault also makes some apps show 'Unsecured Network'). Works on mobile data, not Wi-Fi = DNS.
   http.Response r;
   try {
     r = await http
         .get(Uri.parse(releasesApi), headers: {'Accept': 'application/vnd.github+json', 'User-Agent': 'NetworkDoctor-Android'})
         .timeout(const Duration(seconds: 15));
   } catch (e) {
-    throw UpdateError('Could not reach GitHub - is the phone online?');
+    // one retry via a different GitHub host, in case only api.github.com failed to resolve
+    try {
+      r = await http.get(Uri.parse(releasesPage), headers: {'User-Agent': 'NetworkDoctor-Android'})
+          .timeout(const Duration(seconds: 15));
+      // the HTML page can't be parsed for assets reliably; treat a success here as "online, API blocked"
+      throw UpdateError("GitHub's API didn't answer on this Wi-Fi. If other apps also fail here but work on "
+          "mobile data, it's this network's DNS - open Network Doctor PC > Slow check and apply the DNS fix.");
+    } on UpdateError {
+      rethrow;
+    } catch (_) {
+      final online = await _hasInternet();
+      throw UpdateError(online
+          ? "Can't reach GitHub on this Wi-Fi, though the phone is online - this network's DNS is likely "
+              "blocking or failing name lookups (the same fault shows some apps as 'Unsecured Network'). "
+              "Fix the router DNS, or check updates on mobile data."
+          : 'Could not reach GitHub - is the phone online?');
+    }
   }
   if (r.statusCode == 403) throw UpdateError('GitHub is limiting requests right now - try again in an hour.');
   if (r.statusCode != 200) throw UpdateError('GitHub answered ${r.statusCode}.');
