@@ -175,7 +175,8 @@ class _PairViewState extends State<PairView> {
           controller: c,
           autofocus: true,
           keyboardType: TextInputType.url,
-          decoration: const InputDecoration(labelText: 'IP address of the PC', hintText: '192.168.0.70'),
+          decoration: const InputDecoration(
+              labelText: 'PC address', hintText: 'rakesh-it:8787  or  192.168.0.70'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -184,9 +185,20 @@ class _PairViewState extends State<PairView> {
       ),
     );
     if (host == null || host.isEmpty) return;
+    // Accept whatever the user pastes: "http://rakesh-it:8787", "rakesh-it:8787", or a bare IP. Strip the
+    // scheme and any path, then split host:port - so typing the scheme no longer turns into "Failed host
+    // lookup: 'http'" (Rakesh, 27 Nov).
+    var a = host.replaceFirst(RegExp(r'^https?://', caseSensitive: false), '').split('/').first.trim();
+    int port = pcPort;
+    if (a.contains(':')) {
+      final parts = a.split(':');
+      a = parts.first;
+      port = int.tryParse(parts.last) ?? pcPort;
+    }
+    if (a.isEmpty) return;
     try {
-      final h = await PcLink.hello(host);
-      await _pair(host, name: (h['name'] ?? host).toString());
+      final h = await PcLink.hello(a, port: port);
+      await _pair(a, name: (h['name'] ?? a).toString(), port: port);
     } on PcError catch (e) {
       setState(() => _msg = e.message);
     }
