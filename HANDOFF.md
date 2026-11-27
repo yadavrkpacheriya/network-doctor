@@ -2,6 +2,18 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.84 + mobile 1.41.0 — phone can run the newest router fixes remotely)
+- Rakesh (27 Nov): do EVERYTHING from the phone, office or remote. Design: the PC does the work, the phone is the
+  full remote control via /api/action -> _remote_cmd (already huge: scan, quick, ping, trace, wol, tag, trusted,
+  undo_fix, approve_reject, alert_status/fix, config_backup, block/unblock, isolate, router_reboot, poweroff,
+  defense suite, bind, guard, block_sites, router_cmd, vuln, capture, exposure, hardening, slow, name_traffic,
+  set_category). Gap: the NEWEST fixes weren't remote-exposed. Added _remote actions: lan_health (returns
+  findings), dns_fix (AL.DNS_FIX), smb_block (AL.SMB_FIX), dhcp_grow (AL.DHCP_GROW), pwreset (guide text).
+- Mobile: new "One-tap fixes" section in PcToolsTab (pc_actions.dart) with buttons calling runOnPc for
+  lan_health/dns_fix/smb_block/dhcp_grow - works office or remote (through the saved tunnel/Tailscale).
+- Remote-from-outside already supported by pc_link (Cloudflare Tunnel / Tailscale remote URI). Suite 1127;
+  mobile 1.41.0+51.
+
 ## Done (v4.83 + mobile 1.40.0 — bring newest usage features to the phone; parity audit)
 - Rakesh (27 Nov): wants ALL PC-app functions on mobile. AUDIT finding: the paired mobile app ALREADY has most of
   it via /api/state + snapshot - Problems, Devices, Alerts, Live monitor, Usage (apps/sites/devices/insights),

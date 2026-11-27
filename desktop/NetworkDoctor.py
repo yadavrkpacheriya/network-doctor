@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.83"
+VERSION = "4.84"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -6433,6 +6433,38 @@ class App(tk.Tk):
                 return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
             apply_s, _undo = T.name_traffic_commands()
             return self._router_job("Make website & app names visible", apply_s)
+        if name == "lan_health":
+            # Phone can run the whole-LAN check (broadcast storm / loop / slow link / proxy-ARP / DNS redirect)
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+
+            def runlan():
+                import nd_lanhealth as LH
+                fs = LH.diagnose(c)
+                lines = [("[%s] %s" % (f["sev"].upper(), f["title"])) for f in fs]
+                return {"ok": True, "message": "\n".join(lines) or "LAN looks healthy",
+                        "findings": fs}
+            return self._job("Check the whole LAN", runlan)
+        if name == "dns_fix":
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+            return self._router_job("Fix DNS (ISP-first + block WAN 53)", AL.DNS_FIX)
+        if name == "smb_block":
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+            return self._router_job("Block SMB to the internet", AL.SMB_FIX)
+        if name == "dhcp_grow":
+            c = self.router_client(ask=False)
+            if not c:
+                return {"ok": False, "message": "No router login is saved on the PC (Setup > Router)."}
+            return self._router_job("Reclaim + grow the DHCP pool", AL.DHCP_GROW)
+        if name == "pwreset":
+            import nd_pwreset as PR
+            blob = str(a.get("brand") or a.get("text") or "")
+            return {"ok": True, "message": PR.guide_text(blob)}
         return {"ok": False, "message": f"unknown action '{name}'"}
 
     def _remote_hint(self):

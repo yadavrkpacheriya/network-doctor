@@ -780,6 +780,24 @@ class _PcToolsTabState extends State<PcToolsTab> {
         ]),
         const Text('Note: works for devices using the router as DNS (the normal setup).'),
       ]),
+      section('fixes', 'One-tap fixes (run on the router from your phone)', Icons.healing, [
+        const Text('These run on the PC\'s router connection - works from the office or remote.'),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          FilledButton.tonalIcon(
+              icon: const Icon(Icons.lan), label: const Text('Check whole LAN'),
+              onPressed: () => runOnPc(context, 'lan_health', const {}, title: 'Check whole LAN')),
+          FilledButton.tonalIcon(
+              icon: const Icon(Icons.dns), label: const Text('Fix DNS'),
+              onPressed: () => runOnPc(context, 'dns_fix', const {}, title: 'Fix DNS')),
+          FilledButton.tonalIcon(
+              icon: const Icon(Icons.security), label: const Text('Block SMB to internet'),
+              onPressed: () => runOnPc(context, 'smb_block', const {}, title: 'Block SMB')),
+          FilledButton.tonalIcon(
+              icon: const Icon(Icons.dynamic_feed), label: const Text('Reclaim + grow DHCP'),
+              onPressed: () => runOnPc(context, 'dhcp_grow', const {}, title: 'Grow DHCP')),
+        ]),
+      ]),
       section('router', 'Router commands', Icons.terminal, [
         TextField(
             decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Find a command', isDense: true),
