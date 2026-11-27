@@ -355,10 +355,33 @@ class _PcDashboardState extends State<PcDashboard> {
   /// (CGNAT range) rather than a normal router - a topology where the phone and PC genuinely cannot see
   /// each other on the LAN, no matter what either app does, so the generic "did not answer" message would
   /// otherwise read as a bug. Falls back to the plain message if the phone's IP can't be read.
+  /// The bare host from a saved remote address like "http://100.86.91.63:8787" or "rakesh-it:8787" -> the part
+  /// we can test for a Tailscale (100.x) IP. Returns '' if nothing usable.
+  String _hostOf(String remote) {
+    var r = remote.trim();
+    if (r.isEmpty) return '';
+    r = r.replaceFirst(RegExp(r'^https?://'), '');
+    r = r.split('/').first;         // drop any path
+    r = r.split(':').first;         // drop the port
+    return r;
+  }
+
   Future<String> _withCgnatNote(String message) async {
     try {
       final ip = await NetworkInfo().getWifiIP();
       if (isCgnatAddress(ip)) {
+        // 100.64.0.0/10 is shared by BOTH a 4G hotspot AND Tailscale. If the PC's saved remote address is also a
+        // 100.x (a Tailscale IP) - or ends in .ts.net - then the phone is on Tailscale, not a hotspot, and this
+        // is almost always just a lost pairing or the PC's remote port not listening. Say that instead of the
+        // misleading "4G hotspot" note (Rakesh, 27 Nov: app wrongly called his Tailscale a hotspot).
+        final remote = widget.pc.remote;
+        final onTailscale = isCgnatAddress(_hostOf(remote)) || remote.toLowerCase().contains('.ts.net');
+        if (onTailscale) {
+          return '$message\n\nYou are on Tailscale (address $ip) - that is the right way to reach the PC '
+              'remotely, so this is not a Wi-Fi problem. It usually means the phone lost its pairing (re-pair '
+              'from Office PC), or Network Doctor isn\'t running / its remote port isn\'t listening on the PC. '
+              'Check the PC app is open, then Retry.';
+        }
         return '$message\n\nThis Wi-Fi looks like a mobile/4G hotspot (address $ip), which usually keeps '
             'connected devices from reaching each other - that would explain this even with both apps set up '
             'correctly. Try the office\'s normal Wi-Fi router, or set up "Reach this PC from outside" below.';

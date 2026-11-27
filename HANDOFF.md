@@ -2,6 +2,18 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (mobile 1.42.0 — stop calling Tailscale a "4G hotspot"; point at re-pair)
+- Rakesh (27 Nov) screenshots: on Tailscale (100.86.91.63 PC, 100.85.42.83 phone) the Office PC tab showed
+  "Could not load data (Connection refused)" + the FALSE note "This Wi-Fi looks like a mobile/4G hotspot
+  (100.85.42.83)". Bug: 100.64.0.0/10 is shared by BOTH CGNAT hotspots AND Tailscale; _withCgnatNote assumed
+  hotspot. Real cause in the 2nd screenshot: "This phone is no longer paired - Pair again" (lost pairing →
+  connection refused).
+- Fix (pc_screen.dart): when the phone's IP is 100.x AND the PC's saved remote is also 100.x (or .ts.net), it's
+  Tailscale, not a hotspot - new note says so and points at re-pairing / the PC app not running, instead of the
+  misleading hotspot text. Added _hostOf() to parse the remote host. mobile 1.42.0+52.
+- USER ACTION (not code): re-pair the phone (Office PC > pair with the code on the PC) - that's what fixes the
+  current Connection refused. Tailscale itself is set up correctly (http://rakesh-it:8787 is the right address).
+
 ## Done (v4.84 + mobile 1.41.0 — phone can run the newest router fixes remotely)
 - Rakesh (27 Nov): do EVERYTHING from the phone, office or remote. Design: the PC does the work, the phone is the
   full remote control via /api/action -> _remote_cmd (already huge: scan, quick, ping, trace, wol, tag, trusted,
