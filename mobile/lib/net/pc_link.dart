@@ -166,20 +166,44 @@ class PcLink {
     return PairedPc(name: (j['name'] ?? host).toString(), host: host, port: port, token: j['token'] as String);
   }
 
+  /// Turn a non-200 reply into the clearest possible message. A 403 carries the PC's real reason in the body
+  /// (e.g. "remote access is off on this PC") - show THAT, not a bare "PC answered 403", so the user knows the
+  /// exact fix. A 403 about remote access gets a step-by-step hint (Rakesh, 27 Nov: Tailscale connects but
+  /// Network Doctor refused because remote access wasn't turned on).
+  static Never _raiseHttp(http.Response r, String pcName) {
+    if (r.statusCode == 401) throw PcError('This phone is no longer paired with $pcName. Pair again.');
+    String reason = '';
+    try {
+      reason = ((jsonDecode(r.body) as Map)['error'] ?? '').toString();
+    } catch (_) {}
+    if (r.statusCode == 403) {
+      if (reason.toLowerCase().contains('remote access')) {
+        throw PcError('Remote access is turned OFF on the PC. On the PC open Network Doctor > Setup > Users & '
+            'sign-in, turn ON remote access and create a sign-in account, then connect again and sign in. '
+            '(On the office Wi-Fi it works without this.)');
+      }
+      if (reason.toLowerCase().contains('sign in')) {
+        throw PcError('This PC needs you to sign in for remote access. Enter the username and password you set '
+            'on the PC (Setup > Users & sign-in).');
+      }
+      throw PcError(reason.isEmpty ? 'The PC refused the request (403).' : reason);
+    }
+    throw PcError(reason.isEmpty ? 'PC answered ${r.statusCode}' : reason);
+  }
+
   static Future<Map<String, dynamic>> state(PairedPc pc) async {
     if (pc.host == 'demo') {
       return Map<String, dynamic>.from(jsonDecode(await rootBundle.loadString('assets/demo_state.json')) as Map);
     }
     final r = await _withFallback((base) => http.get(base, headers: _h(pc)), pc, '/api/state', 'load data');
-    if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
-    if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
+    if (r.statusCode != 200) _raiseHttp(r, pc.name);
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
   }
 
   static Future<String> startScan(PairedPc pc) async {
     if (pc.host == 'demo') return '(demo) scan started';
     final r = await _withFallback((base) => http.post(base, headers: _h(pc)), pc, '/api/scan', 'start a scan');
-    if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
+    if (r.statusCode != 200) _raiseHttp(r, pc.name);
     return ((jsonDecode(r.body) as Map)['result'] ?? '').toString();
   }
 
@@ -205,8 +229,7 @@ class PcLink {
     if (r.statusCode == 404) {
       throw PcError('The PC app is too old for this - update Network Doctor on the PC (3.16 or newer).');
     }
-    if (r.statusCode == 401) throw PcError('This phone is no longer paired with ${pc.name}. Pair again.');
-    if (r.statusCode != 200) throw PcError('PC answered ${r.statusCode}');
+    if (r.statusCode != 200) _raiseHttp(r, pc.name);
     return Map<String, dynamic>.from(jsonDecode(utf8.decode(r.bodyBytes)) as Map);
   }
 
