@@ -151,6 +151,25 @@ class PcLink {
     return out.values.toList();
   }
 
+  /// Owner Pro sign-in: send the owner email + activation secret to the PC's /api/pro_login. On success the PC
+  /// turns on Pro + remote access. Works even before remote access was on (that endpoint is allowed pre-auth,
+  /// since it only succeeds with the correct owner secret). Returns the PC's {ok, message}.
+  static Future<Map<String, dynamic>> proLogin(PairedPc pc, String email, String secret) async {
+    final r = await _withFallback(
+        (base) => http.post(base,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email, 'secret': secret})),
+        pc, '/api/pro_login', 'activate Pro');
+    Map<String, dynamic> j = {};
+    try {
+      j = Map<String, dynamic>.from(jsonDecode(utf8.decode(r.bodyBytes)) as Map);
+    } catch (_) {}
+    if (r.statusCode != 200) {
+      throw PcError((j['message'] ?? 'Could not activate Pro (${r.statusCode}).').toString());
+    }
+    return j;
+  }
+
   static Future<Map<String, dynamic>> hello(String host, {int port = pcPort}) async {
     final r = await _send(() => http.get(Uri.parse('http://$host:$port/api/hello')), 'reach the PC');
     return jsonDecode(r.body) as Map<String, dynamic>;

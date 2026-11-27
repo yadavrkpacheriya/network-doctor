@@ -103,7 +103,14 @@ def _pro_enabled():
     try:
         import nd_license
         ok, _info = nd_license.is_licensed(DATA_DIR)
-        return bool(ok)
+        if ok:
+            return True
+    except Exception:
+        pass
+    try:   # owner activation: the app owner unlocked Pro on his own build by signing in with his email
+        import nd_owner
+        ok2, _p = nd_owner.is_owner_activated(DATA_DIR)
+        return bool(ok2)
     except Exception:
         return False
 
@@ -115,9 +122,18 @@ def pro_info():
     try:
         import nd_license
         ok, info = nd_license.is_licensed(DATA_DIR)
-        return info if ok else None
+        if ok:
+            return info
     except Exception:
-        return None
+        pass
+    try:
+        import nd_owner
+        ok2, p = nd_owner.is_owner_activated(DATA_DIR)
+        if ok2:
+            return p
+    except Exception:
+        pass
+    return None
 
 
 IS_PRO = _pro_enabled()

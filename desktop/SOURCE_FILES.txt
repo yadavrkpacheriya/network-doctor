@@ -70,3 +70,4 @@ nd_collector.py
 nd_collect.py
 nd_sni.py
 nd_pwreset.py
+nd_owner.py

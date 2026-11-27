@@ -2,6 +2,24 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.85 + mobile 1.45.0 — owner Pro activation by email sign-in from the phone)
+- Rakesh (27 Nov): log in with his personal email so Pro activates on the phone (remote access needs Pro; Free
+  build = "office LAN only"). His own app/build - legitimate owner unlock, NOT a licence bypass.
+- nd_license has only Ed25519 VERIFY (no private key in repo). Added an OWNER unlock beside it: nd_owner.py -
+  owner registers email + a secret ONCE on the PC (owner.json); an HMAC-SHA256 activation token (signed with that
+  secret, PC-only) unlocks Pro. core._pro_enabled/pro_info return Pro if EITHER a publisher licence OR owner
+  activation is valid.
+- Flow: PC Setup > "Pro / owner sign-in" card -> email + "Set / show secret" (generates+shows). Phone: PC ⋮ menu
+  > "Activate Pro (owner sign-in)" -> email + secret -> POST /api/pro_login (allowed pre-auth, before the
+  remote-off gate, since it only succeeds with the right owner secret) -> PC activates Pro + sets
+  remote_enabled=True so remote works from anywhere immediately.
+- Security: secret verified locally (compare_digest), never leaves the PC; wrong email/secret/tampered token
+  rejected. test_owner +6. Does NOT weaken the Ed25519 path. Suite 1133.
+- mobile 1.43.0: Enter-PC-address accepts http:// + host:port (fix "Failed host lookup: http").
+- mobile 1.44.0: 403 shows the PC's real reason (remote access off) with the exact fix, not "PC answered 403".
+- STILL TRUE: remote phone access needs the PC ON + Network Doctor running + Tailscale up. Owner activation
+  removes the Free-license block; it can't make a powered-off PC reachable.
+
 ## Done (mobile 1.42.0 — stop calling Tailscale a "4G hotspot"; point at re-pair)
 - Rakesh (27 Nov) screenshots: on Tailscale (100.86.91.63 PC, 100.85.42.83 phone) the Office PC tab showed
   "Could not load data (Connection refused)" + the FALSE note "This Wi-Fi looks like a mobile/4G hotspot

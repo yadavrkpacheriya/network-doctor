@@ -434,6 +434,42 @@ class _PcDashboardState extends State<PcDashboard> {
     }
   }
 
+  /// Owner Pro sign-in: enter the owner email + the activation secret shown on the PC (Setup > Pro / owner),
+  /// and the PC turns on Pro + remote access. This is the "login with my personal email to activate Pro" flow.
+  Future<void> _proLogin() async {
+    final email = TextEditingController(text: widget.pc.user);
+    final secret = TextEditingController();
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Activate Pro'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Sign in with the owner email and the activation secret shown on the PC '
+              '(Setup > Pro / owner sign-in > Set / show secret).'),
+          const SizedBox(height: 10),
+          TextField(controller: email, keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Owner email')),
+          TextField(controller: secret, decoration: const InputDecoration(labelText: 'Activation secret')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Activate')),
+        ],
+      ),
+    );
+    if (go != true) return;
+    try {
+      final r = await PcLink.proLogin(widget.pc, email.text.trim(), secret.text.trim());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${r['message'] ?? 'Pro activated.'}')));
+      }
+      await _load();
+    } on PcError catch (e) {
+      if (mounted) setState(() => _msg = e.message);
+    }
+  }
+
   Future<void> _setRemote() async {
     final c = TextEditingController(text: widget.pc.remote);
     final ok = await showDialog<bool>(
@@ -545,6 +581,7 @@ class _PcDashboardState extends State<PcDashboard> {
                       if (v == 'add') widget.onAddPc();
                       if (v == 'unpair') await widget.onUnpair();
                       if (v == 'remote') await _setRemote();
+                      if (v == 'prologin') await _proLogin();
                       if (v == 'signin') await _signIn();
                       if (v == 'signout') {
                         await PcLink.logout(widget.pc);
@@ -562,6 +599,7 @@ class _PcDashboardState extends State<PcDashboard> {
                         const PopupMenuItem(value: 'signin', child: Text('Sign in'))
                       else
                         PopupMenuItem(value: 'signout', child: Text('Sign out (${widget.pc.user})')),
+                      const PopupMenuItem(value: 'prologin', child: Text('Activate Pro (owner sign-in)...')),
                       const PopupMenuItem(value: 'remote', child: Text('Reach from outside...')),
                       const PopupMenuItem(value: 'add', child: Text('Pair another PC')),
                       const PopupMenuItem(value: 'unpair', child: Text('Remove this PC')),

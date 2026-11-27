@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.84"
+VERSION = "4.85"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -1957,6 +1957,18 @@ class App(tk.Tk):
         ttk.Label(ph, textvariable=self.var_share_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
         ttk.Button(ph, text="Remove paired phones", command=self.forget_phones).pack(side="right")
         ttk.Button(ph, text="New pairing code", command=self.new_share_code).pack(side="right", padx=6)
+        # Owner Pro activation: set your email + a secret once, then sign in on the phone to turn on Pro
+        # (which enables remote access from anywhere). This is the owner-only unlock for your own build.
+        ow = nd_tabs.section_card(f, "Pro / owner sign-in (unlocks remote access from your phone)", "#047857")
+        import nd_owner as OW
+        _cfg = OW.owner_config(core.DATA_DIR) or {}
+        ttk.Label(ow, text="Owner email:").pack(side="left")
+        self.var_owner_email = tk.StringVar(value=_cfg.get("email", ""))
+        ttk.Entry(ow, textvariable=self.var_owner_email, width=26).pack(side="left", padx=4)
+        self.var_owner_info = tk.StringVar(
+            value=("Pro ON (owner)" if core.IS_PRO else "Set your email, then press 'Set / show secret'"))
+        ttk.Button(ow, text="Set / show secret", command=self._owner_set).pack(side="left", padx=6)
+        ttk.Label(ow, textvariable=self.var_owner_info, font=("Segoe UI", 10, "bold")).pack(side="left", padx=10)
         tel = nd_tabs.section_card(f, "Help improve Network Doctor (optional)", "#64748b")
         self.var_telemetry = tk.BooleanVar(value=self.telemetry.enabled)
         self.chk_telemetry = ttk.Checkbutton(tel, text="Send anonymous usage & crash reports",
@@ -2218,6 +2230,20 @@ class App(tk.Tk):
                             "  - Drop it in each PC's Startup folder once.\n\n"
                             "After a PC runs it once, Network Doctor reaches it remotely from then on and the "
                             "agent self-updates from the share - no more per-PC visits.")
+
+    def _owner_set(self):
+        """Register the owner email + show the activation secret to type on the phone. Owner-only Pro unlock."""
+        import nd_owner as OW
+        email = self.var_owner_email.get().strip()
+        try:
+            secret = OW.set_owner(core.DATA_DIR, email)
+        except ValueError as e:
+            messagebox.showerror(APP, str(e))
+            return
+        messagebox.showinfo(APP, "Owner set: %s\n\nActivation secret (type this in the phone app > Pro sign-in):"
+                                 "\n\n    %s\n\nKeep it private - anyone with this secret can turn on Pro on this "
+                                 "PC. You can change it later by setting the email again." % (email, secret))
+        self.var_owner_info.set("Owner set - sign in on the phone to activate Pro")
 
     def _toggle_autodeploy(self):
         on = self.var_autodeploy.get()
@@ -6465,6 +6491,23 @@ class App(tk.Tk):
             import nd_pwreset as PR
             blob = str(a.get("brand") or a.get("text") or "")
             return {"ok": True, "message": PR.guide_text(blob)}
+        if name == "pro_login":
+            # Owner signs in from the phone with his email + activation secret -> unlock Pro on this PC, and turn
+            # on remote access so the phone works from anywhere immediately. Owner-only (secret verified on the PC).
+            import nd_owner as OW
+            ok, res = OW.activate_with_login(core.DATA_DIR, str(a.get("email", "")), str(a.get("secret", "")))
+            if not ok:
+                return {"ok": False, "message": str(res)}
+            core.refresh_pro()
+            # enable remote access now that Pro is on, and make sure the share server picks it up
+            self._settings()["remote_enabled"] = True
+            self._save_settings()
+            if getattr(self, "share", None):
+                self.share.remote_enabled = True
+            self.q.put(("call", lambda: self._log_event("info", "Pro activated by owner sign-in; remote access on.",
+                                                        "Pro")))
+            return {"ok": True, "message": "Pro activated. Remote access is on - you can now use the app from "
+                                           "anywhere.", "email": (res or {}).get("email", "")}
         return {"ok": False, "message": f"unknown action '{name}'"}
 
     def _remote_hint(self):

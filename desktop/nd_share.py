@@ -172,13 +172,25 @@ class ShareServer:
 
     def _handle(self, h, method):
         client = h.client_address[0]
+        path = h.path.split("?")[0]
+        # Owner activation (/api/pro_login) is allowed BEFORE the remote-access gate - that's the whole point: the
+        # owner signs in with his email + activation secret to TURN ON Pro (which enables remote access). It only
+        # succeeds with the correct owner secret, so it's safe to accept pre-auth from anywhere.
+        if path == "/api/pro_login" and method == "POST":
+            try:
+                n = int(h.headers.get("Content-Length", "0"))
+                req = json.loads(h.rfile.read(min(n, 8192)).decode("utf-8") or "{}")
+            except Exception:
+                return self._send(h, 400, {"error": "bad request"})
+            res = self.command_fn("pro_login", {"email": str(req.get("email", "")),
+                                                "secret": str(req.get("secret", "")), "_ip": client})
+            return self._send(h, 200 if res.get("ok") else 403, res)
         # The LAN and loopback (a tunnel such as Cloudflare / Tailscale terminates on localhost) are always fine.
         # A real public client is accepted only when the owner turned on remote access AND accounts are set up,
         # so an outside connection can do nothing until it signs in.
         if not _lan_only(client):
             if not (getattr(self, "remote_enabled", False) and self.auth and self.auth.has_users()):
                 return self._send(h, 403, {"error": "remote access is off on this PC"})
-        path = h.path.split("?")[0]
         try:
             if path == "/api/hello" and method == "GET":
                 return self._send(h, 200, {"app": "network-doctor", "name": socket.gethostname(),
