@@ -284,6 +284,49 @@ def diagnose(router, dt=1.1):
             except Exception:  # noqa: BLE001
                 pass
 
+            # ---- DNS / traffic interception that breaks GENUINE apps (banking/UPI "unsecured network") ----
+            # Legit payment apps refuse to open when the network silently redirects their DNS or forces a proxy -
+            # and that same redirect is exactly what a data thief sets up. So a transparent DNS redirect (dst-nat
+            # on port 53 to somewhere that isn't the router) or an enabled web-proxy is flagged to be removed.
+            try:
+                for nat in router.cmd("/ip/firewall/nat/print"):
+                    pr = (nat.get("protocol") or "").lower()
+                    dport = str(nat.get("dst-port") or "")
+                    action = (nat.get("action") or "").lower()
+                    comment = nat.get("comment") or ""
+                    if "53" in dport and action in ("dst-nat", "redirect") and pr in ("udp", "tcp", ""):
+                        if comment.startswith("ND"):
+                            continue   # our own, intentional
+                        findings.append({
+                            "sev": "critical",
+                            "title": "Something is redirecting DNS on the network (breaks banking/UPI apps)",
+                            "evidence": ["a NAT rule sends port 53 (DNS) to another address: %s" %
+                                         (nat.get("to-addresses") or action),
+                                         "genuine payment apps see this as tampering and show 'Unsecured Network'",
+                                         "the same trick is how traffic gets secretly captured - worth removing"],
+                            "fixes": ["If you did not set this on purpose, remove this DNS redirect in the router "
+                                      "(Firewall > NAT). Let each device use DNS normally.",
+                                      "Then the banking/UPI app will open (also turn off any VPN on the phone)."],
+                            "action": None,
+                        })
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                wp = router.cmd("/ip/proxy/print")
+                row = wp[0] if wp else {}
+                if str(row.get("enabled") or "").lower() == "true":
+                    findings.append({
+                        "sev": "warning",
+                        "title": "The router's web proxy is ON (can break secure apps and slow browsing)",
+                        "evidence": ["/ip proxy is enabled - all web traffic is funnelled through it",
+                                     "secure apps may refuse to work through a proxy they don't trust"],
+                        "fixes": ["If you don't use the router web proxy on purpose, turn it off: "
+                                  "/ip proxy set enabled=no"],
+                        "action": None,
+                    })
+            except Exception:  # noqa: BLE001
+                pass
+
     except Exception as e:  # noqa: BLE001
         return [{"sev": "info", "title": "Could not read the router for LAN health",
                  "evidence": [str(e)], "fixes": ["Check the router login in Setup, then run this again."],

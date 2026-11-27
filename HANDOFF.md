@@ -2,6 +2,19 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.78 — detect DNS redirect / proxy that breaks genuine apps ("Unsecured Network"))
+- Rakesh (27 Nov): a banking/UPI app showed "Unsecured Network Detected" on the office network; wants genuine
+  apps to work. Honest scope: the banner is the APP's own fraud check (VPN/proxy on the phone, or non-trusted
+  network) — we must NOT defeat it. But the NETWORK-side causes that trip it, and that are also leak vectors, we
+  can detect + advise removing.
+- nd_lanhealth.diagnose() now also checks the router for: (1) a transparent DNS redirect (dst-nat/redirect on
+  port 53 to a non-router address, not ND-tagged) → critical "Something is redirecting DNS (breaks banking/UPI)";
+  (2) /ip proxy enabled → warning "web proxy is ON". Our own ND DNS rules are skipped. Advice: remove the
+  redirect / proxy + turn off phone VPN; we do not auto-change these (could be intentional) — flag only.
+- Confirmed our v4.68 DNS fix does NOT force a transparent redirect (only sets the resolver), so it is not the
+  direct cause; the phone banner is most likely a VPN/proxy on that phone or the app's strict Wi-Fi check.
+- test_lanhealth +4 (redirect flagged, ND rule not flagged, proxy flagged, clean router no false alarm). Suite 1113.
+
 ## Done (v4.77 — per-site productivity + occasional heavy-download (movie/game) detection & block)
 - Rakesh (27 Nov): want real time + data per site per user (how many times he opened Instagram/YouTube/Sheets/
   Gmail, how long, how much data); and find the occasional movie/game DOWNLOAD sites (rare use, huge data) to

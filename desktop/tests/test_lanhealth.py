@@ -150,3 +150,41 @@ class BrainPipeline(unittest.TestCase):
         import nd_alerts as AL
         c = AL.explain("eth3 runs at 100 Mbps HALF-duplex")
         self.assertNotIn(c["kind"], AL.AUTO_SAFE)   # software can't fix a bad cable - must stay a human alert
+
+
+class DnsIntegrity(unittest.TestCase):
+    """Genuine banking/UPI apps show 'Unsecured Network' when the network silently redirects their DNS or forces
+    a proxy - which is also a data-leak vector. The LAN check must flag these (Rakesh, 27 Nov)."""
+    def _router(self, nat=None, proxy=False):
+        base = {
+            "/interface/print": [{"name": "eth1", "rx-broadcast": "0"}],
+            "/interface/bridge/port/print": [{"interface": "eth1", "bridge": "bridge"}],
+            "/interface/bridge/host/print": [], "/interface/ethernet/monitor": [],
+            "/ip/arp/print": [], "/interface/bridge/print": [{"name": "bridge", "arp": "enabled"}],
+            "/ip/firewall/nat/print": nat or [],
+            "/ip/proxy/print": [{"enabled": "true" if proxy else "false"}],
+        }
+
+        class R:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def cmd(s, path, **k): return base.get(path, [])
+        return R()
+
+    def test_dns_redirect_flagged(self):
+        nat = [{"protocol": "udp", "dst-port": "53", "action": "dst-nat", "to-addresses": "10.9.9.9"}]
+        out = L.diagnose(self._router(nat=nat), dt=0.05)
+        self.assertTrue(any("redirecting DNS" in f["title"] and f["sev"] == "critical" for f in out))
+
+    def test_our_own_dns_rule_not_flagged(self):
+        nat = [{"protocol": "udp", "dst-port": "53", "action": "dst-nat", "comment": "ND: something"}]
+        out = L.diagnose(self._router(nat=nat), dt=0.05)
+        self.assertFalse(any("redirecting DNS" in f["title"] for f in out))
+
+    def test_proxy_on_flagged(self):
+        out = L.diagnose(self._router(proxy=True), dt=0.05)
+        self.assertTrue(any("web proxy is ON" in f["title"] for f in out))
+
+    def test_clean_router_no_false_alarm(self):
+        out = L.diagnose(self._router(), dt=0.05)
+        self.assertFalse(any("redirecting DNS" in f["title"] or "web proxy" in f["title"] for f in out))
