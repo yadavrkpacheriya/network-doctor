@@ -1368,6 +1368,57 @@ class UsageStore:
                         "text": "Patterns and 'unusual' warnings get reliable after a week of data.", "action": ""})
         return out
 
+    def site_activity(self, days=7, dev=None):
+        """Per-site, per-user productivity picture: for each (device, site) over the period - how many times it
+        was opened (visits), how much data down/up, how many active HOURS it ran, and on how many days. This is
+        what answers 'how many times did he open Instagram / YouTube / Sheets and how long + how much data'.
+        Returns a list of dicts sorted by data desc. Time is counted in active hours the site moved data."""
+        start = (dt.date.today() - dt.timedelta(days=days - 1)).isoformat()
+        where = "AND dev=?" if dev else ""
+        args = (start,) + ((dev,) if dev else ())
+        rows = self._rows(
+            "SELECT dev, site, SUM(down), SUM(up), COUNT(DISTINCT day||'#'||hour), COUNT(DISTINCT day) "
+            "FROM usage WHERE day>=? AND site!='' " + where + " GROUP BY dev, site", args)
+        vis = {}
+        for dv, s, n in self._rows(
+                "SELECT dev, site, SUM(n) FROM visits WHERE day>=? " +
+                ("AND dev=?" if dev else "") + " GROUP BY dev, site", args):
+            vis[(dv, s)] = vis.get((dv, s), 0) + (n or 0)
+        out = []
+        for dv, s, down, up, hrs, dys in rows:
+            out.append({"dev": dv, "site": s, "down": down or 0, "up": up or 0,
+                        "bytes": (down or 0) + (up or 0), "hours": hrs or 0, "days": dys or 0,
+                        "opens": vis.get((dv, s), 0)})
+        out.sort(key=lambda r: -r["bytes"])
+        return out
+
+    def heavy_downloads(self, days=14, min_mb=800, max_active_hours=6):
+        """Find OCCASIONAL BIG-DOWNLOAD sites - movies/games/torrent sites a user hits rarely but pulls huge data
+        from (Rakesh, 27 Nov). Signature: a LOT of download bytes concentrated in FEW active hours (a real work
+        site spreads data over many hours; a movie/game grab dumps GBs in one or two sittings). Returns
+        [{dev, site, app, cat, down_mb, hours, days, mb_per_hour, suggest_block}] worst first."""
+        start = (dt.date.today() - dt.timedelta(days=days - 1)).isoformat()
+        rows = self._rows(
+            "SELECT dev, site, app, cat, SUM(down), COUNT(DISTINCT day||'#'||hour), COUNT(DISTINCT day) "
+            "FROM usage WHERE day>=? AND site!='' GROUP BY dev, site HAVING SUM(down) >= ?",
+            (start, min_mb * 1024 * 1024))
+        heavy_cats = {"Games", "Video", "Downloads", "Torrent / P2P"}
+        heavy_apps = {"BitTorrent", "MEGA (file sharing)", "WeTransfer / file sharing"}
+        out = []
+        for dv, s, app, cat, down, hrs, dys in rows:
+            hrs = hrs or 1
+            if hrs > max_active_hours:
+                continue                      # steady all-day traffic = a work app, not a download grab
+            down_mb = (down or 0) / (1024 * 1024)
+            catname = group_of(app)
+            block = (cat == "personal") or (catname in heavy_cats) or (app in heavy_apps) or \
+                    (down_mb >= 2000 and (dys or 1) <= 2)
+            out.append({"dev": dv, "site": s, "app": app, "cat": cat, "down_mb": round(down_mb, 1),
+                        "hours": hrs, "days": dys or 1, "mb_per_hour": round(down_mb / hrs, 1),
+                        "suggest_block": bool(block)})
+        out.sort(key=lambda r: -r["down_mb"])
+        return out
+
 
 # where a file can leave the office: upload size to these is watched per device and day
 LEAK_GROUPS = {"Cloud storage & office", "Email", "Messaging", "AI tools", "Remote access", "Photos"}
@@ -1450,9 +1501,10 @@ def dashboard_data(store, days=30, hourly_days=14):
         "GROUP BY day, dev, site", (start,))]
     visits = [list(r) for r in store._rows(
         "SELECT day, dev, site, SUM(n) FROM visits WHERE day >= ? GROUP BY day, dev, site", (start,))]
+    heavy = store.heavy_downloads(days=min(days, 14))
     return {"generated": time.strftime("%Y-%m-%d %H:%M"), "start": start, "end": end.isoformat(),
             "hourly_from": hstart, "devices": store.names(), "apps": apps, "hours": hours, "act": act,
-            "sites": sites, "visits": visits, "insights": store.insights(),
+            "sites": sites, "visits": visits, "insights": store.insights(), "heavy": heavy,
             "labels": CAT_LABEL}
 
 
@@ -1570,6 +1622,7 @@ td.n{text-align:right}.score{display:inline-block;height:8px;border-radius:4px;b
 .ins.warning{border-color:var(--warn);background:var(--warnbg)}.ins b{display:block}.ins .a{color:var(--text-secondary);margin-top:3px}
 #tip{position:fixed;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;z-index:9;max-width:320px}
 .empty{color:var(--text-muted);padding:20px 0}.scroll{max-height:420px;overflow:auto}
+.copybtn{margin-top:10px;font:inherit;cursor:pointer;color:var(--text-primary);background:var(--surface-1);border:1px solid var(--line);border-radius:8px;padding:6px 12px}
 </style></head><body><div class="viz-root">
 <h1>Internet usage and productivity</h1>
 <div class="sub" id="sub"></div>
@@ -1592,6 +1645,7 @@ td.n{text-align:right}.score{display:inline-block;height:8px;border-radius:4px;b
  <div class="card c6"><h2>Top 10 websites <span class="sub">- by internet used</span></h2><div id="ch_topsites"></div></div>
  <div class="card c6"><h2>Top 10 productive apps / sites</h2><div id="ch_topprod"></div></div>
  <div class="card c6"><h2>Top 10 unproductive apps / sites</h2><div id="ch_topunprod"></div></div>
+ <div class="card c8"><h2>Heavy downloads to review <span class="sub">- movie / game / big-file sites used briefly but pulling large data</span></h2><div class="scroll"><table id="t_heavy"></table></div></div>
  <div class="card c7"><h2>Devices and users <span class="sub">- click a row to see only that device</span></h2><div class="scroll"><table id="t_dev"></table></div></div>
  <div class="card c5"><h2>Websites</h2><div class="scroll"><table id="t_sites"></table></div></div>
 </div>
@@ -1718,6 +1772,20 @@ function topByCat(cat){
 function drawTopProd(){hbar("ch_topprod",topByCat("work"),"No productive traffic recorded yet - mark work apps in Usage.")}
 function drawTopUnprod(){hbar("ch_topunprod",topByCat("personal"),"No unproductive traffic recorded yet.")}
 
+// Occasional heavy-download sites (movies/games/big files): large data in few hours. The ones worth blocking
+// are marked; "Copy block list" gives the domains to paste into Security > Website firewall.
+function drawHeavy(){
+ const t=document.getElementById("t_heavy"),rows=(D.heavy||[]).filter(r=>(!st.dev||r.dev===st.dev)&&(!st.dept||devDept(r.dev)===st.dept));
+ if(!rows.length){t.innerHTML='<tr><td class="empty">No occasional heavy-download sites found - nothing unusual.</td></tr>';return}
+ t.innerHTML=`<thead><tr><th>User</th><th>Website</th><th>Category</th><th class="n">Downloaded</th><th class="n">In hours</th><th class="n">Days</th><th>Action</th></tr></thead><tbody>`+
+ rows.map(r=>`<tr><td>${esc(devName(r.dev))}<div class="sub">${esc((D.devices[r.dev]||{}).ip||r.dev)}</div></td><td>${esc(r.site)}${r.app&&r.app!==r.site?'<div class="sub">'+esc(r.app)+'</div>':''}</td><td><span class="tag"><i class="sw" style="background:${col(r.cat)}"></i>${LBL[r.cat]}</span></td><td class="n">${r.down_mb>=1024?(r.down_mb/1024).toFixed(1)+' GB':r.down_mb+' MB'}</td><td class="n">${r.hours}</td><td class="n">${r.days}</td><td>${r.suggest_block?'<b style="color:'+col('personal')+'">block suggested</b>':'<span class="sub">review</span>'}</td></tr>`).join("")+`</tbody>`;
+ // a copy-the-blocklist button under the table
+ const toblock=[...new Set(rows.filter(r=>r.suggest_block).map(r=>r.site))];
+ const old=t.parentNode.querySelector(".copybtn");if(old)old.remove();
+ if(toblock.length){const b=document.createElement("button");b.className="copybtn";b.textContent="Copy block list ("+toblock.length+" sites)";
+  b.onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(toblock.join("\n"));b.textContent="Copied - paste in Security > Website firewall"};
+  t.parentNode.appendChild(b)}}
+
 function drawKpi(){
  let b=0,w=0,p=0;const h=new Array(24).fill(0);const devs=new Set();
  D.apps.forEach(([d,dv,a,c,x])=>{if(keep(d,dv)){b+=x;devs.add(dv)}});D.act.forEach(([d,dv,c,mn])=>{if(keep(d,dv)){if(c==="work")w+=mn;if(c==="personal")p+=mn}});
@@ -1738,7 +1806,7 @@ function draw(){document.querySelectorAll("#period button").forEach(b=>b.setAttr
  document.getElementById("sub").textContent=`Data ${D.start} to ${D.end} · made ${D.generated}`;
  document.getElementById("note").textContent=st.dev?"Showing: "+devName(st.dev):"";
  legend("lg1");legend("lg2");drawKpi();drawTime();drawApps();drawHeat();drawDevices();drawSites();drawInsights();
- drawTopUsers();drawTopSites();drawTopProd();drawTopUnprod()}
+ drawTopUsers();drawTopSites();drawTopProd();drawTopUnprod();drawHeavy()}
 fillSelects();draw();matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);
 </script></body></html>"""
 

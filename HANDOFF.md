@@ -2,6 +2,24 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.77 — per-site productivity + occasional heavy-download (movie/game) detection & block)
+- Rakesh (27 Nov): want real time + data per site per user (how many times he opened Instagram/YouTube/Sheets/
+  Gmail, how long, how much data); and find the occasional movie/game DOWNLOAD sites (rare use, huge data) to
+  measure productivity and BLOCK them.
+- `UsageStore.site_activity(days, dev)`: per (device, site) → opens (visits), down, up, bytes, active hours,
+  days seen. Answers the per-site time/data question. (Time = active hours with traffic; no second-level dwell,
+  stated honestly.)
+- `UsageStore.heavy_downloads(days, min_mb, max_active_hours)`: the detector. Signature = lots of DOWNLOAD bytes
+  in FEW active hours (a work site spreads over many hours; a movie/game grab dumps GBs in 1-2 sittings). Returns
+  per site: down_mb, hours, days, mb_per_hour, suggest_block (true for personal/Games/Video/file-sharing, or 2GB+
+  in ≤2 days). Steady work sites (Sheets over 8h) are NOT flagged — verified by test.
+- Dashboard: new "Heavy downloads to review" card (t_heavy) listing user/site/category/downloaded/hours/days/
+  action, with a "Copy block list" button → paste into Security > Website firewall (existing nd_dnsfilter). Added
+  `heavy` to dashboard_data. Respects device/dept filter.
+- test_heavy_downloads (3). Suite 1109 passed.
+- NEXT idea (not done): a one-click "Block" straight from the card wired to the live dnsfilter (now it copies the
+  list for paste); and a per-site time breakdown table in the dashboard using site_activity().
+
 ## Done (v4.76 — read REAL site names from TLS SNI, no guessing, no decryption)
 - Rakesh (27 Nov): name every real site/app from actual connection data, don't assume from CDN/IP owner.
 - Reality: HTTPS is encrypted — cannot see page content/uploads without a MITM cert (declined, invasive). BUT the
