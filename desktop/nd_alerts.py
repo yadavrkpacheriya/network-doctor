@@ -79,6 +79,39 @@ SMB_FIX = (
 )
 SMB_UNDO = ':do { /ip firewall filter remove [find where comment="ND: block SMB to internet"] } on-error={}\n'
 
+# ---- DHCP pool auto-GROW (the permanent cure Rakesh asked for: if more IPs are needed, add 20 more, itself) ----
+# Runs on the router. RECLAIM FIRST, GROW ONLY IF STILL LOW (Rakesh, 27 Nov): a rotating-MAC phone that got a new
+# IP leaves its OLD lease as a ghost. So first drop every dynamic lease that is NOT currently bound (expired /
+# waiting / offered) - that frees the old IPs the moment the phone moved to a new one - THEN recount free, and
+# only if fewer than 20 are still free, push the pool's last address up by 20 (capped at .254, never .255).
+# Reserved fixed gear below .102 is untouched. So the pool can never stay full: old IPs are released, and the pool
+# only widens when genuinely needed. If it hits .254 and is still full, that's a real subnet-size limit (needs /23).
+DHCP_GROW = (
+    # 1) RECLAIM: release every dynamic lease that isn't actively bound (ghosts of moved/rotated-MAC phones).
+    ':do {/ip dhcp-server lease remove [find where dynamic=yes and status!=bound]} on-error={}\n'
+    ':local pool [/ip pool find where name~"ND" ]\n'
+    ':if ([:len $pool]=0) do={ :set pool [/ip pool find] }\n'
+    ':if ([:len $pool]>0) do={\n'
+    '  :local rng [/ip pool get [:pick $pool 0] ranges]\n'
+    # 2) recount free AFTER reclaiming (only still-bound leases count as used now)
+    '  :local used [:len [/ip dhcp-server lease find where dynamic=yes status=bound]]\n'
+    '  :local last [:pick $rng ([:find $rng "-" -1]+1) [:len $rng]]\n'
+    '  :local first [:pick $rng 0 [:find $rng "-" -1]]\n'
+    '  :local lo [:tonum [:pick $first ([:find $first "." -1]+1) [:len $first]]]\n'
+    '  :local hi [:tonum [:pick $last ([:find $last "." -1]+1) [:len $last]]]\n'
+    '  :local free (($hi - $lo + 1) - $used)\n'
+    '  :if ($free < 20) do={\n'
+    '    :local newhi ($hi + 20)\n'
+    '    :if ($newhi > 254) do={ :set newhi 254 }\n'
+    '    :if ($newhi > $hi) do={\n'
+    '      :local pfx [:pick $last 0 ([:find $last "." -1]+1)]\n'
+    '      /ip pool set [:pick $pool 0] ranges=($first . "-" . $pfx . $newhi)\n'
+    '      :log info ("ND: grew DHCP pool to ." . $newhi . " - was low on free IPs")\n'
+    '    }\n'
+    '  }\n'
+    '}\n'
+)
+
 # placed at the top of the forward chain (above FastTrack) - works on RouterOS 6 and 7
 TOP = 'place-before=([/ip firewall filter find]->0)'
 
@@ -266,7 +299,7 @@ def recipe(text, sev="warning", lip="", gw="", net=""):
                            ':do {/ip dhcp-server lease make-static $L} on-error={}; '
                            ':do {/ip dhcp-server lease set $L comment="ND: reserved fixed device"} on-error={}}}; '
                            ':do {/ip dhcp-server lease remove [find where dynamic=yes and status!=bound]} on-error={}; '
-                           '/ip dhcp-server set [find] lease-time=30m',
+                           '/ip dhcp-server set [find] lease-time=30m\n' + DHCP_GROW,
                            # undo: give reserved fixed leases back to dynamic and restore the day lease
                            ':do {/ip dhcp-server lease remove [find where comment="ND: reserved fixed device"]} '
                            'on-error={}; /ip dhcp-server set [find] lease-time=1d')])

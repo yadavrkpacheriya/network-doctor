@@ -473,6 +473,63 @@ def dhcp_pool_range(net):
     return (str(ipaddress.IPv4Address(base + 102)), str(ipaddress.IPv4Address(base + 251)))
 
 
+def grow_pool_script_generic(need_free=20, add=20, hard_max=254):
+    """Same as grow_pool_script but with no subnet argument - it reads the pool's own ranges live on the router,
+    so it works for any single-range pool. Used where the app doesn't pass the subnet (the DHCP-full auto-fix)."""
+    return grow_pool_script("0.0.0.0/24", need_free=need_free, add=add, hard_max=hard_max)
+
+
+def grow_pool_script(net, need_free=20, add=20, hard_max=254):
+    """RouterOS script that PERMANENTLY stops 'DHCP pool full' by GROWING the pool itself when it runs low.
+    Rakesh's rule (27 Nov): if more IPs are needed, add 20 more - automatically, so the same issue never repeats.
+    How it works on the router, every time it runs (safe + idempotent):
+      - look at the dynamic DHCP pool (the ND pool if present, else the first pool),
+      - count how many addresses are still FREE (pool size minus the dynamic leases currently bound),
+      - if fewer than `need_free` are free, push the pool's LAST address up by `add` (capped at .hard_max so we
+        never touch .255 broadcast), widening the pool in place. Reserved fixed gear stays below .102 and is
+        untouched. If there is no room left in this /24 it stops at the cap and the alert stays (then it's a
+        real subnet-size limit, not a ghost-lease problem). Returns "" if the subnet isn't a /24."""
+    try:
+        n = ipaddress.ip_network(net, strict=False)
+    except ValueError:
+        return ""
+    if n.num_addresses < 256:
+        return ""
+    base = int(n.network_address)
+    cap = str(ipaddress.IPv4Address(base + hard_max))
+    # RouterOS: find the pool, read its ranges, compute free count, grow the end if low. Pools are "a.b.c.first-last".
+    return (
+        # reclaim stale/ghost dynamic leases FIRST (a rotated-MAC phone leaves its old IP behind when it moves),
+        # so freed IPs are available before we consider growing - often no grow is needed at all.
+        ':do {/ip dhcp-server lease remove [find where dynamic=yes and status!=bound]} on-error={}\n'
+        ':local pool [/ip pool find where name~"ND" ]\n'
+        ':if ([:len $pool]=0) do={ :set pool [/ip pool find] }\n'
+        ':if ([:len $pool]>0) do={\n'
+        '  :local pn [/ip pool get [:pick $pool 0] name]\n'
+        '  :local rng [/ip pool get [:pick $pool 0] ranges]\n'
+        # bound dynamic leases = addresses in use right now (after reclaim)
+        '  :local used [:len [/ip dhcp-server lease find where dynamic=yes status=bound]]\n'
+        # last address of the pool = text after the last "-"
+        '  :local last [:pick $rng ([:find $rng "-" -1]+1) [:len $rng]]\n'
+        '  :local first [:pick $rng 0 [:find $rng "-" -1]]\n'
+        # free = (last octet - first octet + 1) - used   (single-range /24 pool)
+        '  :local lo [:tonum [:pick $first ([:find $first "." -1]+1) [:len $first]]]\n'
+        '  :local hi [:tonum [:pick $last ([:find $last "." -1]+1) [:len $last]]]\n'
+        '  :local free (($hi - $lo + 1) - $used)\n'
+        '  :if ($free < ' + str(need_free) + ') do={\n'
+        '    :local newhi ($hi + ' + str(add) + ')\n'
+        '    :local capoct ' + str(hard_max) + '\n'
+        '    :if ($newhi > $capoct) do={ :set newhi $capoct }\n'
+        '    :if ($newhi > $hi) do={\n'
+        '      :local pfx [:pick $last 0 ([:find $last "." -1]+1)]\n'
+        '      /ip pool set [:pick $pool 0] ranges=($first . "-" . $pfx . $newhi)\n'
+        '      :log info ("ND: grew DHCP pool to ." . $newhi . " - was low on free IPs")\n'
+        '    }\n'
+        '  }\n'
+        '}\n'
+    )
+
+
 def _in_range(ip, rng):
     try:
         return rng and _ipkey(rng[0]) <= _ipkey(ip) <= _ipkey(rng[1])

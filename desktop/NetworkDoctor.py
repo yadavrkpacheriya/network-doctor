@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.73"
+VERSION = "4.74"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2547,6 +2547,9 @@ class App(tk.Tk):
             if time.time() - getattr(self, "_lanhealth_t", 0) > 600:  # every 10 min: LAN layer-2 health (storm/
                 self._lanhealth_t = time.time()                       # loop/slow-link/proxy-ARP) via the brain
                 threading.Thread(target=self._lan_health_check, daemon=True).start()
+            if time.time() - getattr(self, "_dhcpgrow_t", 0) > 900:   # every 15 min: keep DHCP pool headroom so
+                self._dhcpgrow_t = time.time()                        # it never fills (auto-grow +20 when low)
+                threading.Thread(target=self._dhcp_headroom_check, daemon=True).start()
             if time.time() - getattr(self, "_access_t", 0) > 600:     # devices blocked from joining (reply-only ARP)
                 self._access_t = time.time()
                 threading.Thread(target=self._access_poll, daemon=True).start()
@@ -4154,6 +4157,32 @@ class App(tk.Tk):
             self.alerts_active[key] = {"title": title, "sev": sev, "first": time.time(), "last": time.time(),
                                        "source": "LeakWatch (USB)"}
             self._raise_alert(sev, title, [text, "Ask the person what was copied and why."], "LeakWatch (USB)")
+
+    def _dhcp_headroom_check(self):
+        """Keep the DHCP pool from ever filling, proactively. Every 15 min the router runs the self-guarding
+        grow script: it does nothing unless fewer than 20 addresses are free, and then widens the pool by 20
+        (capped at .254). This is the permanent cure Rakesh asked for - the pool grows itself before anyone
+        gets 'no address', so 'DHCP full' can't come back (until a real /24 subnet-size limit, which is logged).
+        Runs off the UI thread; never raises; guarded by the dhcp_auto_grow setting (default on)."""
+        if not self._settings().get("dhcp_auto_grow", True):
+            return
+        c = self.router_client(ask=False)
+        if not c:
+            return
+        try:
+            with c:
+                before = c.cmd("/ip/pool/print")
+                c.run_script(AL.DHCP_GROW, name="nd-dhcp-grow")
+                after = c.cmd("/ip/pool/print")
+            # if the pool range actually changed, note it once so IT can see the auto-grow happened
+            if before and after:
+                b0 = (before[0] or {}).get("ranges", "")
+                a0 = (after[0] or {}).get("ranges", "")
+                if a0 and a0 != b0:
+                    self.q.put(("call", lambda: self._health_log(
+                        "DHCP pool", "info", f"Auto-grew the DHCP pool ({b0} -> {a0}) - it was low on free IPs")))
+        except Exception:  # noqa: BLE001 - a router read must never break the tick
+            return
 
     def _lan_health_check(self):
         """Every ~10 min, read the router's layer-2 health (broadcast storms, switching loops, slow/half-duplex

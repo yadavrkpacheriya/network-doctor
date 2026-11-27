@@ -1,6 +1,22 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-26 (v4.73)_
+_Last updated: 2026-11-27 (v4.74)_
+
+## Done (v4.74 — DHCP-full PERMANENT cure: reclaim stale IPs, then auto-grow the pool)
+- Rakesh (27 Nov): fix DHCP pooling permanently through the brain so it never repeats; if more IPs are needed add
+  20 more, itself; and free the OLD IP a rotated-MAC phone left behind BEFORE adding new ones.
+- `AL.DHCP_GROW` (router script) does, in order: (1) RECLAIM — remove every dynamic lease not `status=bound`
+  (ghosts of moved/rotated-MAC phones free instantly); (2) recount FREE in the pool; (3) GROW — only if <20 free,
+  push the pool's last address up by 20, capped at .254 (never .255). Self-guarding + idempotent; logs "ND: grew
+  DHCP pool to .X" when it acts. `nd_bandwidth.grow_pool_script(net)` / `grow_pool_script_generic()` mirror it
+  (reclaim-first too); empty for non-/24.
+- Wired two ways: (a) appended to the existing dhcp_full AUTO_SAFE fix (so reserve-fixed + 30m-lease + reclaim +
+  grow all run together on the alert); (b) PROACTIVE `NetworkDoctor._dhcp_headroom_check()` every 15 min
+  (`_dhcpgrow_t`, setting `dhcp_auto_grow` default on) runs DHCP_GROW via run_script and logs a health line if the
+  range actually changed — so the pool keeps headroom before anyone ever gets "no address".
+- If it reaches .254 and is still full, that's a true /24 subnet-size limit (needs /23) — logged, not silently looped.
+- Tests: test_dhcp_grow (5: grow guards, builder subnet guard, full fix has all 3 cures + grow, reclaim-before-grow).
+  Suite 1100 passed.
 
 ## Done (v4.65 — agent tamper protection, Sophos-style IT-only off switch)
 - Agent (`endpoint/networkdoctor-agent.ps1` → `$AgentVersion=1.3.0`, regenerated into `desktop/nd_agent.py`):
