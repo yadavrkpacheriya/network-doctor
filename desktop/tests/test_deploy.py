@@ -272,3 +272,28 @@ def test_push_enabler_startup_dir_is_all_users():
     import nd_deploy as D
     assert D.STARTUP_DIR.endswith(r"StartUp")
     assert "ProgramData" in D.STARTUP_DIR
+
+
+def test_enabler_removes_previous_agent_before_install():
+    """A re-run must REPLACE the agent, not stack a second one: stop the running agent, delete every known task
+    (current + legacy names), unlock + clear the old files, then install fresh (Rakesh, 28 Nov)."""
+    import nd_deploy as D
+    s = D.enabler_script(r"\\IT\share", secret="x")
+    # stops the running agent process by its command line
+    assert "networkdoctor-agent.ps1" in s and "Stop-Process" in s
+    # deletes all four task names + the legacy Cleanup task
+    for t in (D.TASK_BG, D.TASK_BG + " Boot", D.TASK_BG + " Watchdog", D.TASK_FIX, "NetworkDoctor Cleanup"):
+        assert t in s
+    assert "schtasks /Delete /TN %%~T /F" in s
+    # removal happens BEFORE the fresh install writes the agent
+    assert s.index("Removing any previous agent") < s.index("Installing the Network Doctor agent")
+    # unlocks the folder so old files can be overwritten
+    assert "/reset" in s
+
+
+def test_single_file_enabler_also_removes_previous_agent():
+    """The 1-file build carries the same clean-replace, so copying it again never leaves duplicates."""
+    import nd_deploy as D
+    t = D.single_file_enabler(r"\\IT\share", "AGENT", "FIX", secret="x")
+    assert "Removing any previous agent" in t
+    assert "schtasks /Delete /TN %%~T /F" in t

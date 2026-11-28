@@ -1,6 +1,15 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-28 (v4.90)_
+_Last updated: 2026-11-28 (v4.91)_
+
+## Done (v4.91 — setup is a clean REPLACE: removes any previous agent first, no duplicates)
+- Rakesh (28 Nov): a re-run of the setup must remove previously-installed agents so duplicates never run.
+- enabler_script + single_file_enabler now run a removal block BEFORE installing: Stop-Process any powershell
+  whose command line points at networkdoctor-agent.ps1; schtasks /Delete /F every known task (NetworkDoctor
+  Agent / Agent Boot / Agent Watchdog / Fix + legacy "NetworkDoctor Cleanup"); icacls /reset to unlock the
+  folder; del the old agent .ps1 + watchdog.cmd. Then the fresh agent + tasks are written. No gap (same run),
+  and the agent's existing Global\NetworkDoctorAgentBG mutex already stops any lingering copy double-running.
+  test_deploy +2. Suite 1143. (Regenerated the handed Setup-NetworkDoctor.cmd with this.)
 
 ## Done (v4.90 — auto-queue the 1-file setup onto every reachable PC's Startup)
 - Rakesh (28 Nov): wants the install as automatic as possible, not carried to each PC by hand.

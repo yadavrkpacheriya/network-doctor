@@ -116,9 +116,24 @@ def enabler_script(central, secret=""):
         'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes >nul 2>&1\r\n'
         'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=Yes >nul 2>&1\r\n'
         'netsh advfirewall firewall set rule group="Remote Administration" new enable=Yes >nul 2>&1\r\n'
+        ":: 1b) REMOVE any previous Network Doctor agent first, so a re-run REPLACES it and never leaves a second\r\n"
+        "::     copy running (Rakesh, 28 Nov). Stop the running agent, delete every known task (old names too),\r\n"
+        "::     and clear an install left in an old location. The new agent is written fresh below.\r\n"
+        'echo   - Removing any previous agent (clean replace)\r\n'
+        'set "ND=%ProgramData%\\NetworkDoctor"\r\n'
+        ':: stop the running agent process(es): powershell loops whose command line points at our agent .ps1\r\n'
+        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name=\'powershell.exe\'\\" | '
+        'Where-Object { $_.CommandLine -match \'networkdoctor-agent.ps1\' } | '
+        'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1\r\n'
+        ':: delete every scheduled task this agent has ever created (current + legacy names)\r\n'
+        'for %%T in ("' + TASK_BG + '" "' + TASK_BG + ' Boot" "' + TASK_BG + ' Watchdog" "' + TASK_FIX + '" '
+        '"NetworkDoctor Cleanup") do schtasks /Delete /TN %%~T /F >nul 2>&1\r\n'
+        ':: drop the folder lock so the old files can be overwritten, then clear stale agent files\r\n'
+        'icacls "%ND%" /reset /t /c >nul 2>&1\r\n'
+        'if exist "%ND%\\networkdoctor-agent.ps1" del /f /q "%ND%\\networkdoctor-agent.ps1" >nul 2>&1\r\n'
+        'if exist "%ND%\\watchdog.cmd" del /f /q "%ND%\\watchdog.cmd" >nul 2>&1\r\n'
         ":: 2) install the Network Doctor agent locally and point it at the IT share\r\n"
         'echo   - Installing the Network Doctor agent\r\n'
-        'set "ND=%ProgramData%\\NetworkDoctor"\r\n'
         'if not exist "%ND%" md "%ND%" >nul 2>&1\r\n'
         'copy /y "%~dp0networkdoctor-agent.ps1" "%ND%\\networkdoctor-agent.ps1" >nul 2>&1\r\n'
         'if exist "%~dp0fix-launch.cmd" copy /y "%~dp0fix-launch.cmd" "%ND%\\fix-launch.cmd" >nul 2>&1\r\n'
