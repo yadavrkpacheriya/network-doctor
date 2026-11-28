@@ -1,6 +1,18 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-28 (v4.89)_
+_Last updated: 2026-11-28 (v4.90)_
+
+## Done (v4.90 — auto-queue the 1-file setup onto every reachable PC's Startup)
+- Rakesh (28 Nov): wants the install as automatic as possible, not carried to each PC by hand.
+- nd_deploy.push_enabler_to_startup + _place_startup: for every online PC, authenticate to C$ (same cred/retry
+  path as the push, incl. the Remote-Registry UAC-token unlock) and drop the 1-file Setup-NetworkDoctor.cmd into
+  the All-Users Startup folder (ProgramData\...\StartUp). The PC then installs the agent BY ITSELF at next login
+  or reboot - no visit, no carrying. Works on any PC we can WRITE to, which is more than full task-registration
+  (that needs the remote UAC token). STARTUP_DIR constant. test_deploy +2.
+- Setup button "Queue setup on all reachable PCs (auto-runs at next login)" -> _push_enabler_startup: builds the
+  embedded enabler from the saved share+secret, queues it on all windows_targets in parallel, reports per-PC.
+  PCs that can't even receive the file have File & Printer Sharing fully off -> use the 1-file setup by USB.
+- Suite 1141.
 
 ## Done (v4.89 — scroll fix in every tab + 1-file agent setup for all PCs)
 - Rakesh (28 Nov): "scroll up down is not working in all tabs" AND "not even a single pc installed, solve all

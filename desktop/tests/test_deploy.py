@@ -240,3 +240,35 @@ def test_single_file_enabler_without_fix():
     assert "#AGENT#" in txt
     assert "#FIX#" not in txt
     assert "call :decode FIX" not in txt
+
+
+def test_push_enabler_to_startup_writes_each_reachable_pc():
+    """Queue the 1-file setup into each PC's Startup folder; only PCs we can connect to get it, and the copy
+    uses the injected place stub (no real filesystem)."""
+    import nd_deploy as D
+    placed = []
+
+    def fake_run(argv, timeout=40):
+        # net use to .5 fails (offline), everything else connects
+        if argv[:2] == ["net", "use"] and "/user:" in " ".join(argv):
+            return (1, "system error 53") if "192.168.0.5" in argv[2] else (0, "")
+        return (0, "")
+
+    def fake_place(ip, text, run):
+        placed.append(ip)
+        return True, "queued"
+
+    targets = [{"ip": "192.168.0.3", "name": "A"}, {"ip": "192.168.0.5", "name": "B"}]
+    creds = [("office", "Administrator", "pw")]
+    res = D.push_enabler_to_startup(targets, creds, "ENABLER", run=fake_run, place=fake_place, workers=2)
+    by_ip = {r["ip"]: r for r in res}
+    assert by_ip["192.168.0.3"]["ok"] and by_ip["192.168.0.3"]["step"] == "startup"
+    assert not by_ip["192.168.0.5"]["ok"]            # offline PC never received the file
+    assert placed == ["192.168.0.3"]
+
+
+def test_push_enabler_startup_dir_is_all_users():
+    """It targets the All-Users Startup folder so the agent installs regardless of who logs in."""
+    import nd_deploy as D
+    assert D.STARTUP_DIR.endswith(r"StartUp")
+    assert "ProgramData" in D.STARTUP_DIR

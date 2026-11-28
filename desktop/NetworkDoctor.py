@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.89"
+VERSION = "4.90"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2050,6 +2050,8 @@ class App(tk.Tk):
         ttk.Button(dep, text="Install / update agent on all PCs", command=self._agent_deploy_all).pack(side="left", padx=4)
         ttk.Button(dep, text="Make 1-file setup (copy to any PC, double-click)",
                    command=self._make_enabler).pack(side="left", padx=4)
+        ttk.Button(dep, text="Queue setup on all reachable PCs (auto-runs at next login)",
+                   command=self._push_enabler_startup).pack(side="left", padx=4)
         ttk.Button(dep, text="Allow agent removal (tamper-off)",
                    command=self._allow_agent_removal).pack(side="left", padx=4)
         self.var_autodeploy = tk.BooleanVar(value=bool(self._settings().get("auto_deploy_agent", False)))
@@ -2351,6 +2353,49 @@ class App(tk.Tk):
                 APP, f"Agent installed/updated on {ok} of {len(results)} PC(s).\n\n" + "\n".join(lines[:30]) +
                 ("" if ok == len(results) else "\n\nFailing PCs usually need File & Printer Sharing on, or (workgroup) "
                  "LocalAccountTokenFilterPolicy=1."))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _push_enabler_startup(self):
+        """Drop the 1-file setup into every reachable PC's Startup folder, so each installs the agent by itself at
+        next login - no carrying, no per-PC visit. Works on PCs we can WRITE to even when the full push is blocked
+        by the remote UAC token (Rakesh, 28 Nov: 0/23, wants it fully automatic)."""
+        creds = DP.admin_creds(self._settings().get("admin_logins") or [])
+        if not creds:
+            messagebox.showinfo(APP, "Save an admin login first (above).")
+            return
+        targets = DP.windows_targets(getattr(self, "devices", []) or [])
+        if not targets:
+            messagebox.showinfo(APP, "No online PCs found. Run a scan first, then try again.")
+            return
+        central = self._settings().get("endpoint_dir") or r"\\RAKESH-IT\LeakLog"
+        secret = self._agent_secret()
+        if not messagebox.askyesno(APP, f"Queue the one-time setup on {len(targets)} online PC(s)? It copies one "
+                                        f"file to each PC's Startup folder; the PC installs the agent by itself at "
+                                        f"its next login or reboot. Nothing else is changed."):
+            return
+        try:
+            enabler = DP.single_file_enabler(central, nd_agent.FILES["networkdoctor-agent.ps1"],
+                                             nd_agent.FILES.get("fix-launch.cmd", ""), secret)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP, f"Could not build the setup file: {e}")
+            return
+        self.var_dep_info.set(f"queueing setup on {len(targets)} PC(s)...")
+
+        def work():
+            def prog(i, total, res):
+                self.q.put(("call", lambda: self.var_dep_info.set(f"queueing... {i} of {total} done")))
+            results = DP.push_enabler_to_startup(targets, creds, enabler, progress=prog)
+            self.q.put(("call", lambda: done(results)))
+
+        def done(results):
+            ok = sum(1 for r in results if r["ok"])
+            lines = [("OK   " if r["ok"] else "FAIL ") + f"{r.get('name', r['ip'])}: {r['detail']}" for r in results]
+            self.var_dep_info.set(f"queued on {ok} of {len(results)} PC(s) - they install at next login")
+            (messagebox.showinfo if ok else messagebox.showwarning)(
+                APP, f"Setup queued on {ok} of {len(results)} PC(s). Each installs the agent by itself at its next "
+                f"login or reboot.\n\n" + "\n".join(lines[:30]) +
+                ("" if ok == len(results) else "\n\nPCs that failed even to receive the file have File & Printer "
+                 "Sharing fully off - copy the 1-file setup to those by USB/AnyDesk and double-click once."))
         threading.Thread(target=work, daemon=True).start()
 
     # ---------------------------------------------------------------- router access (optional)

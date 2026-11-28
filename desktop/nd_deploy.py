@@ -306,6 +306,74 @@ def _place_files(ip, src_dir, central):
         f.write(central or "")
 
 
+STARTUP_DIR = r"ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+
+
+def _place_startup(ip, enabler_text, run=_run):
+    r"""Drop the 1-file setup into a reachable PC's All-Users Startup folder over C$, so it runs by itself at the
+    next login/reboot - no one has to visit or carry anything. Needs only write access to the share, which works
+    on more PCs than the full task-registration (that needs the remote UAC token). Returns (ok, detail)."""
+    import os
+    dest_dir = r"\\%s\C$\%s" % (ip, STARTUP_DIR)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        with open(os.path.join(dest_dir, "Setup-NetworkDoctor.cmd"), "w", encoding="utf-8", newline="") as f:
+            f.write(enabler_text)
+        return True, "queued - runs at next login/reboot"
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)[:160]
+
+
+def push_enabler_to_startup(targets, creds, enabler_text, run=_run, place=None, progress=None, workers=8):
+    r"""For every target, authenticate to C$ and drop the 1-file setup into its Startup folder, so the PC installs
+    the agent by itself at next login - zero carrying, zero per-PC visit. This is the fallback for PCs the direct
+    push can't fully install on but can still WRITE to. Returns per-PC results like deploy_all. `place` lets tests
+    stub the copy."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    place = place or _place_startup
+    total = len(targets)
+    if total == 0:
+        return []
+    results, done = [], 0
+
+    def _one(t):
+        ip = t["ip"]
+        for _label, user, pw in creds or []:
+            share = r"\\%s\C$" % ip
+            run(["net", "use", share, "/delete", "/y"])
+            forms = [qualify_user(ip, user)]
+            if forms[0] != user:
+                forms.append(user)
+            rc, out, used = 1, "", forms[0]
+            for cand in forms:
+                rc, out = run(["net", "use", share, "/user:" + cand, pw])
+                used = cand
+                if rc == 0 or not _authority_retry(out):
+                    break
+            if rc != 0 and _uac_blocked(out):
+                if enable_remote_admin(ip, used, pw, run):
+                    run(["net", "use", share, "/delete", "/y"])
+                    rc, out = run(["net", "use", share, "/user:" + used, pw])
+            if rc == 0:
+                ok, detail = place(ip, enabler_text, run)
+                run(["net", "use", share, "/delete", "/y"])
+                return {"ip": ip, "name": t.get("name", ip), "ok": ok,
+                        "step": "startup" if ok else "copy", "detail": detail}
+            if not _authority_retry(out):      # a non-auth failure won't be fixed by another credential
+                break
+        return {"ip": ip, "name": t.get("name", ip), "ok": False, "step": "connect", "detail": _net_hint(out)}
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_one, t): t for t in targets}
+        for fut in as_completed(futs):
+            res = fut.result()
+            results.append(res)
+            done += 1
+            if progress:
+                progress(done, total, res)
+    return results
+
+
 def deploy_one(ip, user, pw, central, src_dir, run=_run, place=None):
     """Install the agent on one PC. Returns {'ip','ok','step','detail'}.
     `src_dir` holds networkdoctor-agent.ps1 + fix-launch.cmd. `central` is written to central.txt on the PC.
