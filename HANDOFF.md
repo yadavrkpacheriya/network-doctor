@@ -2,6 +2,20 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.88 — brain auto-clears "offline 2+ days" for moved devices + occasional PCs)
+- Rakesh (28 Nov): the offline-2d list mixed 3 cases wrongly - a device that CHANGED IP (RAKESH-IT .88->.70,
+  still online), directors' PCs (Ankit/Punjak) that visit occasionally, and genuinely-gone devices on other
+  subnets (10.28.x, 10.50.x). Wanted the brain to spot IP changes and auto-correct.
+- MOVED DEVICE (core._update_db): before stamping online devices, retire any STALE history entry (a DIFFERENT
+  MAC) that is clearly the same machine now online - same hostname/NetBIOS name, or the exact IP it now answers
+  on, or any past IP. Sets its last_seen=now so the stale alert auto-clears. Works even when the NIC/MAC changed.
+  Genuinely-gone devices (different subnet + different name) are untouched. test_moved_device +3.
+- OCCASIONAL PC (core.build_devices): a CAT_PC known >=14 days gets an 8-day grace before "offline 2+ days"
+  (directors'/visitors' laptops come and go - not "dead" at 2 days). Cameras/NVR/printers/switches keep the 48h
+  rule (those really should always be on). Suite 1137.
+- The 10.28.33.15 / 10.50.50.1 entries are genuinely gone (different subnets) - correctly still flagged; use
+  'Forget offline devices' to clear them.
+
 ## Done (v4.87 — top-bandwidth Sr/column alignment fix + naming status + auto-deploy status)
 - Rakesh (28 Nov): top-bandwidth table headers (Sr/IP/Download) misaligned with data; sites/apps still generic;
   asked for auto-install status.

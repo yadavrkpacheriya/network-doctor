@@ -1794,7 +1794,20 @@ def build_devices(raw, oui, db):
         notes = [f"was: {prev_cat}"]
         # a camera / PC / recorder / printer / network box gone for 2+ days is a real problem (dead, unplugged
         # or removed), not just asleep - flag it so it can be surfaced at the top of the lists and in alerts.
-        stale = gone_h >= 48 and prev_cat in FIXED_MAC_CATS + (CAT_PC,)
+        # EXCEPTION: a PC/laptop that has been known for weeks and comes and goes (a director's or visitor's
+        # laptop that's only in the office some days) is NOT "dead" at 2 days - give these a longer grace period
+        # so they aren't wrongly flagged every time they're away (Rakesh, 28 Nov: Ankit/Punjak directors' PCs).
+        grace_h = 48
+        if prev_cat == CAT_PC:
+            try:
+                known_days = (dt.datetime.now()
+                              - dt.datetime.strptime(h.get("first_seen", h["last_seen"]),
+                                                     "%Y-%m-%d %H:%M")).days
+            except Exception:  # noqa: BLE001
+                known_days = 0
+            if known_days >= 14:         # a long-known PC that visits occasionally: allow a week away
+                grace_h = 24 * 8
+        stale = gone_h >= grace_h and prev_cat in FIXED_MAC_CATS + (CAT_PC,)
         if stale:
             notes.insert(0, "OFFLINE 2+ days")
         out.append({"mac": mac, "ips": {h.get("ip", "")}, "ip": h.get("ip", ""), "names": {"label": name},
@@ -2179,6 +2192,29 @@ def _update_db(db, raw, devices):
                 if ip and ip not in (h.get("ips") or []):
                     h["ips"] = ((h.get("ips") or []) + [ip])[-5:]
                 break
+    # A device that MOVED (same machine, new IP and even a new MAC/NIC) must not stay on the "offline 2+ days"
+    # list while it is actually online under a new address. So before stamping online devices, retire any STALE
+    # history entry (a different MAC) that is clearly the SAME machine now online: same hostname/NetBIOS name, or
+    # the exact IP it now answers on. We mark that old entry seen now so the brain auto-clears its stale alert
+    # (Rakesh, 28 Nov: RAKESH-IT moved .88 -> .70 but still showed offline; directors' PCs flagged as gone).
+    online_now = [d for d in devices if d["online"] and d["mac"]]
+    online_names = {}
+    for d in online_now:
+        for nm in (d["names"].get("netbios"), d["names"].get("smb"), d.get("name")):
+            nm = (nm or "").strip().lower()
+            if nm:
+                online_names.setdefault(nm, d)
+    online_ips_now = {d["ip"] for d in online_now}
+    for mac, h in db["devices"].items():
+        if mac in online_macs_now:
+            continue
+        hnames = [(x or "").strip().lower() for x in (h.get("names") or [])]
+        moved = (any(nm in online_names for nm in hnames) or
+                 (h.get("ip") in online_ips_now) or
+                 any(ip in online_ips_now for ip in (h.get("ips") or [])))
+        if moved:
+            h["last_seen"] = ts            # same physical machine, now online under a new IP/MAC - not "gone"
+
     for d in devices:
         if not d["online"] or not d["mac"]:
             continue
