@@ -66,6 +66,32 @@ class PhoneActions(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("api", snap)
 
+    def get_raw(self, path, token=None):
+        req = urllib.request.Request(self.base + path,
+                                     headers={**({"X-ND-Token": token} if token else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read() or b"", dict(e.headers)
+
+    def test_setup_cmd_download(self):
+        # The phone (paired, on the LAN) can download the 1-file agent setup as an attachment .cmd.
+        def cmd(name, args=None):
+            self.calls.append((name, args))
+            if name == "setup_cmd":
+                return {"ok": True, "filename": "Setup-NetworkDoctor.cmd", "text": "@echo off\r\nREM setup\r\n"}
+            return {"ok": True, "message": f"did {name}"}
+        self.srv.command_fn = cmd
+        _, r = self.post("/api/pair", {"code": self.srv.code, "phone": "test"})
+        tok = r["token"]
+        code, body, hdrs = self.get_raw("/api/setup-cmd", tok)
+        self.assertEqual(code, 200)
+        self.assertIn(b"@echo off", body)
+        self.assertIn("attachment", hdrs.get("Content-Disposition", ""))
+        self.assertIn("Setup-NetworkDoctor.cmd", hdrs.get("Content-Disposition", ""))
+        self.assertEqual(self.calls[-1][0], "setup_cmd")
+
     def test_action_needs_pairing_then_works(self):
         code, _ = self.post("/api/action", {"action": "tag", "args": {"mac": "x"}})
         self.assertEqual(code, 401)

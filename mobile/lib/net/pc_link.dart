@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Talks to the Network Doctor PC app on the office LAN (see desktop/nd_share.py).
@@ -223,6 +224,30 @@ class PcLink {
     final r = await _withFallback((base) => http.get(base, headers: _h(pc)), pc, '/api/state', 'load data');
     if (r.statusCode != 200) _raiseHttp(r, pc.name);
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  /// Downloads the 1-file agent setup (Setup-NetworkDoctor.cmd) from the PC and saves it on the phone.
+  /// Returns the saved file path so the caller can open/share it. Works on the LAN and remotely (same gate
+  /// as other calls). The file is a Windows .cmd - meant to be copied to an office PC and run there.
+  static Future<String> downloadSetup(PairedPc pc) async {
+    if (pc.host == 'demo') {
+      throw PcError('Connect to your office PC first - the setup file comes from it.');
+    }
+    final r = await _withFallback((base) => http.get(base, headers: _h(pc)), pc, '/api/setup-cmd',
+        'download the setup file');
+    if (r.statusCode == 404) {
+      throw PcError('The PC app is too old for this - update Network Doctor on the PC (4.92 or newer).');
+    }
+    if (r.statusCode != 200) _raiseHttp(r, pc.name);
+    Directory dir;
+    try {
+      dir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+    } catch (_) {
+      dir = await getApplicationDocumentsDirectory();
+    }
+    final f = File('${dir.path}/Setup-NetworkDoctor.cmd');
+    await f.writeAsBytes(r.bodyBytes, flush: true);
+    return f.path;
   }
 
   static Future<String> startScan(PairedPc pc) async {

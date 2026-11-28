@@ -161,6 +161,17 @@ class ShareServer:
         h.end_headers()
         h.wfile.write(body)
 
+    def _send_file(self, h, filename, text, ctype):
+        """Stream `text` as a downloadable file (Content-Disposition attachment) - used for the setup .cmd."""
+        body = text.encode("utf-8")
+        h.send_response(200)
+        h.send_header("Content-Type", ctype)
+        h.send_header("Content-Disposition", 'attachment; filename="%s"' % filename)
+        h.send_header("Content-Length", str(len(body)))
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        h.wfile.write(body)
+
     def _authorised(self, h):
         tok = h.headers.get("X-ND-Token", "")
         with self.lock:
@@ -222,6 +233,13 @@ class ShareServer:
                     snap["api"] = API_VERSION
                     self._cache = (now, snap)
                 return self._send(h, 200, snap)
+            if path == "/api/setup-cmd" and method == "GET":
+                # Download the 1-file agent setup (Setup-NetworkDoctor.cmd) on demand from the phone or another PC.
+                res = self.command_fn("setup_cmd", {"_auth": h.headers.get("X-ND-User", ""), "_ip": client})
+                if not isinstance(res, dict) or not res.get("ok"):
+                    return self._send(h, 500, res if isinstance(res, dict) else {"error": "build failed"})
+                return self._send_file(h, res.get("filename", "Setup-NetworkDoctor.cmd"),
+                                       res.get("text", ""), "application/octet-stream")
             if path == "/api/scan" and method == "POST":
                 return self._send(h, 200, {"result": self.command_fn("scan")})
             if path == "/api/action" and method == "POST":

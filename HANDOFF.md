@@ -1,6 +1,18 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-28 (v4.91)_
+_Last updated: 2026-11-28 (v4.92 / mobile 1.47.0)_
+
+## Done (v4.92 + mobile 1.47.0 — download the 1-file setup from PC or phone, anytime/anywhere)
+- Rakesh (28 Nov): wants to download the setup .cmd anytime, from both the PC and the phone.
+- PC: already had the "Make 1-file setup" save button (local). Added a remote download endpoint
+  GET /api/setup-cmd (nd_share: _send_file streams it as an attachment Setup-NetworkDoctor.cmd), gated like the
+  other authed phone-link calls. It calls the new _remote command "setup_cmd" which builds the embedded
+  clean-replace enabler from the saved share + tamper secret. test_phone_actions +1.
+- Mobile: PcLink.downloadSetup(pc) GETs /api/setup-cmd (LAN + remote via _withFallback), saves
+  Setup-NetworkDoctor.cmd to the phone, returns the path. New _SetupDownloadCard in the PC "More/Summary" tab:
+  "Download setup (.cmd)" + Open, with the saved path shown. Works from anywhere the phone can reach the PC
+  (office LAN or remote/Tailscale). Older PC (no route) -> clear "update the PC to 4.92" message.
+- Suite 1144.
 
 ## Done (v4.91 — setup is a clean REPLACE: removes any previous agent first, no duplicates)
 - Rakesh (28 Nov): a re-run of the setup must remove previously-installed agents so duplicates never run.

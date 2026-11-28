@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'package:url_launcher/url_launcher.dart';
 
@@ -131,6 +132,8 @@ class SummaryTab extends StatelessWidget {
           ),
         const SizedBox(height: 8),
         _PushSetupCard(topic: '${s['push_topic'] ?? ''}'),
+        const SizedBox(height: 8),
+        const _SetupDownloadCard(),
         const SizedBox(height: 8),
         Text('Setup checklist', style: t.titleMedium),
         if (checklist.isEmpty)
@@ -460,6 +463,91 @@ class _PushSetupCard extends StatefulWidget {
   final String topic;
   @override
   State<_PushSetupCard> createState() => _PushSetupCardState();
+}
+
+/// Download the 1-file agent setup (Setup-NetworkDoctor.cmd) from the PC to this phone, so Rakesh can get it
+/// anytime/anywhere and copy it to any office PC (Rakesh, 28 Nov). The file self-elevates and installs the
+/// agent, replacing any previous one.
+class _SetupDownloadCard extends StatefulWidget {
+  const _SetupDownloadCard();
+  @override
+  State<_SetupDownloadCard> createState() => _SetupDownloadCardState();
+}
+
+class _SetupDownloadCardState extends State<_SetupDownloadCard> {
+  bool _busy = false;
+  String? _path;
+
+  Future<void> _download() async {
+    final pc = PcLink.current;
+    if (pc == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Connect to your office PC first.')));
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final path = await PcLink.downloadSetup(pc);
+      if (!mounted) return;
+      setState(() => _path = path);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Saved Setup-NetworkDoctor.cmd on this phone.')));
+    } on PcError catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not download: ${e.message}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not download: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.download_for_offline, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Agent setup file', style: t.titleMedium)),
+          ]),
+          const SizedBox(height: 4),
+          Text('One file to install the Network Doctor agent on any office PC. Download it here, then copy it to '
+              'the PC (USB/AnyDesk) and double-click. It replaces any previous agent, so no duplicates.',
+              style: t.bodySmall),
+          const SizedBox(height: 8),
+          Row(children: [
+            FilledButton.icon(
+              onPressed: _busy ? null : _download,
+              icon: _busy
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download),
+              label: Text(_busy ? 'Downloading...' : 'Download setup (.cmd)'),
+            ),
+            if (_path != null) ...[
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => OpenFilex.open(_path!),
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('Open'),
+              ),
+            ],
+          ]),
+          if (_path != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Saved: $_path', style: t.bodySmall),
+            ),
+        ]),
+      ),
+    );
+  }
 }
 
 class _PushSetupCardState extends State<_PushSetupCard> {

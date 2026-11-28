@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.91"
+VERSION = "4.92"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -6135,6 +6135,17 @@ class App(tk.Tk):
         if name == "quick":
             self.q.put(("call", lambda: self.start_quick(manual=True)))
             return {"ok": True, "message": "Quick check started on the PC"}
+        if name == "setup_cmd":
+            # Build the 1-file agent setup (clean-replace, embeds the saved share + tamper secret) so the phone
+            # or another PC can download it on demand (Rakesh, 28 Nov). Returned as text; the HTTP layer streams
+            # it as Setup-NetworkDoctor.cmd.
+            try:
+                central = self._settings().get("endpoint_dir") or r"\\RAKESH-IT\LeakLog"
+                txt = DP.single_file_enabler(central, nd_agent.FILES["networkdoctor-agent.ps1"],
+                                             nd_agent.FILES.get("fix-launch.cmd", ""), self._agent_secret())
+                return {"ok": True, "filename": "Setup-NetworkDoctor.cmd", "text": txt}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "message": f"could not build setup: {e}"}
         if name in ("ping", "trace"):
             ip = str(a.get("ip", ""))
             if not ipre.match(ip):
