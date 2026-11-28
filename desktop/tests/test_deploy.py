@@ -206,3 +206,37 @@ def test_agent_source_has_it_controlled_uninstall():
     # token lives in the IT share, keyed to this PC or ALL, guarded by the secret
     assert "agent-remove" in src
     assert '"$pc.txt", "ALL.txt"' in src
+
+
+def test_single_file_enabler_is_self_contained_and_roundtrips():
+    """The 1-file setup carries the agent inside it (base64) and decodes it on the PC - no sidecar files to copy,
+    so one file per PC is enough (Rakesh, 28 Nov: 0/23 installed, wants the easiest way onto every PC)."""
+    import base64
+    import nd_deploy as D
+    agent = "PS1-AGENT-CONTENT\nline2\n"
+    fix = "@echo fix\n"
+    central = r"\\RAKESH-IT\LeakLog"
+    txt = D.single_file_enabler(central, agent, fix, secret="topsecret42")
+    # it must NOT copy sidecars from %~dp0 any more - everything is embedded/decoded
+    assert "%~dp0networkdoctor-agent.ps1" not in txt
+    assert "call :decode AGENT" in txt
+    assert "certutil -decode" in txt
+    assert central in txt and "topsecret42" in txt
+    # simulate the batch decode: lines "#AGENT#<b64>" / "#FIX#<b64>", strip prefix, concat, base64-decode
+    for tag, orig in (("AGENT", agent), ("FIX", fix)):
+        chunks = []
+        for line in txt.split("\r\n"):
+            parts = line.split("#")
+            if len(parts) >= 3 and parts[0] == "" and parts[1] == tag:
+                chunks.append(parts[2])
+        assert chunks, "no payload for " + tag
+        assert base64.b64decode("".join(chunks)).decode("utf-8") == orig
+
+
+def test_single_file_enabler_without_fix():
+    """With no fix-launch file, there is no FIX payload and no FIX decode call, but the agent still embeds."""
+    import nd_deploy as D
+    txt = D.single_file_enabler(r"\\IT\share", "AGENT", fix_cmd="", secret="")
+    assert "#AGENT#" in txt
+    assert "#FIX#" not in txt
+    assert "call :decode FIX" not in txt

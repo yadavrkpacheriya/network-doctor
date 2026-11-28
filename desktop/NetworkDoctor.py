@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.88"
+VERSION = "4.89"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -2048,7 +2048,7 @@ class App(tk.Tk):
             ttk.Entry(dep, textvariable=var, width=w, show=show).pack(side="left")
         ttk.Button(dep, text="Save login", command=self._agent_cred_save).pack(side="left", padx=4)
         ttk.Button(dep, text="Install / update agent on all PCs", command=self._agent_deploy_all).pack(side="left", padx=4)
-        ttk.Button(dep, text="Make one-time setup file (for PCs the push can't reach)",
+        ttk.Button(dep, text="Make 1-file setup (copy to any PC, double-click)",
                    command=self._make_enabler).pack(side="left", padx=4)
         ttk.Button(dep, text="Allow agent removal (tamper-off)",
                    command=self._allow_agent_removal).pack(side="left", padx=4)
@@ -2207,30 +2207,30 @@ class App(tk.Tk):
         from tkinter import filedialog
         central = self._settings().get("endpoint_dir") or r"\\RAKESH-IT\LeakLog"
         secret = self._agent_secret()          # the tamper-off secret, created once and kept on the IT PC
-        folder = filedialog.askdirectory(title="Choose a folder to save the one-time setup file "
-                                               "(e.g. a USB drive or your IT share)")
-        if not folder:
+        path = filedialog.asksaveasfilename(
+            title="Save the 1-file setup (e.g. to a USB drive or your IT share)",
+            defaultextension=".cmd", initialfile="Setup-NetworkDoctor.cmd",
+            filetypes=[("Setup command", "*.cmd")])
+        if not path:
             return
         try:
-            out = os.path.join(folder, "NetworkDoctor-Setup")
-            os.makedirs(out, exist_ok=True)
-            for name, text in nd_agent.FILES.items():
-                with open(os.path.join(out, name), "w", encoding="utf-8", newline="") as fh:
-                    fh.write(text)
-            with open(os.path.join(out, "Enable-NetworkDoctor.cmd"), "w", encoding="utf-8", newline="") as fh:
-                fh.write(DP.enabler_script(central, secret))
+            txt = DP.single_file_enabler(central, nd_agent.FILES["networkdoctor-agent.ps1"],
+                                         nd_agent.FILES.get("fix-launch.cmd", ""), secret)
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(txt)
         except Exception as e:  # noqa: BLE001
             messagebox.showerror(APP, f"Could not write the setup file: {e}")
             return
-        messagebox.showinfo(APP, "One-time setup saved to:\n" + out + "\n\n"
-                            "Run 'Enable-NetworkDoctor.cmd' ONCE on each PC the push can't reach - it asks for "
-                            "admin, opens the remote-management doors, and installs the agent (reporting to\n" +
-                            central + ").\n\nWays to run it on all PCs at once:\n"
-                            "  - Put it in a domain/GPO Startup script, or\n"
-                            "  - Copy the folder to each PC (USB or \\\\pc\\C$) and double-click it, or\n"
-                            "  - Drop it in each PC's Startup folder once.\n\n"
-                            "After a PC runs it once, Network Doctor reaches it remotely from then on and the "
-                            "agent self-updates from the share - no more per-PC visits.")
+        messagebox.showinfo(APP, "1-file setup saved to:\n" + path + "\n\n"
+                            "It is ONE self-contained file (the agent is carried inside it). On each PC the push "
+                            "can't reach, just copy this one file over and double-click it - it asks for admin, "
+                            "opens the remote-management doors, and installs the agent (reporting to\n" + central +
+                            ").\n\nEasiest ways to get it onto every PC:\n"
+                            "  - USB stick / AnyDesk: copy the one file, double-click, done.\n"
+                            "  - Each PC's Startup folder: drop it in once (runs at next login).\n"
+                            "  - \\\\pc\\C$ or shared folder: copy and run once.\n\n"
+                            "After a PC runs it once, Network Doctor reaches it remotely from then on and the agent "
+                            "self-updates from the share - no more per-PC visits, and nothing left to lose.")
 
     def _owner_set(self):
         """Register the owner email + show the activation secret to type on the phone. Owner-only Pro unlock."""

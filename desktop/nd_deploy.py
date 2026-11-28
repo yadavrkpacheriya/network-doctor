@@ -157,6 +157,70 @@ def enabler_script(central, secret=""):
     )
 
 
+def single_file_enabler(central, agent_ps1, fix_cmd="", secret=""):
+    r"""Like enabler_script, but ONE self-contained .cmd with NO sidecar files - the agent .ps1 (and fix-launch)
+    are carried INSIDE it as base64 and decoded on the PC. So the whole setup is a single file to copy per PC
+    (USB, AnyDesk, e-mail, \\pc\C$) and double-click - no folder, nothing left behind to lose (Rakesh, 28 Nov:
+    0 of 23 installed, wants the easiest possible way onto every PC). After one run the PC is fully remote-
+    manageable and the agent self-updates from the share, so it is a one-time file."""
+    import base64
+    base = enabler_script(central, secret)
+    # Pull the two "copy from %~dp0" lines out - we decode from embedded data instead of copying sidecars.
+    base = base.replace(
+        'copy /y "%~dp0networkdoctor-agent.ps1" "%ND%\\networkdoctor-agent.ps1" >nul 2>&1\r\n',
+        'call :decode AGENT "%ND%\\networkdoctor-agent.ps1"\r\n')
+    base = base.replace(
+        'if exist "%~dp0fix-launch.cmd" copy /y "%~dp0fix-launch.cmd" "%ND%\\fix-launch.cmd" >nul 2>&1\r\n',
+        'call :decode FIX "%ND%\\fix-launch.cmd"\r\n' if fix_cmd else '')
+    b64a = base64.b64encode(agent_ps1.encode("utf-8")).decode("ascii")
+    b64f = base64.b64encode(fix_cmd.encode("utf-8")).decode("ascii") if fix_cmd else ""
+
+    def _chunks(s, n=8000):
+        return [s[i:i + n] for i in range(0, len(s), n)]
+
+    # decode subroutine: write the labelled base64 lines to a temp file, let certutil -decode turn it into the
+    # real file. certutil ships on every Windows, so no PowerShell dependency for the decode itself.
+    # decode subroutine: findstr pulls every line beginning "#TAG#" out of THIS file, we strip the 5-char
+    # prefix, wrap the base64 in a PEM header, and let certutil -decode (ships on every Windows) write the file.
+    lines = ["\r\n:decode\r\n",
+             'set "_tag=%~1"\r\n',
+             'set "_out=%~2"\r\n',
+             'set "_tmp=%TEMP%\\nd_%_tag%.b64"\r\n',
+             '> "%_tmp%" echo -----BEGIN CERTIFICATE-----\r\n',
+             # each payload line is "#AGENT#<b64>" - match the exact prefix, then echo the rest (after char 8).
+             'for /f "usebackq delims=" %%A in ("%~f0") do call :emit "%_tag%" "%%A"\r\n',
+             '>> "%_tmp%" echo -----END CERTIFICATE-----\r\n',
+             'certutil -decode "%_tmp%" "%_out%" >nul 2>&1\r\n',
+             'del "%_tmp%" >nul 2>&1\r\n',
+             'exit /b 0\r\n',
+             "\r\n:emit\r\n",
+             'set "_ln=%~2"\r\n',
+             'set "_pfx=#%~1#"\r\n',
+             # only act on lines that start with the tag prefix; echo the base64 that follows it.
+             'if "%_ln:~0,'
+             '"=="" exit /b 0\r\n']
+    # The variable-length prefix check is awkward in pure batch; do it with a simple substring compare per tag.
+    lines = ["\r\n:decode\r\n",
+             'set "_tag=%~1"\r\n',
+             'set "_out=%~2"\r\n',
+             'set "_tmp=%TEMP%\\nd_%_tag%.b64"\r\n',
+             '> "%_tmp%" echo -----BEGIN CERTIFICATE-----\r\n',
+             'for /f "usebackq tokens=1,* delims=#" %%A in ("%~f0") do '
+             'if "%%A"=="%_tag%" >> "%_tmp%" echo %%B\r\n',
+             '>> "%_tmp%" echo -----END CERTIFICATE-----\r\n',
+             'certutil -decode "%_tmp%" "%_out%" >nul 2>&1\r\n',
+             'del "%_tmp%" >nul 2>&1\r\n',
+             'exit /b 0\r\n']
+    # payload lines: "#AGENT#<b64chunk>" - delims=# splits into tokens %%A=AGENT %%B=<b64> (chunks have no #).
+    payload = ["\r\n"]
+    for c in _chunks(b64a):
+        payload.append("#AGENT#" + c + "\r\n")
+    for c in _chunks(b64f):
+        payload.append("#FIX#" + c + "\r\n")
+    body = base.replace("exit /b 0\r\n", "".join(lines), 1)
+    return body + "".join(payload)
+
+
 def qualify_user(ip, user):
     r"""Qualify a BARE local-admin name with the target host, so a workgroup PC knows which account authority to
     use. An unqualified "Administrator" against \\ip\C$ is exactly what makes Windows answer "The request is not

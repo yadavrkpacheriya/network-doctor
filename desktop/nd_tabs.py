@@ -34,10 +34,44 @@ def scroll_area(parent):
     cv.pack(side="left", fill="both", expand=True)
     sb.pack(side="right", fill="y")
 
+    # Mouse-wheel scrolling that actually works everywhere on the page. The old code bound the wheel on
+    # inner.<Enter>/<Leave>, but child widgets (cards, buttons, labels) cover `inner`, so moving onto a child
+    # fired <Leave> and unbound the wheel - scrolling only worked on bare gaps (Rakesh, 28 Nov). Fix: bind the
+    # wheel directly on the canvas AND on every child widget (now and as children are added), and handle Linux's
+    # Button-4/5 too. No bind_all, so it can't be stolen or left dangling.
     def _wheel(e):
-        cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
-    inner.bind("<Enter>", lambda _e: cv.bind_all("<MouseWheel>", _wheel))
-    inner.bind("<Leave>", lambda _e: cv.unbind_all("<MouseWheel>"))
+        if getattr(e, "num", 0) == 4:
+            cv.yview_scroll(-3, "units")
+        elif getattr(e, "num", 0) == 5:
+            cv.yview_scroll(3, "units")
+        else:
+            cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        return "break"
+
+    def _bind_wheel(w):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            try:
+                w.bind(seq, _wheel, add="+")
+            except _tk.TclError:
+                pass
+
+    _bind_wheel(cv)
+    _bind_wheel(inner)
+    # bind children as they appear: whenever the inner frame re-lays-out, wheel-bind any new descendants
+    def _bind_all_children(_e=None):
+        stack = list(inner.winfo_children())
+        while stack:
+            c = stack.pop()
+            if not getattr(c, "_nd_wheel", False):
+                _bind_wheel(c)
+                try:
+                    c._nd_wheel = True
+                except Exception:  # noqa: BLE001
+                    pass
+            stack.extend(c.winfo_children())
+    inner.bind("<Configure>", lambda _e: (cv.configure(scrollregion=cv.bbox("all")), _bind_all_children()),
+               add="+")
+    inner.after(300, _bind_all_children)
     return inner
 
 
@@ -2924,6 +2958,13 @@ SECTIONS = [  # key, title, colour, light colour, [(page, title), ...]
 # file scanner, usage, fixes, firewall, SNMP, ports, Wake-on-LAN, backups, setup) works offline and stays.
 ONLINE_PAGES = {"t_speed", "t_web", "t_dns", "t_remote", "expose", "slow"}
 
+# Pages that fill the window with their OWN big tree / canvas and manage their own scrolling (the tree
+# already has its own scrollbar). Wrapping them in the page scroll-column would double-scroll and fight the
+# tree, so they opt out and stay a plain frame. Everything else is a column of cards/controls and gets the
+# page scroll-column so tall content below the window edge is reachable (Rakesh, 28 Nov).
+NO_SCROLL_PAGES = {"devices", "map", "inventory", "binding", "cameras", "computers", "alerts",
+                   "monitor", "usage", "commands", "history", "capture", "t_ports", "t_login"}
+
 # Offline mode keeps the menu to a handful of sections - the ones you actually use with the internet down:
 # find devices, cameras, PCs, and the offline tools/fixes (incl. "What is missing" to install Npcap). Every
 # other section is hidden to keep it simple; switch back to Online/Auto to see them all again.
@@ -3003,9 +3044,18 @@ class SectionNav:
         return next(s for s in SECTIONS if s[0] == key)
 
     def page(self, key):
-        """The frame for one page (created once)."""
+        """The frame for one page (created once). Each page is wrapped in a scrollable canvas so a tall page can
+        be scrolled with the mouse wheel / scrollbar - before, pages were a plain fixed frame and anything below
+        the window edge was unreachable (Rakesh, 28 Nov: scroll not working in any tab). Some pages manage their
+        own scrolling (they fill the window with their own tree/canvas), so those opt out via NO_SCROLL_PAGES."""
         if key not in self.pages:
-            self.pages[key] = ttk.Frame(self.body)
+            if key in NO_SCROLL_PAGES:
+                self.pages[key] = ttk.Frame(self.body)
+                self.pages[key]._nd_outer = self.pages[key]   # outer == inner for plain pages
+            else:
+                outer = ttk.Frame(self.body)
+                self.pages[key] = scroll_area(outer)          # returns the inner frame to pack content into
+                self.pages[key]._nd_outer = outer             # pack/pack_forget must target the outer frame
         return self.pages[key]
 
     def current(self):
@@ -3091,8 +3141,8 @@ class SectionNav:
             b.configure(bg="white" if on else light, fg=col if on else "#1f2937",
                         font=("Segoe UI", 10, "bold" if on else "normal"))
         if self.cur and self.cur in self.pages:
-            self.pages[self.cur].pack_forget()
-        self.page(key).pack(fill="both", expand=True)
+            self.pages[self.cur]._nd_outer.pack_forget()
+        self.page(key)._nd_outer.pack(fill="both", expand=True)
         self.cur = key
         self.last[sec] = key
         if self.on_change:

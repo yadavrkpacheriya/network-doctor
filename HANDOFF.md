@@ -1,6 +1,26 @@
 # Network Doctor — HANDOFF
 
-_Last updated: 2026-11-27 (v4.74)_
+_Last updated: 2026-11-28 (v4.89)_
+
+## Done (v4.89 — scroll fix in every tab + 1-file agent setup for all PCs)
+- Rakesh (28 Nov): "scroll up down is not working in all tabs" AND "not even a single pc installed, solve all
+  these so I can install all" (dialog: Agent installed on 0 of 23 PCs).
+- SCROLL (nd_tabs.py): SectionNav.page() built each page as a plain ttk.Frame with no scroll canvas, so any
+  content below the window edge was unreachable. Now every page is wrapped in scroll_area() (canvas + scrollbar +
+  mouse-wheel bound on the canvas AND every descendant, Linux Button-4/5 too) EXCEPT pages with their own big
+  tree/canvas (NO_SCROLL_PAGES: devices, map, inventory, binding, cameras, computers, alerts, monitor, usage,
+  commands, history, capture, t_ports, t_login) to avoid double-scroll. select() packs/forgets ._nd_outer.
+- AGENT 0/23 — not a code bug: the push needs each PC's admin share, which Windows shuts by default. The dialog
+  grouped the real causes: 13 PCs "request not supported" (File & Printer Sharing OFF -> no C$/IPC$/Remote
+  Registry, so nothing on the network can reach them), 4 "wrong/disabled password", 5 "offline/slow". The
+  self-healing remote path (set LocalAccountTokenFilterPolicy over Remote Registry) can't help when SMB is fully
+  off. The reliable fix is the local self-elevating enabler — made it ONE self-contained file.
+- 1-FILE SETUP (nd_deploy.single_file_enabler + Setup button): the agent .ps1 (+fix-launch) are carried INSIDE
+  the .cmd as base64 and decoded on the PC with certutil — no sidecar files. One file to copy per PC (USB,
+  AnyDesk, Startup folder, \\pc\C$), double-click, it self-elevates (local UAC, no network password needed),
+  opens all the remote-mgmt doors, installs the agent. Works regardless of password/SMB/Remote-Registry state.
+  After one run the PC is reachable remotely forever and the agent self-updates. Button renamed "Make 1-file
+  setup (copy to any PC, double-click)". test_deploy +2. Suite 1139.
 
 ## Done (v4.88 — brain auto-clears "offline 2+ days" for moved devices + occasional PCs)
 - Rakesh (28 Nov): the offline-2d list mixed 3 cases wrongly - a device that CHANGED IP (RAKESH-IT .88->.70,
