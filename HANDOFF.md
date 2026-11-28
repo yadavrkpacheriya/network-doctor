@@ -2,6 +2,24 @@
 
 _Last updated: 2026-11-27 (v4.74)_
 
+## Done (v4.87 — top-bandwidth Sr/column alignment fix + naming status + auto-deploy status)
+- Rakesh (28 Nov): top-bandwidth table headers (Sr/IP/Download) misaligned with data; sites/apps still generic;
+  asked for auto-install status.
+- ALIGNMENT BUG (real): the Top-bandwidth list is an Sr=True tree. tv.insert is wrapped to auto-prepend the Sr
+  number, but the LIVE-UPDATE path used tv.item(iid, values=vals) which bypasses the wrapper -> every refresh
+  overwrote the Sr column and shifted all columns left by one. Fixed: on update, set data columns BY NAME
+  (tv.set(iid, col, val) for ip/down/up/ten/app/site/risk), never pass a raw values tuple to tv.item on an Sr
+  table. Headers now line up.
+- NAMING: resolution order is already correct (per-device SNI/DNS name first, CDN-org only as fallback). Generic
+  names ("Akamai CDN", "Google service") remain for traffic with NO captured name - root cause: the sniffer reads
+  SNI from TCP 443 only, but Google/YouTube/Instagram/Meta use QUIC (UDP 443) whose SNI is ENCRYPTED (can't parse
+  reliably). The router DNS log names those, so it must be ON. Added a live "names: X from TLS, Y from DNS" status
+  on the monitor (sniffer line) so naming coverage is visible, with a hint to turn on DNS logging when both are 0.
+- AUTO-DEPLOY STATUS: fully shipped in v4.81 and intact (is_permanent/permanent_targets, hourly
+  _auto_deploy_permanent, Setup checkbox). It is OFF by default - user must tick "Auto-install on permanent PCs"
+  AND save an admin login. Installs only on CAT_PC seen >=5 days; guests (1-3 days) skipped; skips PCs whose agent
+  checked in <48h. Suite 1134.
+
 ## Done (v4.86 + mobile 1.46.0 — email login kept easy across devices + "sign out everywhere")
 - Rakesh (27 Nov): wants email-based login (easy when changing device) and a global logout that signs Pro out on
   ALL devices from either PC or phone.

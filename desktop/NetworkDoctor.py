@@ -74,7 +74,7 @@ if core.IS_WIN:
             pass
 
 APP = "Network Doctor"
-VERSION = "4.86"
+VERSION = "4.87"
 core.VERSION = VERSION  # single source of truth: exported HTML reports (nd_core.export_html) show the real version
 SEV_ORDER = {"critical": 0, "warning": 1, "info": 2, "debug": 3}
 
@@ -3059,7 +3059,19 @@ class App(tk.Tk):
         self._usage_tick()
         self.mon_labels["flows"].set(fs["flows"])
         self.mon_labels["syslog"].set(fs["syslog"])
-        self.mon_labels["sniffer"].set(fs["sniffer"])
+        # show how naming is doing: real site names read from TLS (SNI) + from the router DNS log. If both are 0
+        # while traffic flows, naming isn't working (DNS log not arriving) and sites show as "CDN / service".
+        nm = ""
+        try:
+            sni = getattr(mon, "sni_rx", 0)
+            dns = self.usage.dns_log_rx if self.usage else 0
+            if sni or dns:
+                nm = f"  |  names: {sni} from TLS, {dns} from DNS"
+            elif fs["sniffer"].startswith("running"):
+                nm = "  |  names: none yet (turn on router DNS logging in Setup if sites show as CDN/service)"
+        except Exception:  # noqa: BLE001
+            pass
+        self.mon_labels["sniffer"].set(fs["sniffer"] + nm)
         b = f"{fs['bcast']:.0f}" if fs["bcast"] is not None else "?"
         g = (f"{fs['gw_avg']:.0f} ms avg, {fs['gw_max']:.0f} max" if fs["gw_avg"] is not None else
              "not answering" if fs["gw"] else "no router found")
@@ -3174,7 +3186,12 @@ class App(tk.Tk):
                     risk)
             text = d["name"] if d and d["name"] else "-"
             if tv.exists(iid):
-                tv.item(iid, text=text, values=vals, tags=tag)
+                # tv.item bypasses the Sr auto-number wrapper (only tv.insert has it), so set the data columns by
+                # NAME here - never pass a raw values tuple to tv.item on an Sr table, or it overwrites the Sr
+                # column and shifts everything left (Rakesh, 28 Nov: Sr/IP/Download headers misaligned).
+                tv.item(iid, text=text, tags=tag)
+                for col, val in zip(("ip", "down", "up", "ten", "app", "site", "risk"), vals):
+                    tv.set(iid, col, val)
                 tv.move(iid, "", pos)
             else:
                 tv.insert("", pos, iid=iid, text=text, values=vals, tags=tag)
